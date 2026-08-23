@@ -1,5 +1,11 @@
-// 一次性下載校園範圍的 OpenStreetMap tile 圖磚，供 public/tiles/ 自行 host 使用。
+// 一次性下載校園範圍的地圖 tile 圖磚，供 public/tiles/ 自行 host 使用。
 // 不是 app 執行期間會跑的程式，是活動籌備期間手動執行一次的工具。
+//
+// 圖磚來源用 CARTO 的免費 basemap（底圖資料仍是 OpenStreetMap 貢獻者提供，
+// CARTO 只是重新算圖後提供的免費 tile 服務）。
+// 沒有用 OpenStreetMap 官方的 tile.openstreetmap.org——那是設計給互動地圖
+// 即時載入用的，官方使用政策明確不允許這樣整批爬圖磚下載，會被封鎖
+// （已經實際測試踩到：整批下載回來的圖全部是同一張「Access blocked」警告圖）。
 //
 // 用法：
 //   node scripts/download-tiles.js
@@ -16,8 +22,9 @@ const BBOX = {
 
 const ZOOM_RANGE = [15, 19]; // [minZoom, maxZoom]
 const OUTPUT_DIR = path.join(__dirname, '..', 'public', 'tiles');
-const DELAY_MS = 250; // 禮貌性延遲，避免對 OSM 公用 tile server 造成負擔
-const USER_AGENT = 'NCUMIS-Camp-TileDownloader/1.0 (one-time offline map prep)';
+const DELAY_MS = 300; // 禮貌性延遲
+const USER_AGENT = 'NCUMIS-Camp-MapPrep/1.0 (one-time offline map prep for small campus event)';
+const TILE_URL_TEMPLATE = 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png';
 
 function lngLatToTile(lng, lat, zoom) {
   const n = 2 ** zoom;
@@ -43,14 +50,17 @@ async function downloadTile(z, x, y) {
     return;
   }
 
-  const url = `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+  const url = TILE_URL_TEMPLATE.replace('{z}', z).replace('{x}', x).replace('{y}', y);
   const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
-  if (!res.ok) {
-    throw new Error(`failed to fetch ${url}: ${res.status}`);
+  const contentType = res.headers.get('content-type') || '';
+
+  if (!res.ok || !contentType.startsWith('image/')) {
+    throw new Error(`failed to fetch ${url}: HTTP ${res.status}, content-type ${contentType}`);
   }
+
   const buffer = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(filePath, buffer);
-  console.log(`saved: ${z}/${x}/${y}`);
+  console.log(`saved: ${z}/${x}/${y} (${buffer.length} bytes)`);
 }
 
 async function main() {

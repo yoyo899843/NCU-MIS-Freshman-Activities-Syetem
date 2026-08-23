@@ -46,11 +46,12 @@ const map = L.map('map', {
   maxBoundsViscosity: 1.0
 }).setView(CENTER, 17);
 
-// 自行 host 的校園範圍 tile 圖磚，不連外部 OSM tile server。
+// 自行 host 的校園範圍 tile 圖磚（活動籌備期間用 scripts/download-tiles.js 下載），
+// 不對外連任何 tile server。
 L.tileLayer('/tiles/{z}/{x}/{y}.png', {
   minZoom: 15,
   maxZoom: 19,
-  attribution: '&copy; OpenStreetMap contributors'
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
 }).addTo(map);
 
 // 交摺點標記：等 /api/map/checkpoints 接上真實資料後，這裡改成畫 9 個交摺點
