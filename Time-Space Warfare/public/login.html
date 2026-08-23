@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>玩家登入 - 時空戰爭</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>加入時空戰爭</h1>
+<div class="card">
+  <input id="displayName" placeholder="輸入你的代號/姓名">
+  <button id="joinBtn">加入時空戰爭</button>
+  <p id="result"></p>
+</div>
+
+<script>
+document.getElementById('joinBtn').addEventListener('click', async () => {
+  const displayName = document.getElementById('displayName').value.trim();
+  const resultEl = document.getElementById('result');
+  if (!displayName) {
+    resultEl.textContent = '請輸入代號/姓名';
+    resultEl.className = 'error';
+    return;
+  }
+  try {
+    const res = await fetch('/api/auth/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName })
+    });
+    const data = await res.json();
+    resultEl.textContent = res.ok
+      ? `加入成功: ${JSON.stringify(data)}`
+      : `尚未實作 (${res.status}): ${data.error || ''}`;
+    resultEl.className = res.ok ? '' : 'error';
+  } catch (err) {
+    resultEl.textContent = '連線失敗: ' + err.message;
+    resultEl.className = 'error';
+  }
+});
+</script>
+</body>
+</html>

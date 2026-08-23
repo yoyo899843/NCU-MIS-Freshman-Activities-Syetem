@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>交摺點挑戰 - 時空戰爭</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>交摺點挑戰</h1>
+<div class="card">
+  <p>骨架階段：這裡之後會是掃碼後的知識王答題頁（html5-qrcode 掃碼 → 抽題 → 倒數計時作答）。</p>
+  <p id="qrToken"></p>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const qrToken = params.get('qrToken') || '(未帶入 qrToken 參數)';
+document.getElementById('qrToken').textContent = `qrToken: ${qrToken}`;
+</script>
+</body>
+</html>

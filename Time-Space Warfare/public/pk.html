@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PK 對戰 - 時空戰爭</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>PK 對戰</h1>
+<div class="card">
+  <button id="createBtn">發起 PK（開房）</button>
+  <p id="createResult"></p>
+</div>
+<div class="card">
+  <input id="roomCode" placeholder="輸入 6 碼房號">
+  <button id="joinBtn">加入 PK</button>
+  <p id="joinResult"></p>
+</div>
+
+<script>
+document.getElementById('createBtn').addEventListener('click', async () => {
+  const el = document.getElementById('createResult');
+  const res = await fetch('/api/pk/create', { method: 'POST' });
+  const data = await res.json();
+  el.textContent = res.ok ? JSON.stringify(data) : `尚未實作 (${res.status}): ${data.error || ''}`;
+  el.className = res.ok ? '' : 'error';
+});
+
+document.getElementById('joinBtn').addEventListener('click', async () => {
+  const roomCode = document.getElementById('roomCode').value.trim();
+  const el = document.getElementById('joinResult');
+  const res = await fetch('/api/pk/join', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomCode })
+  });
+  const data = await res.json();
+  el.textContent = res.ok ? JSON.stringify(data) : `尚未實作 (${res.status}): ${data.error || ''}`;
+  el.className = res.ok ? '' : 'error';
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+services:
+  portal:
+    image: nginx:alpine
+    container_name: ncumis-portal
+    restart: unless-stopped
+    ports:
+      - "9000:80"
+    volumes:
+      - ./public:/usr/share/nginx/html:ro
+    networks:
+      - ncumis-camp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  ncumis-camp:
+    external: true

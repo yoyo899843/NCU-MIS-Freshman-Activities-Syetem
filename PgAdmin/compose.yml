@@ -1,0 +1,26 @@
+services:
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ncumis-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    ports:
+      - "9002:80"
+    networks:
+      - ncumis-camp
+      - timewarfare-internal
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+
+volumes:
+  pgadmin-data:
+
+networks:
+  ncumis-camp:
+    external: true
+  # 由 Time-Space Warfare 的 compose 建立，這裡只是加入。
+  # 之後 RPG System / Stock Game 有自己的 db 時，回來這裡多接一條 external network 即可。
+  timewarfare-internal:
+    external: true

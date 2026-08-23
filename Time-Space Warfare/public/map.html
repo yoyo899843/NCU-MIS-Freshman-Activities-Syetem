@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大地圖 - 時空戰爭</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>大地圖</h1>
+<div class="card">
+  <p>骨架階段：這裡之後會放 Leaflet/Mapbox 地圖、9 個交摺點狀態、同隊隊友即時定位。</p>
+  <div id="checkpoints">載入中...</div>
+</div>
+
+<script>
+fetch('/api/map/checkpoints')
+  .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
+  .then(({ ok, status, data }) => {
+    document.getElementById('checkpoints').textContent = ok
+      ? JSON.stringify(data)
+      : `尚未實作 (${status}): ${data.error || ''}`;
+  })
+  .catch(err => {
+    document.getElementById('checkpoints').textContent = '連線失敗: ' + err.message;
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NCUMIS Camp</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>NCUMIS Camp</h1>
+
+<div id="announcements"></div>
+<div id="systems"></div>
+
+<script>
+async function load() {
+  const [announcements, systems] = await Promise.all([
+    fetch('announcements.json').then(r => r.json()),
+    fetch('systems.json').then(r => r.json())
+  ]);
+
+  const annEl = document.getElementById('announcements');
+  announcements.forEach(a => {
+    const div = document.createElement('div');
+    div.className = 'announcement';
+    div.innerHTML = `<strong>${a.title}</strong><p>${a.content}</p>`;
+    annEl.appendChild(div);
+  });
+
+  const sysEl = document.getElementById('systems');
+  systems.forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'card' + (s.url ? '' : ' disabled');
+    div.innerHTML = `<strong>${s.name}</strong><p>${s.description}</p>` +
+      (s.url ? `<a href="${s.url}">進入</a>` : `<span class="btn">尚未開放</span>`);
+    sysEl.appendChild(div);
+  });
+}
+load();
+</script>
+</body>
+</html>
