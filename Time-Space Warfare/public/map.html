@@ -5,25 +5,70 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>大地圖 - 時空戰爭</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  body { max-width: none; padding: 0; }
+  #map { height: 100vh; width: 100%; }
+  .top-bar {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    z-index: 1000;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.9rem;
+  }
+</style>
 </head>
 <body>
-<h1>大地圖</h1>
-<div class="card">
-  <p>骨架階段：這裡之後會放 Leaflet/Mapbox 地圖、9 個交摺點狀態、同隊隊友即時定位。</p>
-  <div id="checkpoints">載入中...</div>
+<div class="top-bar">
+  <strong>大地圖</strong> — 骨架階段：交摺點狀態、隊友即時定位待下一輪串接。
+  <span id="checkpointStatus"></span>
 </div>
+<div id="map"></div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+// 校園 bounding box（下載圖磚時用的同一個範圍）
+const BOUNDS = L.latLngBounds(
+  [24.964764, 121.184735],
+  [24.972425, 121.197936]
+);
+const CENTER = BOUNDS.getCenter();
+
+const map = L.map('map', {
+  minZoom: 15,
+  maxZoom: 19,
+  maxBounds: BOUNDS.pad(0.1),
+  maxBoundsViscosity: 1.0
+}).setView(CENTER, 17);
+
+// 自行 host 的校園範圍 tile 圖磚，不連外部 OSM tile server。
+L.tileLayer('/tiles/{z}/{x}/{y}.png', {
+  minZoom: 15,
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+// 交摺點標記：等 /api/map/checkpoints 接上真實資料後，這裡改成畫 9 個交摺點
+// 的位置 + 修復值/破壞值進度條。目前先呼叫 stub API 確認串接得起來。
 fetch('/api/map/checkpoints')
   .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
   .then(({ ok, status, data }) => {
-    document.getElementById('checkpoints').textContent = ok
-      ? JSON.stringify(data)
-      : `尚未實作 (${status}): ${data.error || ''}`;
+    document.getElementById('checkpointStatus').textContent = ok
+      ? `（${data.length || 0} 個交摺點）`
+      : `（交摺點資料尚未實作，${status}）`;
   })
-  .catch(err => {
-    document.getElementById('checkpoints').textContent = '連線失敗: ' + err.message;
+  .catch(() => {
+    document.getElementById('checkpointStatus').textContent = '（連線失敗）';
   });
+
+// 隊友即時定位：等玩家登入 + Socket.IO 'team:<teamId>' room 接上後，
+// 這裡改成監聽 'teammate:location' 事件，用 L.marker 即時更新隊友位置。
+// 目前骨架階段尚未連線，不會顯示任何玩家標記。
 </script>
 </body>
 </html>
