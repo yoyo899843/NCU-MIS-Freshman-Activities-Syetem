@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>題庫管理 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 720px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 0.9rem; }
+  th { background: #eee; }
+  .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  select { display: block; width: 100%; padding: 8px; margin-bottom: 8px; }
+  .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 0 0; }
+  .scope-tag { font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: #ddd; }
+</style>
+</head>
+<body>
+<h1>題庫管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <h3 id="formTitle">新增題目</h3>
+  <select id="scopeType">
+    <option value="general">通用題庫</option>
+    <option value="pk">PK 專用</option>
+    <option value="checkpoint">特定交摺點</option>
+  </select>
+  <select id="checkpointId" style="display:none"></select>
+
+  <input id="content" placeholder="題目內容">
+  <div class="options-grid">
+    <input id="optionA" placeholder="選項 A">
+    <input id="optionB" placeholder="選項 B">
+    <input id="optionC" placeholder="選項 C">
+    <input id="optionD" placeholder="選項 D">
+  </div>
+  <select id="correctOption">
+    <option value="A">正確答案：A</option>
+    <option value="B">正確答案：B</option>
+    <option value="C">正確答案：C</option>
+    <option value="D">正確答案：D</option>
+  </select>
+  <input id="timeLimitSeconds" type="number" min="1" value="10" placeholder="作答時限（秒）">
+
+  <button id="saveBtn">新增題目</button>
+  <button id="cancelEditBtn" style="display:none">取消編輯</button>
+  <p id="formResult" class="error"></p>
+</div>
+
+<div class="card">
+  <h3>CSV 批次匯入</h3>
+  <p style="font-size:0.85rem">欄位格式：關卡ID/PK, 題目, 選項A, 選項B, 選項C, 選項D, 正確選項, 秒數（關卡ID/PK 欄留空＝通用題庫，填 PK＝PK 專用，填交摺點 ID＝該交摺點專屬）</p>
+  <input type="file" id="csvFile" accept=".csv">
+  <button id="importBtn">上傳匯入</button>
+  <p id="importResult"></p>
+</div>
+
+<div class="card">
+  <h3>題目清單</h3>
+  <table>
+    <thead>
+      <tr><th>題目</th><th>歸屬</th><th>正確答案</th><th>時限</th><th></th></tr>
+    </thead>
+    <tbody id="questionsBody"></tbody>
+  </table>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+const authHeaders = { Authorization: 'Bearer ' + token };
+let checkpoints = [];
+let editingId = null;
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { ...authHeaders, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function scopeLabel(q) {
+  if (q.scope_type === 'pk') return 'PK 專用';
+  if (q.scope_type === 'general') return '通用';
+  const cp = checkpoints.find(c => c.id === q.checkpoint_id);
+  return '交摺點：' + (cp ? cp.name : `#${q.checkpoint_id}`);
+}
+
+async function loadCheckpoints() {
+  const res = await api('/checkpoints');
+  checkpoints = await res.json();
+  const sel = document.getElementById('checkpointId');
+  sel.innerHTML = checkpoints.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+}
+
+async function loadQuestions() {
+  const res = await api('/questions');
+  const questions = await res.json();
+  const body = document.getElementById('questionsBody');
+  body.innerHTML = questions.map(q => `
+    <tr>
+      <td>${escapeHtml(q.content)}</td>
+      <td><span class="scope-tag">${scopeLabel(q)}</span></td>
+      <td>${q.correct_option}</td>
+      <td>${q.time_limit_seconds}s</td>
+      <td class="row-actions">
+        <button onclick="startEdit(${q.id})">編輯</button>
+        <button onclick="deleteQuestion(${q.id})">刪除</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="5">目前沒有題目</td></tr>';
+  window.__questions = questions;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+document.getElementById('scopeType').addEventListener('change', e => {
+  document.getElementById('checkpointId').style.display = e.target.value === 'checkpoint' ? '' : 'none';
+});
+
+function readForm() {
+  return {
+    scopeType: document.getElementById('scopeType').value,
+    checkpointId: document.getElementById('scopeType').value === 'checkpoint'
+      ? parseInt(document.getElementById('checkpointId').value, 10)
+      : null,
+    content: document.getElementById('content').value.trim(),
+    optionA: document.getElementById('optionA').value.trim(),
+    optionB: document.getElementById('optionB').value.trim(),
+    optionC: document.getElementById('optionC').value.trim(),
+    optionD: document.getElementById('optionD').value.trim(),
+    correctOption: document.getElementById('correctOption').value,
+    timeLimitSeconds: parseInt(document.getElementById('timeLimitSeconds').value, 10)
+  };
+}
+
+function resetForm() {
+  editingId = null;
+  document.getElementById('formTitle').textContent = '新增題目';
+  document.getElementById('saveBtn').textContent = '新增題目';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  document.getElementById('scopeType').value = 'general';
+  document.getElementById('checkpointId').style.display = 'none';
+  document.getElementById('content').value = '';
+  document.getElementById('optionA').value = '';
+  document.getElementById('optionB').value = '';
+  document.getElementById('optionC').value = '';
+  document.getElementById('optionD').value = '';
+  document.getElementById('correctOption').value = 'A';
+  document.getElementById('timeLimitSeconds').value = 10;
+}
+
+window.startEdit = function (id) {
+  const q = window.__questions.find(x => x.id === id);
+  if (!q) return;
+  editingId = id;
+  document.getElementById('formTitle').textContent = `編輯題目 #${id}`;
+  document.getElementById('saveBtn').textContent = '更新題目';
+  document.getElementById('cancelEditBtn').style.display = '';
+  document.getElementById('scopeType').value = q.scope_type;
+  document.getElementById('checkpointId').style.display = q.scope_type === 'checkpoint' ? '' : 'none';
+  if (q.checkpoint_id) document.getElementById('checkpointId').value = q.checkpoint_id;
+  document.getElementById('content').value = q.content;
+  document.getElementById('optionA').value = q.option_a;
+  document.getElementById('optionB').value = q.option_b;
+  document.getElementById('optionC').value = q.option_c;
+  document.getElementById('optionD').value = q.option_d;
+  document.getElementById('correctOption').value = q.correct_option;
+  document.getElementById('timeLimitSeconds').value = q.time_limit_seconds;
+  window.scrollTo(0, 0);
+};
+
+window.deleteQuestion = async function (id) {
+  if (!confirm('確定要刪除這一題嗎？')) return;
+  await api(`/questions/${id}`, { method: 'DELETE' });
+  await loadQuestions();
+};
+
+document.getElementById('cancelEditBtn').addEventListener('click', resetForm);
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('formResult');
+  const body = readForm();
+  const method = editingId ? 'PATCH' : 'POST';
+  const path = editingId ? `/questions/${editingId}` : '/questions';
+
+  const res = await api(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  resetForm();
+  await loadQuestions();
+});
+
+document.getElementById('importBtn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('csvFile');
+  const resultEl = document.getElementById('importResult');
+  if (!fileInput.files[0]) {
+    resultEl.textContent = '請先選擇 CSV 檔案';
+    resultEl.className = 'error';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  const res = await api('/questions/import', { method: 'POST', body: formData });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    resultEl.className = 'error';
+    return;
+  }
+  resultEl.className = '';
+  resultEl.textContent = `匯入完成：成功 ${data.inserted} 筆，失敗 ${data.failed.length} 筆。` +
+    (data.failed.length ? ' 失敗原因：' + data.failed.map(f => f.reason).join('；') : '');
+  await loadQuestions();
+});
+
+(async () => {
+  await loadCheckpoints();
+  await loadQuestions();
+})();
+</script>
+</body>
+</html>

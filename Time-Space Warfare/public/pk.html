@@ -8,37 +8,176 @@
 </head>
 <body>
 <h1>PK 對戰</h1>
-<div class="card">
+
+<div id="notLoggedIn" class="card" style="display:none">
+  <p>請先<a href="login.html">登入</a>才能發起或加入 PK。</p>
+</div>
+
+<div id="lobby" class="card" style="display:none">
   <button id="createBtn">發起 PK（開房）</button>
-  <p id="createResult"></p>
-</div>
-<div class="card">
-  <input id="roomCode" placeholder="輸入 6 碼房號">
+  <p id="createResult" class="error"></p>
+  <hr>
+  <input id="roomCodeInput" placeholder="輸入 6 碼房號">
   <button id="joinBtn">加入 PK</button>
-  <p id="joinResult"></p>
+  <p id="joinResult" class="error"></p>
 </div>
 
-<script>
-document.getElementById('createBtn').addEventListener('click', async () => {
-  const el = document.getElementById('createResult');
-  const res = await fetch('/api/pk/create', { method: 'POST' });
-  const data = await res.json();
-  el.textContent = res.ok ? JSON.stringify(data) : `尚未實作 (${res.status}): ${data.error || ''}`;
-  el.className = res.ok ? '' : 'error';
-});
+<div id="waiting" class="card" style="display:none">
+  <p>房號：<strong id="roomCodeDisplay" style="font-size:1.5rem"></strong></p>
+  <p>把這組房號告訴對手，等待對方輸入加入...</p>
+</div>
 
-document.getElementById('joinBtn').addEventListener('click', async () => {
-  const roomCode = document.getElementById('roomCode').value.trim();
-  const el = document.getElementById('joinResult');
-  const res = await fetch('/api/pk/join', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ roomCode })
+<div id="quiz" class="card" style="display:none">
+  <p id="questionMeta"></p>
+  <p id="timer"></p>
+  <p id="questionContent" style="font-weight:bold"></p>
+  <div id="options"></div>
+</div>
+
+<div id="resultCard" class="card" style="display:none">
+  <p id="resultMessage" style="font-weight:bold"></p>
+  <a href="pk.html">再來一場</a>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const token = localStorage.getItem('playerToken');
+const playerInfo = JSON.parse(localStorage.getItem('playerInfo') || 'null');
+
+if (!token || !playerInfo) {
+  document.getElementById('notLoggedIn').style.display = '';
+} else {
+  document.getElementById('lobby').style.display = '';
+  initPk();
+}
+
+function initPk() {
+  const socket = io();
+  let currentDuelId = null;
+  let questionTimer = null;
+
+  function hideAll() {
+    ['lobby', 'waiting', 'quiz', 'resultCard'].forEach(id => {
+      document.getElementById(id).style.display = 'none';
+    });
+  }
+
+  // 每次「連上」都會執行(包含第一次連線，以及斷線後 Socket.IO 自動重連的那次)。
+  // 只要頁面還記得自己正在哪場對戰(currentDuelId 沒被清掉)，就自動重新 pk:enter 歸隊，
+  // 不用玩家自己重新操作。伺服器那邊如果對戰已經在進行中，會直接補送目前題目的進度。
+  socket.on('connect', () => {
+    if (!currentDuelId) return;
+    socket.emit('pk:enter', { duelId: currentDuelId, token }, ack => {
+      if (!ack.ok) alert('重新加入對戰失敗：' + ack.error);
+    });
   });
-  const data = await res.json();
-  el.textContent = res.ok ? JSON.stringify(data) : `尚未實作 (${res.status}): ${data.error || ''}`;
-  el.className = res.ok ? '' : 'error';
-});
+
+  document.getElementById('createBtn').addEventListener('click', async () => {
+    const el = document.getElementById('createResult');
+    const res = await fetch('/api/pk/create', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      el.textContent = `失敗 (${res.status}): ${data.error || ''}`;
+      return;
+    }
+    currentDuelId = data.duelId;
+    socket.emit('pk:enter', { duelId: currentDuelId, token }, ack => {
+      if (!ack.ok) alert('加入對戰失敗：' + ack.error);
+    });
+    hideAll();
+    document.getElementById('waiting').style.display = '';
+    document.getElementById('roomCodeDisplay').textContent = data.roomCode;
+  });
+
+  document.getElementById('joinBtn').addEventListener('click', async () => {
+    const roomCode = document.getElementById('roomCodeInput').value.trim();
+    const el = document.getElementById('joinResult');
+    if (!roomCode) { el.textContent = '請輸入房號'; return; }
+
+    const res = await fetch('/api/pk/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ roomCode })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      el.textContent = `失敗 (${res.status}): ${data.error || ''}`;
+      return;
+    }
+    currentDuelId = data.duelId;
+    socket.emit('pk:enter', { duelId: currentDuelId, token }, ack => {
+      if (!ack.ok) alert('加入對戰失敗：' + ack.error);
+    });
+    hideAll();
+    document.getElementById('quiz').style.display = '';
+    document.getElementById('questionContent').textContent = '等待對戰開始...';
+    document.getElementById('options').innerHTML = '';
+  });
+
+  socket.on('pk:question', q => {
+    hideAll();
+    document.getElementById('quiz').style.display = '';
+    document.getElementById('questionMeta').textContent = `第 ${q.questionIndex + 1} / ${q.totalQuestions} 題`;
+    document.getElementById('questionContent').textContent = q.content;
+
+    const optionsEl = document.getElementById('options');
+    optionsEl.innerHTML = '';
+    Object.entries(q.options).forEach(([key, text]) => {
+      const btn = document.createElement('button');
+      btn.textContent = `${key}. ${text}`;
+      btn.addEventListener('click', () => {
+        optionsEl.querySelectorAll('button').forEach(b => b.disabled = true);
+        socket.emit('pk:answer', {
+          duelId: currentDuelId,
+          questionIndex: q.questionIndex,
+          selectedOption: key
+        });
+      });
+      optionsEl.appendChild(btn);
+    });
+
+    let remaining = q.timeLimitSeconds;
+    document.getElementById('timer').textContent = `剩餘 ${remaining} 秒`;
+    if (questionTimer) clearInterval(questionTimer);
+    questionTimer = setInterval(() => {
+      remaining -= 1;
+      document.getElementById('timer').textContent = `剩餘 ${Math.max(remaining, 0)} 秒`;
+      if (remaining <= 0) clearInterval(questionTimer);
+    }, 1000);
+  });
+
+  // 重連後發現自己這一題其實已經作答過了，顯示等待對手，而不是讓玩家誤以為能重新選。
+  socket.on('pk:waiting', ({ questionIndex }) => {
+    if (questionTimer) clearInterval(questionTimer);
+    hideAll();
+    document.getElementById('quiz').style.display = '';
+    document.getElementById('questionMeta').textContent = `第 ${questionIndex + 1} 題`;
+    document.getElementById('timer').textContent = '';
+    document.getElementById('questionContent').textContent = '你已經作答過這一題，等待對手...';
+    document.getElementById('options').innerHTML = '';
+  });
+
+  socket.on('pk:result', result => {
+    if (questionTimer) clearInterval(questionTimer);
+    hideAll();
+    document.getElementById('resultCard').style.display = '';
+
+    const won = result.winnerPlayerId === playerInfo.player.id;
+    const byForfeit = result.reason === 'opponent_disconnected';
+    let text = won
+      ? (byForfeit ? '對方斷線超過 20 秒未回來，判你獲勝！' : '對戰勝利！')
+      : (byForfeit ? '你斷線超過 20 秒未回來，判對方獲勝。' : '對戰失敗！');
+    if (!won) {
+      text += result.penalty && result.penalty.amount > 0
+        ? ` 你的小隊在最近一個交摺點的 ${result.penalty.amount} 分已被扣除。`
+        : ' 你的小隊尚未有交摺點積分，不扣分。';
+    }
+    document.getElementById('resultMessage').textContent = text;
+  });
+}
 </script>
 </body>
 </html>

@@ -5,11 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>大會 Dashboard - 時空戰爭</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  body { max-width: none; text-align: center; padding-top: 10vh; }
+  #statusText { font-size: 3rem; font-weight: bold; }
+  .st-not_started { color: #999; }
+  .st-in_progress { color: #2a7d2a; }
+  .st-ended { color: #c00; }
+</style>
 </head>
 <body>
 <h1>大會集合投影 Dashboard</h1>
 <div class="card">
-  <p>骨架階段：這裡之後會是全螢幕戰況、倒數計時、一鍵最終結算按鈕。只接收全域廣播事件（checkpoint:update / game:state），不 join 任何隊伍私密頻道。</p>
+  <p id="statusText">載入中...</p>
+  <p style="font-size:0.85rem;color:#666">骨架階段：這裡之後會加上戰況比數、倒數計時。目前只即時反映遊戲進程狀態（不 join 任何隊伍私密頻道，只收全域廣播）。</p>
 </div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const labels = { not_started: '尚未開始', in_progress: '進行中', ended: '已結束' };
+
+function render(state) {
+  const el = document.getElementById('statusText');
+  el.textContent = labels[state.status] || state.status;
+  el.className = 'st-' + state.status;
+}
+
+fetch('/api/game/state').then(r => r.json()).then(render);
+
+const socket = io();
+socket.on('game:state', render);
+</script>
 </body>
 </html>

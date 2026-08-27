@@ -5,41 +5,108 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理後台 - 時空戰爭</title>
 <link rel="stylesheet" href="../style.css">
+<style>
+  .status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-weight: bold;
+    color: #fff;
+  }
+  .status-not_started { background: #999; }
+  .status-in_progress { background: #2a7d2a; }
+  .status-ended { background: #c00; }
+</style>
 </head>
 <body>
 <h1>管理後台</h1>
 <div class="card">
-  <p>骨架階段：交摺點管理、題庫管理、遊戲進程控制、戰況覆寫等功能留待下一輪開發。以下驗證登入狀態是否有效（呼叫一支受保護的 stub API）。</p>
-  <p id="status">檢查登入狀態中...</p>
+  <p class="nav"><a href="questions.html">題庫管理</a> <a href="pk-duels.html">PK 對戰管理</a></p>
+  <p>交摺點管理、一般積分戰況覆寫等功能留待下一輪開發。</p>
+</div>
+
+<div class="card">
+  <h3>遊戲進程控制</h3>
+  <p>目前狀態：<span id="statusBadge" class="status-badge">載入中...</span></p>
+  <p id="timestamps" style="font-size:0.85rem;color:#666"></p>
+  <button id="startBtn">開始遊戲</button>
+  <button id="endBtn">強制結束遊戲</button>
+  <p id="controlResult" class="error"></p>
+</div>
+
+<div class="card">
   <button id="logoutBtn">登出</button>
 </div>
 
 <script>
 const token = localStorage.getItem('adminToken');
-const statusEl = document.getElementById('status');
+if (!token) location.href = 'login.html';
 
-if (!token) {
-  location.href = 'login.html';
-} else {
-  fetch('/admin/api/game/state', {
-    headers: { Authorization: 'Bearer ' + token }
-  }).then(async res => {
-    if (res.status === 401) {
-      localStorage.removeItem('adminToken');
-      location.href = 'login.html';
-      return;
-    }
-    const data = await res.json();
-    statusEl.textContent = `登入有效。呼叫 /admin/api/game/state 回應 (${res.status}): ${JSON.stringify(data)}`;
-  }).catch(err => {
-    statusEl.textContent = '連線失敗: ' + err.message;
+const statusLabels = { not_started: '未開始', in_progress: '進行中', ended: '已結束' };
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
   });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
 }
+
+function renderState(state) {
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = statusLabels[state.status] || state.status;
+  badge.className = 'status-badge status-' + state.status;
+
+  const parts = [];
+  if (state.started_at) parts.push(`開始於 ${new Date(state.started_at).toLocaleString()}`);
+  if (state.ended_at) parts.push(`結束於 ${new Date(state.ended_at).toLocaleString()}`);
+  document.getElementById('timestamps').textContent = parts.join('　');
+
+  document.getElementById('startBtn').disabled = state.status === 'in_progress';
+  document.getElementById('endBtn').disabled = state.status !== 'in_progress';
+}
+
+async function loadState() {
+  const res = await api('/game/state');
+  renderState(await res.json());
+}
+
+document.getElementById('startBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('controlResult');
+  const res = await api('/game/start', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  renderState(data);
+});
+
+document.getElementById('endBtn').addEventListener('click', async () => {
+  if (!confirm('確定要強制結束遊戲嗎？結束後玩家就不能再發起新的 PK 對戰了。')) return;
+  const resultEl = document.getElementById('controlResult');
+  const res = await api('/game/end', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  renderState(data);
+});
 
 document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('adminToken');
   location.href = 'login.html';
 });
+
+loadState();
 </script>
 </body>
 </html>

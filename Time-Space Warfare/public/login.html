@@ -8,13 +8,31 @@
 </head>
 <body>
 <h1>加入時空戰爭</h1>
-<div class="card">
+<div class="card" id="loginCard">
   <input id="displayName" placeholder="輸入你的代號/姓名">
   <button id="joinBtn">加入時空戰爭</button>
   <p id="result"></p>
 </div>
+<div class="card" id="loggedInCard" style="display:none">
+  <p id="who"></p>
+  <p class="nav"><a href="pk.html">前往 PK 對戰</a> <a href="map.html">大地圖</a></p>
+  <button id="logoutBtn">登出</button>
+</div>
 
 <script>
+const existing = localStorage.getItem('playerToken');
+const existingPlayer = localStorage.getItem('playerInfo');
+if (existing && existingPlayer) {
+  showLoggedIn(JSON.parse(existingPlayer));
+}
+
+function showLoggedIn(info) {
+  document.getElementById('loginCard').style.display = 'none';
+  document.getElementById('loggedInCard').style.display = '';
+  document.getElementById('who').textContent =
+    `${info.player.displayName}（${info.team.faction === 'repair' ? '時空修復者' : '時空破壞者'}，隊伍 #${info.team.id}）`;
+}
+
 document.getElementById('joinBtn').addEventListener('click', async () => {
   const displayName = document.getElementById('displayName').value.trim();
   const resultEl = document.getElementById('result');
@@ -30,14 +48,24 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
       body: JSON.stringify({ displayName })
     });
     const data = await res.json();
-    resultEl.textContent = res.ok
-      ? `加入成功: ${JSON.stringify(data)}`
-      : `尚未實作 (${res.status}): ${data.error || ''}`;
-    resultEl.className = res.ok ? '' : 'error';
+    if (res.ok) {
+      localStorage.setItem('playerToken', data.token);
+      localStorage.setItem('playerInfo', JSON.stringify({ player: data.player, team: data.team }));
+      showLoggedIn(data);
+    } else {
+      resultEl.textContent = `加入失敗 (${res.status}): ${data.error || ''}`;
+      resultEl.className = 'error';
+    }
   } catch (err) {
     resultEl.textContent = '連線失敗: ' + err.message;
     resultEl.className = 'error';
   }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  localStorage.removeItem('playerToken');
+  localStorage.removeItem('playerInfo');
+  location.reload();
 });
 </script>
 </body>

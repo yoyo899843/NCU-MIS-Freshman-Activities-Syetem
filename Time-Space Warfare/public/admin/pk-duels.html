@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PK 對戰管理 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 900px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 0.85rem; }
+  th { background: #eee; }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
+  .tag-repair { background: #2a6dd1; }
+  .tag-disrupt { background: #c0392b; }
+  .tag-waiting { background: #999; color:#fff; }
+  .tag-active { background: #2a7d2a; color:#fff; }
+  .tag-completed { background: #555; color:#fff; }
+  .cancelled { text-decoration: line-through; color: #999; }
+  button { width: auto; padding: 4px 8px; }
+</style>
+</head>
+<body>
+<h1>PK 對戰管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <button id="refreshBtn">重新整理</button>
+  <table>
+    <thead>
+      <tr>
+        <th>房號</th>
+        <th>對戰雙方</th>
+        <th>狀態</th>
+        <th>勝負</th>
+        <th>扣分懲罰</th>
+        <th>建立時間</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="duelsBody"></tbody>
+  </table>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+const factionLabel = f => f === 'repair' ? '修復者' : f === 'disrupt' ? '破壞者' : f;
+const statusLabel = s => ({ waiting: '等待配對', active: '進行中', completed: '已結束' }[s] || s);
+
+function renderResult(d) {
+  if (d.status !== 'completed') return '-';
+  const nameOf = playerId => playerId === d.host_player_id ? d.host_name : d.guest_name;
+  return `勝：${nameOf(d.winner_player_id)}　敗：${nameOf(d.loser_player_id)}`;
+}
+
+function renderPenalty(d) {
+  if (!d.penalty_checkpoint_attempt_id || Number(d.penalty_amount) <= 0) return '無';
+  const cancelledClass = d.penalty_cancelled_at ? 'cancelled' : '';
+  const text = `<span class="${cancelledClass}">${d.checkpoint_name || '?'} -${d.penalty_amount}</span>`;
+  return d.penalty_cancelled_at ? `${text}（已取消）` : text;
+}
+
+function renderActions(d) {
+  const canCancel = d.status === 'completed' &&
+    d.penalty_checkpoint_attempt_id &&
+    Number(d.penalty_amount) > 0 &&
+    !d.penalty_cancelled_at;
+  if (!canCancel) return '';
+  return `<button onclick="cancelPenalty('${d.id}')">取消扣分</button>`;
+}
+
+async function loadDuels() {
+  const res = await api('/pk-duels');
+  const duels = await res.json();
+  document.getElementById('duelsBody').innerHTML = duels.map(d => `
+    <tr>
+      <td>${d.room_code}</td>
+      <td>
+        ${d.host_name} <span class="tag tag-${d.host_faction}">${factionLabel(d.host_faction)}</span>
+        vs
+        ${d.guest_name || '(尚未加入)'} ${d.guest_faction ? `<span class="tag tag-${d.guest_faction}">${factionLabel(d.guest_faction)}</span>` : ''}
+      </td>
+      <td><span class="tag tag-${d.status}">${statusLabel(d.status)}</span></td>
+      <td>${renderResult(d)}</td>
+      <td>${renderPenalty(d)}</td>
+      <td>${new Date(d.created_at).toLocaleString()}</td>
+      <td>${renderActions(d)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="7">目前沒有任何 PK 對戰紀錄</td></tr>';
+}
+
+window.cancelPenalty = async function (duelId) {
+  if (!confirm('確定要取消這場對戰的扣分懲罰嗎？分數會加回對應的交摺點。')) return;
+  const res = await api(`/overrides/pk/${duelId}/cancel-penalty`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error || `失敗 (${res.status})`);
+    return;
+  }
+  await loadDuels();
+};
+
+document.getElementById('refreshBtn').addEventListener('click', loadDuels);
+loadDuels();
+</script>
+</body>
+</html>
