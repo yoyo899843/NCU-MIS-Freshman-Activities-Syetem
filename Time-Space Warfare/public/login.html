@@ -9,9 +9,10 @@
 <body>
 <h1>加入時空戰爭</h1>
 <div class="card" id="loginCard">
-  <input id="displayName" placeholder="輸入你的代號/姓名">
+  <input id="displayName" placeholder="輸入你的代號/姓名（最多 10 個字）" maxlength="10">
+  <input id="pin" placeholder="設定 4 碼 PIN（掉線/換手機用同一組代號+PIN 找回身份）" maxlength="4" inputmode="numeric" pattern="[0-9]*">
   <button id="joinBtn">加入時空戰爭</button>
-  <p id="result"></p>
+  <p id="result" class="error"></p>
 </div>
 <div class="card" id="loggedInCard" style="display:none">
   <p id="who"></p>
@@ -35,30 +36,35 @@ function showLoggedIn(info) {
 
 document.getElementById('joinBtn').addEventListener('click', async () => {
   const displayName = document.getElementById('displayName').value.trim();
+  const pin = document.getElementById('pin').value.trim();
   const resultEl = document.getElementById('result');
+
   if (!displayName) {
     resultEl.textContent = '請輸入代號/姓名';
-    resultEl.className = 'error';
     return;
   }
+  if (!/^\d{4}$/.test(pin)) {
+    resultEl.textContent = 'PIN 要剛好 4 碼數字';
+    return;
+  }
+
   try {
     const res = await fetch('/api/auth/join', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ displayName })
+      body: JSON.stringify({ displayName, pin })
     });
     const data = await res.json();
     if (res.ok) {
+      resultEl.textContent = '';
       localStorage.setItem('playerToken', data.token);
       localStorage.setItem('playerInfo', JSON.stringify({ player: data.player, team: data.team }));
       showLoggedIn(data);
     } else {
       resultEl.textContent = `加入失敗 (${res.status}): ${data.error || ''}`;
-      resultEl.className = 'error';
     }
   } catch (err) {
     resultEl.textContent = '連線失敗: ' + err.message;
-    resultEl.className = 'error';
   }
 });
 
