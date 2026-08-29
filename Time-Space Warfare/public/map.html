@@ -31,13 +31,16 @@
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="geofence.js"></script>
 <script>
-// 校園 bounding box（下載圖磚時用的同一個範圍）
+// 校園 bounding box（跟 geofence.js 的 CAMPUS_BOUNDS 是同一個範圍）
 const BOUNDS = L.latLngBounds(
   [24.964764, 121.184735],
   [24.972425, 121.197936]
 );
 const CENTER = BOUNDS.getCenter();
+
+startGeofence();
 
 const map = L.map('map', {
   minZoom: 15,
