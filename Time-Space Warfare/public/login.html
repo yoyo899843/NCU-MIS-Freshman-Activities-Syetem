@@ -34,6 +34,11 @@ function showLoggedIn(info) {
     `${info.player.displayName}（${info.team.faction === 'repair' ? '時空修復者' : '時空破壞者'}，隊伍 #${info.team.id}）`;
 }
 
+// PIN 輸入當下就擋掉非數字字元（不管是打字還是貼上），不是等送出才檢查格式。
+document.getElementById('pin').addEventListener('input', e => {
+  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
+});
+
 document.getElementById('joinBtn').addEventListener('click', async () => {
   const displayName = document.getElementById('displayName').value.trim();
   const pin = document.getElementById('pin').value.trim();
