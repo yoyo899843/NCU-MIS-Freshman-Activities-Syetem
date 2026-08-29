@@ -1,0 +1,36 @@
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+  background: #f5f5f5;
+}
+
+h1 { font-size: 1.4rem; }
+
+input, button {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+button {
+  background: #333;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.error { color: #c00; }
+.nav a { margin-right: 12px; }

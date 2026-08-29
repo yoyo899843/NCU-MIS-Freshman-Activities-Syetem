@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理後台 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<h1>管理後台</h1>
+<div class="card">
+  <p>骨架階段：關卡/線索/權限碼/科技樹/長老/遊戲進程等管理功能留待下一輪開發。以下驗證登入狀態是否有效（呼叫一支受保護的 stub API）。</p>
+  <p id="status">檢查登入狀態中...</p>
+  <button id="logoutBtn">登出</button>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+const statusEl = document.getElementById('status');
+
+if (!token) {
+  location.href = 'login.html';
+} else {
+  fetch('/admin/api/game/state', {
+    headers: { Authorization: 'Bearer ' + token }
+  }).then(async res => {
+    if (res.status === 401) {
+      localStorage.removeItem('adminToken');
+      location.href = 'login.html';
+      return;
+    }
+    const data = await res.json();
+    statusEl.textContent = `登入有效。呼叫 /admin/api/game/state 回應 (${res.status}): ${JSON.stringify(data)}`;
+  }).catch(err => {
+    statusEl.textContent = '連線失敗: ' + err.message;
+  });
+}
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  localStorage.removeItem('adminToken');
+  location.href = 'login.html';
+});
+</script>
+</body>
+</html>

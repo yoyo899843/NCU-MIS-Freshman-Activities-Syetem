@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>學派登入 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>資管皇家學院數位探查儀</h1>
+<div class="card" id="loginCard">
+  <input id="username" placeholder="學派帳號">
+  <input id="password" type="password" placeholder="密碼">
+  <button id="loginBtn">登入</button>
+  <p id="result" class="error"></p>
+</div>
+<div class="card" id="loggedInCard" style="display:none">
+  <p id="who"></p>
+  <p class="nav"><a href="index.html">前往儀表板</a></p>
+  <button id="logoutBtn">登出</button>
+</div>
+
+<script>
+const existing = localStorage.getItem('schoolToken');
+const existingSchool = localStorage.getItem('schoolInfo');
+if (existing && existingSchool) {
+  showLoggedIn(JSON.parse(existingSchool));
+}
+
+function showLoggedIn(info) {
+  document.getElementById('loginCard').style.display = 'none';
+  document.getElementById('loggedInCard').style.display = '';
+  document.getElementById('who').textContent = `已登入：${info.displayName}`;
+}
+
+document.getElementById('loginBtn').addEventListener('click', async () => {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const resultEl = document.getElementById('result');
+
+  if (!username || !password) {
+    resultEl.textContent = '請輸入帳號與密碼';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      resultEl.textContent = '';
+      localStorage.setItem('schoolToken', data.token);
+      localStorage.setItem('schoolInfo', JSON.stringify(data.school));
+      showLoggedIn(data.school);
+    } else {
+      resultEl.textContent = `登入失敗 (${res.status}): ${data.error || ''}`;
+    }
+  } catch (err) {
+    resultEl.textContent = '連線失敗: ' + err.message;
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  localStorage.removeItem('schoolToken');
+  localStorage.removeItem('schoolInfo');
+  location.reload();
+});
+</script>
+</body>
+</html>

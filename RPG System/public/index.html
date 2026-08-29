@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>儀表板 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>資管皇家學院數位探查儀</h1>
+
+<div id="notLoggedIn" class="card" style="display:none">
+  <p>請先<a href="login.html">登入</a>學派帳號。</p>
+</div>
+
+<div id="dashboard" class="card" style="display:none">
+  <p id="who"></p>
+  <p class="nav">
+    <a href="map.html">探索導覽</a>
+    <a href="clue-scan.html">線索掃描</a>
+    <a href="clue-vault.html">線索庫</a>
+    <a href="tech-tree.html">數位偵探</a>
+    <a href="voting.html">最終決策</a>
+  </p>
+  <button id="logoutBtn">登出</button>
+</div>
+
+<script>
+const token = localStorage.getItem('schoolToken');
+const schoolInfo = JSON.parse(localStorage.getItem('schoolInfo') || 'null');
+
+if (!token || !schoolInfo) {
+  document.getElementById('notLoggedIn').style.display = '';
+} else {
+  document.getElementById('dashboard').style.display = '';
+  document.getElementById('who').textContent = `目前登入學派：${schoolInfo.displayName}`;
+}
+
+document.getElementById('logoutBtn')?.addEventListener('click', () => {
+  localStorage.removeItem('schoolToken');
+  localStorage.removeItem('schoolInfo');
+  location.reload();
+});
+</script>
+</body>
+</html>

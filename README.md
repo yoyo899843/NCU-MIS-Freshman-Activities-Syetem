@@ -3,8 +3,9 @@
 校園大地對抗遊戲活動系統。共有 4 個獨立子系統，各自一個資料夾、各自的 `compose.yml`、各自的 Postgres DB，彼此不共用、不耦合：
 
 - `Portal/` — 玩家入口頁（連結 + 公告），純靜態，無登入無資料庫。
-- `Time-Space Warfare/` — 時空修復者 / 時空破壞者對抗遊戲（唯一目前有完整玩法規格並實際搭建的系統）。
-- `RPG System/`、`Stock Game/` — 尚未開發，目前是空資料夾。
+- `Time-Space Warfare/` — 時空修復者 / 時空破壞者對抗遊戲，已實際搭建（PK 對戰、題庫管理、遊戲進程控制、GPS 圍籬等功能完成）。
+- `RPG System/` — 資管皇家學院數位探查儀，已搭建基礎骨架（帳號登入、資料庫 schema、六大模組頁面，實際遊戲邏輯待後續開發）。
+- `Stock Game/` — 尚未開發，目前是空資料夾。
 - `PgAdmin/` — 全系統共用的資料庫管理介面，只給系統管理員本人使用，不釋出給活動工作人員（admin）帳號。
 
 ## 啟動前置作業
@@ -38,7 +39,7 @@ docker compose up -d
 | Portal | 9000 |
 | Time-Space Warfare app | 9001 |
 | PgAdmin | 9002 |
-| RPG System app(未來) | 9003 |
+| RPG System app | 9003 |
 | Stock Game app(未來) | 9004 |
 
 ## Cloudflare Tunnel
@@ -47,4 +48,6 @@ Tunnel 本身由使用者在 Cloudflare dashboard 手動建立與設定 ingress 
 
 ## Admin 帳號
 
-每個活動系統(Time-Space Warfare 等)的 `/admin` 後台帳號,一律由系統管理員在伺服器上執行該系統資料夾內的 `node scripts/create-admin.js` 建立,沒有任何 HTTP 端點可以新增帳號。PgAdmin 的帳密則只有系統管理員本人持有,不對外流通。
+每個活動系統(Time-Space Warfare、RPG System 等)的 `/admin` 後台帳號,一律由系統管理員在伺服器上執行該系統資料夾內的 `node scripts/create-admin.js` 建立,沒有任何 HTTP 端點可以新增帳號。PgAdmin 的帳密則只有系統管理員本人持有,不對外流通。
+
+`RPG System` 另外還有 5 組固定的學派帳號(不是玩家自行註冊),由主辦執行 `node scripts/create-school.js <username> <password> <displayName>` 建立/重設。

@@ -227,3 +227,16 @@
 
 - Web framework：Express.js。
 - DB 存取：不用 ORM，直接用 `pg` 套件下 SQL，搭配手寫 migration script。
+
+## RPG System（資管皇家學院數位探查儀）— 骨架建置（實作完成）
+
+第三個子系統，`RPG System/` 從空資料夾建成完整骨架，架構與檔案結構**完全比照 `Time-Space Warfare`**（同一套 `db.js`/`asyncHandler.js`/JWT 角色分離模式/migration runner），host port 用 **9003**。跟 `Time-Space Warfare` 最大的不同是帳號模式：**5 組學派帳號是主辦事先用 CLI script 建好的固定帳密**（不是玩家活動當天自行輸入代號+PIN 註冊），所以沒有 Time-Space Warfare 那種「隊伍數上限」「代號重複=找回身份」邏輯，單純是 username/password 登入，密碼用 bcrypt 雜湊（跟 admin 帳號一樣，因為這是主辦自己設定的固定密碼，不是玩家可能忘記要查詢的 PIN）。
+
+- **資料庫**（`migrations/001_init.sql`）：15 張表涵蓋六大模組——`schools`（學派帳號）、`checkpoints` + `school_checkpoint_progress`（10 個關卡點位＋每隊各自的解鎖/挑戰狀態）、`clues` + `school_clues`（線索與線索庫）、`access_codes` + `school_code_redemptions`（權限碼可以給多隊兌換，但每隊只能兌換一次）、`tech_tree_branches` + `tech_tree_slots` + `school_slot_placements` + `school_check_attempts` + `school_branch_unlocks`（科技樹核心機制，含每次「檢查邏輯」的完整嘗試紀錄，用來算扣分跟稽核）、`elders` + `school_votes`（長老投票）、`game_state`（比 Time-Space Warfare 多一個 `voting_unlocked_at`，投票開關獨立於整體遊戲狀態，呼應規格「由後台/計時器統一解鎖」）、`admin_users` + `admin_actions`（比照 Time-Space Warfare 原樣）。計分刻意不存累計欄位，即時從 `school_slot_placements`/`school_check_attempts` 算，避免跟實際資料兜不起來。
+- **後端**：`src/routes/auth.js`（學派登入，✅ 真的實作，含失敗次數鎖定）、`src/routes/admin.js`（admin 登入 ✅ 真的實作，其餘 checkpoint/clue/access-code/tech-tree/elder/game-control/scoreboard 全部 stub 回 501）、`src/middleware/schoolAuth.js` + `adminAuth.js`（角色分離，跟 Time-Space Warfare 一樣互不通用）。沒有用 Socket.IO——這個系統目前規格沒有要求即時推播，一般 REST 操作後重抓資料就夠。
+- **前端**：`login.html`（真的可登入）、`index.html`（Dashboard，登入後顯示六大模組入口連結）、`map.html`/`clue-scan.html`/`clue-vault.html`/`tech-tree.html`/`voting.html`（各自呼叫對應 stub API，顯示「尚未實作」，比照 Time-Space Warfare 骨架階段的做法）、`admin/login.html`/`admin/index.html`。
+- **CLI 帳號管理**：`scripts/create-admin.js`（複製 Time-Space Warfare 版本）、`scripts/create-school.js`（新的，`node scripts/create-school.js <username> <password> <displayName>`，同一個 username 重複執行就是重設密碼）。
+- **PgAdmin 已接上**：`PgAdmin/compose.yml` 多接了 `rpg-internal` network，重啟後確認能解析到 `rpg-db`——這是等 `RPG System` 自己的 db 建好之後才回頭做的（比照當初 `Time-Space Warfare` 上線後才把 `PgAdmin` 接上去的順序，`PLAN.md` 先前就記錄過這個「之後回來接」的計畫）。
+- **已測試**：全部 15 張資料表建立成功；`/health` 回 200；未帶 token 打 `/admin/api/*` 回 401；建一組學派帳號 + admin 帳號，兩邊登入都成功，密碼錯誤正確回 401；**交叉測試角色隔離**——拿學派 token 打 admin API 被拒（`not an admin token`）、拿 admin token 打學派 API 也被拒（`not a school token`），確認沒有重蹈 Time-Space Warfare 當初發現過的「JWT 只驗簽章沒驗角色」那個漏洞；所有 stub 端點正確回 501；`rpg-db` 沒有加入 `ncumis-camp` 共用網路，只有 `rpg-app` 加入；用 Playwright 開真瀏覽器測完整登入流程（登入 → 換頁 → Dashboard 正確顯示學派中文名稱與六大模組連結），過程無 JS 錯誤。
+
+**之後幾輪才做**：科技樹拖曳互動與檢查邏輯判定、QR 掃描、地圖視覺化呈現方式、權限碼兌換與投票的實際邏輯、admin 端全部 CRUD 與後台管理介面。

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>線索庫 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>線索庫</h1>
+<p class="nav"><a href="index.html">&laquo; 回儀表板</a></p>
+
+<div id="notLoggedIn" class="card" style="display:none">
+  <p>請先<a href="login.html">登入</a>學派帳號。</p>
+</div>
+
+<div id="content" class="card" style="display:none">
+  <p>骨架階段：這裡之後會依取得時間序列出所有已解鎖線索，點擊可看詳細圖文描述。</p>
+  <p id="result"></p>
+</div>
+
+<script>
+const token = localStorage.getItem('schoolToken');
+if (!token) {
+  document.getElementById('notLoggedIn').style.display = '';
+} else {
+  document.getElementById('content').style.display = '';
+  fetch('/api/clues/vault', { headers: { Authorization: 'Bearer ' + token } })
+    .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
+    .then(({ ok, status, data }) => {
+      document.getElementById('result').textContent = ok
+        ? JSON.stringify(data)
+        : `尚未實作 (${status}): ${data.error || ''}`;
+    })
+    .catch(err => {
+      document.getElementById('result').textContent = '連線失敗: ' + err.message;
+    });
+}
+</script>
+</body>
+</html>

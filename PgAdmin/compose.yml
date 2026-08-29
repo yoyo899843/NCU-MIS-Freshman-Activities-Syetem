@@ -11,6 +11,7 @@ services:
     networks:
       - ncumis-camp
       - timewarfare-internal
+      - rpg-internal
     volumes:
       - pgadmin-data:/var/lib/pgadmin
 
@@ -20,7 +21,9 @@ volumes:
 networks:
   ncumis-camp:
     external: true
-  # 由 Time-Space Warfare 的 compose 建立，這裡只是加入。
-  # 之後 RPG System / Stock Game 有自己的 db 時，回來這裡多接一條 external network 即可。
+  # 由各系統自己的 compose 建立，這裡只是加入。
+  # 之後 Stock Game 有自己的 db 時，回來這裡多接一條 external network 即可。
   timewarfare-internal:
+    external: true
+  rpg-internal:
     external: true

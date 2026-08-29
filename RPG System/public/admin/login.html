@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理後台登入 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<h1>管理後台登入</h1>
+<div class="card">
+  <input id="email" type="email" placeholder="Email">
+  <input id="password" type="password" placeholder="密碼">
+  <button id="loginBtn">登入</button>
+  <p id="result" class="error"></p>
+</div>
+
+<script>
+document.getElementById('loginBtn').addEventListener('click', async () => {
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const resultEl = document.getElementById('result');
+
+  try {
+    const res = await fetch('/admin/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      localStorage.setItem('adminToken', data.token);
+      location.href = 'index.html';
+    } else {
+      resultEl.textContent = data.error || `登入失敗 (${res.status})`;
+    }
+  } catch (err) {
+    resultEl.textContent = '連線失敗: ' + err.message;
+  }
+});
+</script>
+</body>
+</html>

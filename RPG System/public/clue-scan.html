@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>線索掃描 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>線索掃描</h1>
+<p class="nav"><a href="index.html">&laquo; 回儀表板</a></p>
+
+<div id="notLoggedIn" class="card" style="display:none">
+  <p>請先<a href="login.html">登入</a>學派帳號。</p>
+</div>
+
+<div id="content" class="card" style="display:none">
+  <p>骨架階段：這裡之後會是相機掃描 QR Code 的畫面（html5-qrcode），先用輸入框模擬。</p>
+  <input id="qrToken" placeholder="輸入/貼上 QR Code 內容（模擬掃描）">
+  <button id="scanBtn">送出</button>
+  <p id="result"></p>
+</div>
+
+<script>
+const token = localStorage.getItem('schoolToken');
+if (!token) {
+  document.getElementById('notLoggedIn').style.display = '';
+} else {
+  document.getElementById('content').style.display = '';
+}
+
+document.getElementById('scanBtn')?.addEventListener('click', async () => {
+  const qrToken = document.getElementById('qrToken').value.trim();
+  const resultEl = document.getElementById('result');
+  const res = await fetch('/api/clues/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ qrToken })
+  });
+  const data = await res.json();
+  resultEl.textContent = res.ok ? JSON.stringify(data) : `尚未實作 (${res.status}): ${data.error || ''}`;
+});
+</script>
+</body>
+</html>
