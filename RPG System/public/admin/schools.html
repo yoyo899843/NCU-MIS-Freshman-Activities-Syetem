@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>學派管理 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+  td.password { font-family: monospace; }
+  button.small { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 0 0; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<h1>學派管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <p>密碼明碼儲存，可直接在下方清單查看——這是主辦控制的固定帳號，不是玩家自己設的密碼，方便忘記密碼時直接查、不用重設。</p>
+  <input id="usernameInput" placeholder="帳號（例如 school1）">
+  <input id="passwordInput" placeholder="密碼（至少 8 個字元）">
+  <input id="displayNameInput" placeholder="顯示名稱（例如 資管一系）">
+  <button id="createBtn">新增學派帳號</button>
+  <p id="createResult" class="error"></p>
+</div>
+
+<div class="card">
+  <label><input type="checkbox" id="showPasswords" style="width:auto;display:inline"> 顯示密碼明碼</label>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>帳號</th><th>密碼</th><th>顯示名稱</th><th>建立時間</th><th></th></tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+  <p id="listError" class="error"></p>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+let showPasswords = false;
+document.getElementById('showPasswords').addEventListener('change', e => {
+  showPasswords = e.target.checked;
+  renderTable(lastData);
+});
+
+let lastData = [];
+
+async function loadList() {
+  const res = await fetch('/admin/api/schools', { headers: { Authorization: 'Bearer ' + token } });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    return;
+  }
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById('listError').textContent = `讀取失敗 (${res.status}): ${data.error || ''}`;
+    return;
+  }
+  lastData = data;
+  renderTable(data);
+}
+
+function renderTable(data) {
+  const body = document.getElementById('tableBody');
+  body.innerHTML = '';
+  data.forEach(row => {
+    const tr = document.createElement('tr');
+    const passwordText = showPasswords ? row.password : '••••••••';
+    tr.innerHTML = `
+      <td>${row.id}</td>
+      <td>${row.username}</td>
+      <td class="password">${passwordText}</td>
+      <td>${row.display_name}</td>
+      <td>${new Date(row.created_at).toLocaleString('zh-TW')}</td>
+      <td>
+        <button class="small resetBtn" data-id="${row.id}">重設密碼</button>
+        <button class="small deleteBtn" data-id="${row.id}">刪除</button>
+      </td>
+    `;
+    body.appendChild(tr);
+  });
+  document.querySelectorAll('.resetBtn').forEach(btn => {
+    btn.addEventListener('click', () => resetPassword(btn.dataset.id));
+  });
+  document.querySelectorAll('.deleteBtn').forEach(btn => {
+    btn.addEventListener('click', () => deleteSchool(btn.dataset.id));
+  });
+}
+
+async function resetPassword(id) {
+  const newPassword = prompt('輸入新密碼（至少 8 個字元）：');
+  if (!newPassword) return;
+  const res = await fetch('/admin/api/schools/' + id, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ password: newPassword })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(`重設失敗 (${res.status}): ${data.error || ''}`);
+    return;
+  }
+  loadList();
+}
+
+async function deleteSchool(id) {
+  if (!confirm('確定要刪除這個學派帳號嗎？若這隊已經有遊戲進度會被擋下來。')) return;
+  const res = await fetch('/admin/api/schools/' + id, {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer ' + token }
+  });
+  if (res.status === 204) {
+    loadList();
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  alert(`刪除失敗 (${res.status}): ${data.error || ''}`);
+}
+
+document.getElementById('createBtn').addEventListener('click', async () => {
+  const username = document.getElementById('usernameInput').value.trim();
+  const password = document.getElementById('passwordInput').value;
+  const displayName = document.getElementById('displayNameInput').value.trim();
+  const resultEl = document.getElementById('createResult');
+
+  const res = await fetch('/admin/api/schools', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ username, password, displayName })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = `新增失敗 (${res.status}): ${data.error || ''}`;
+    return;
+  }
+  resultEl.textContent = '';
+  document.getElementById('usernameInput').value = '';
+  document.getElementById('passwordInput').value = '';
+  document.getElementById('displayNameInput').value = '';
+  loadList();
+});
+
+if (token) loadList();
+</script>
+</body>
+</html>

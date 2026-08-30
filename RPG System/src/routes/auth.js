@@ -1,6 +1,5 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const db = require('../db');
 const schoolAuth = require('../middleware/schoolAuth');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -39,7 +38,9 @@ router.post('/login', asyncHandler(async (req, res) => {
 
   if (!school) return genericError();
 
-  const valid = await bcrypt.compare(password, school.password_hash);
+  // 明碼比對（不雜湊）——主辦需要能透過「學派管理」後台直接查看/管理每組固定帳密，
+  // 雜湊過就永遠查不回來了。見 migrations/003_school_password_plaintext.sql。
+  const valid = school.password && school.password === password;
   if (!valid) return genericError();
 
   failedAttempts.delete(username);

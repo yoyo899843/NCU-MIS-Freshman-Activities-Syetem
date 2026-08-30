@@ -55,6 +55,87 @@ router.post('/login', asyncHandler(async (req, res) => {
 // 以下全部需要登入
 router.use(adminAuth);
 
+// 學派管理：帳號密碼明碼儲存（不雜湊）——這是主辦控制的固定帳號，不是玩家自己設的
+// 密碼，主辦需要能直接在後台查到/管理每組學派目前的帳密（例如忘記密碼時直接看，
+// 不用重設），理由跟 Time-Space Warfare 玩家 PIN 明碼儲存一樣。
+// 見 migrations/003_school_password_plaintext.sql、src/routes/auth.js 的登入比對。
+router.get('/schools', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, username, password, display_name, created_at FROM schools ORDER BY id ASC'
+  );
+  res.json(rows);
+}));
+
+router.post('/schools', asyncHandler(async (req, res) => {
+  const { username, password, displayName } = req.body || {};
+  if (!username || typeof username !== 'string' || !username.trim()) {
+    return res.status(400).json({ error: 'username is required' });
+  }
+  if (!password || typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: 'password must be at least 8 characters' });
+  }
+  if (!displayName || typeof displayName !== 'string' || !displayName.trim()) {
+    return res.status(400).json({ error: 'displayName is required' });
+  }
+
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO schools (username, password, display_name)
+       VALUES ($1, $2, $3)
+       RETURNING id, username, password, display_name, created_at`,
+      [username.trim(), password, displayName.trim()]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'username already exists' });
+    throw err;
+  }
+}));
+
+// 部分更新：改密碼、改顯示名稱，或兩個一起改。至少要帶一個欄位。
+router.patch('/schools/:id', asyncHandler(async (req, res) => {
+  const { password, displayName } = req.body || {};
+  if (password === undefined && displayName === undefined) {
+    return res.status(400).json({ error: 'nothing to update' });
+  }
+  if (password !== undefined && (typeof password !== 'string' || password.length < 8)) {
+    return res.status(400).json({ error: 'password must be at least 8 characters' });
+  }
+  if (displayName !== undefined && (typeof displayName !== 'string' || !displayName.trim())) {
+    return res.status(400).json({ error: 'displayName cannot be empty' });
+  }
+
+  const { rows: existingRows } = await db.query('SELECT * FROM schools WHERE id = $1', [req.params.id]);
+  if (existingRows.length === 0) return res.status(404).json({ error: 'not found' });
+  const existing = existingRows[0];
+
+  const { rows } = await db.query(
+    `UPDATE schools SET password = $1, display_name = $2 WHERE id = $3
+     RETURNING id, username, password, display_name, created_at`,
+    [
+      password !== undefined ? password : existing.password,
+      displayName !== undefined ? displayName.trim() : existing.display_name,
+      req.params.id
+    ]
+  );
+  res.json(rows[0]);
+}));
+
+router.delete('/schools/:id', asyncHandler(async (req, res) => {
+  try {
+    const { rowCount } = await db.query('DELETE FROM schools WHERE id = $1', [req.params.id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'not found' });
+    res.status(204).end();
+  } catch (err) {
+    // 這支隊伍已經留下遊戲進度（解鎖記錄、線索、兌換記錄等），FK 擋刪除，
+    // 避免刪帳號的同時默默把玩過的紀錄弄不見。
+    if (err.code === '23503') {
+      return res.status(409).json({ error: 'cannot delete a school that already has game progress' });
+    }
+    throw err;
+  }
+}));
+
 router.get('/checkpoints', (req, res) => res.status(501).json({ error: 'not implemented' }));
 router.post('/checkpoints', (req, res) => res.status(501).json({ error: 'not implemented' }));
 router.patch('/checkpoints/:id', (req, res) => res.status(501).json({ error: 'not implemented' }));
