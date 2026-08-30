@@ -77,6 +77,22 @@ fetch('/api/map/checkpoints')
 // 'team:<teamId>' room），看不到敵方。座標刻意不落地到 DB，斷線就會從地圖上消失。
 const teammateMarkers = new Map(); // playerId -> L.Marker
 
+// 自己的位置：不用等伺服器廣播（伺服器本來就不會把座標送回發送者自己），
+// 收到 GPS 更新的當下直接畫在地圖上，用跟隊友不同的樣式（藍色圓點）分辨。
+let selfMarker = null;
+function updateSelfMarker(lat, lng) {
+  if (!selfMarker) {
+    selfMarker = L.circleMarker([lat, lng], {
+      radius: 8,
+      color: '#06c',
+      fillColor: '#06c',
+      fillOpacity: 0.9
+    }).addTo(map).bindTooltip('你的位置', { permanent: true });
+  } else {
+    selfMarker.setLatLng([lat, lng]);
+  }
+}
+
 if (token && playerInfo) {
   const socket = io();
 
@@ -106,10 +122,13 @@ if (token && playerInfo) {
     }
   });
 
-  startGeofence((lat, lng) => socket.emit('team:location', { lat, lng }));
+  startGeofence((lat, lng) => {
+    updateSelfMarker(lat, lng);
+    socket.emit('team:location', { lat, lng });
+  });
 } else {
   document.getElementById('teamStatus').textContent = '（未登入，不分享/顯示隊友定位）';
-  startGeofence();
+  startGeofence(updateSelfMarker);
 }
 </script>
 </body>
