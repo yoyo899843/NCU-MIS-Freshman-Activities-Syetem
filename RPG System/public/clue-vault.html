@@ -8,15 +8,16 @@
 </head>
 <body>
 <h1>線索庫</h1>
-<p class="nav"><a href="index.html">&laquo; 回儀表板</a></p>
+<p class="nav"><a href="index.html">&laquo; 回儀表板</a> <a href="redeem.html">權限碼兌換</a></p>
 
 <div id="notLoggedIn" class="card" style="display:none">
   <p>請先<a href="login.html">登入</a>學派帳號。</p>
 </div>
 
 <div id="content" class="card" style="display:none">
-  <p>骨架階段：這裡之後會依取得時間序列出所有已解鎖線索，點擊可看詳細圖文描述。</p>
-  <p id="result"></p>
+  <p id="empty" style="display:none">還沒有任何線索——去掃描 QR Code 或兌換權限碼看看。</p>
+  <div id="list"></div>
+  <p id="error" class="error"></p>
 </div>
 
 <script>
@@ -28,12 +29,30 @@ if (!token) {
   fetch('/api/clues/vault', { headers: { Authorization: 'Bearer ' + token } })
     .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
     .then(({ ok, status, data }) => {
-      document.getElementById('result').textContent = ok
-        ? JSON.stringify(data)
-        : `尚未實作 (${status}): ${data.error || ''}`;
+      if (!ok) {
+        document.getElementById('error').textContent = `讀取失敗 (${status}): ${data.error || ''}`;
+        return;
+      }
+      if (data.length === 0) {
+        document.getElementById('empty').style.display = '';
+        return;
+      }
+      const listEl = document.getElementById('list');
+      const viaLabel = { scan: 'QR 掃描', code: '權限碼兌換' };
+      data.forEach(clue => {
+        const item = document.createElement('div');
+        item.className = 'card';
+        const time = new Date(clue.acquired_at).toLocaleString('zh-TW');
+        item.innerHTML = `
+          <strong>${clue.name}</strong>
+          <p>${clue.description || ''}</p>
+          <p style="font-size:0.85rem;color:#666">取得方式：${viaLabel[clue.acquired_via] || clue.acquired_via} ／ ${time}</p>
+        `;
+        listEl.appendChild(item);
+      });
     })
     .catch(err => {
-      document.getElementById('result').textContent = '連線失敗: ' + err.message;
+      document.getElementById('error').textContent = '連線失敗: ' + err.message;
     });
 }
 </script>

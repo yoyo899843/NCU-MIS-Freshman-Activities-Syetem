@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>權限碼管理 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+  select { display: block; width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; font-size: 1rem; }
+</style>
+</head>
+<body>
+<h1>權限碼管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <p>新增權限碼：<code>checkpoint_unlock</code> 需要填「目標關卡 ID」，<code>hidden_clue</code> 需要填「目標線索 ID」（關卡/線索本身的管理介面尚未開發，ID 先對照資料庫或測試種子資料填寫）。</p>
+  <input id="codeInput" placeholder="權限碼內容（例如 CODE-001）">
+  <select id="typeSelect">
+    <option value="checkpoint_unlock">checkpoint_unlock（關卡解鎖）</option>
+    <option value="hidden_clue">hidden_clue（隱藏線索）</option>
+  </select>
+  <input id="targetCheckpointId" placeholder="目標關卡 ID" type="number">
+  <input id="targetClueId" placeholder="目標線索 ID" type="number" style="display:none">
+  <button id="createBtn">新增</button>
+  <p id="createResult" class="error"></p>
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>ID</th><th>碼</th><th>類型</th><th>目標</th><th>已兌換次數</th><th>建立時間</th><th></th></tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+  <p id="listError" class="error"></p>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+document.getElementById('typeSelect').addEventListener('change', e => {
+  const isCheckpoint = e.target.value === 'checkpoint_unlock';
+  document.getElementById('targetCheckpointId').style.display = isCheckpoint ? '' : 'none';
+  document.getElementById('targetClueId').style.display = isCheckpoint ? 'none' : '';
+});
+
+async function loadList() {
+  const res = await fetch('/admin/api/access-codes', { headers: { Authorization: 'Bearer ' + token } });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    return;
+  }
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById('listError').textContent = `讀取失敗 (${res.status}): ${data.error || ''}`;
+    return;
+  }
+  const body = document.getElementById('tableBody');
+  body.innerHTML = '';
+  data.forEach(row => {
+    const target = row.type === 'checkpoint_unlock'
+      ? `關卡 #${row.target_checkpoint_id}（${row.target_checkpoint_name || '?'}）`
+      : `線索 #${row.target_clue_id}（${row.target_clue_name || '?'}）`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${row.id}</td>
+      <td>${row.code}</td>
+      <td>${row.type}</td>
+      <td>${target}</td>
+      <td>${row.redemption_count}</td>
+      <td>${new Date(row.created_at).toLocaleString('zh-TW')}</td>
+      <td><button data-id="${row.id}" class="deleteBtn">刪除</button></td>
+    `;
+    body.appendChild(tr);
+  });
+  document.querySelectorAll('.deleteBtn').forEach(btn => {
+    btn.addEventListener('click', () => deleteCode(btn.dataset.id));
+  });
+}
+
+async function deleteCode(id) {
+  if (!confirm('確定要刪除這組權限碼嗎？')) return;
+  const res = await fetch('/admin/api/access-codes/' + id, {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer ' + token }
+  });
+  if (res.status === 204) {
+    loadList();
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  alert(`刪除失敗 (${res.status}): ${data.error || ''}`);
+}
+
+document.getElementById('createBtn').addEventListener('click', async () => {
+  const code = document.getElementById('codeInput').value.trim();
+  const type = document.getElementById('typeSelect').value;
+  const targetCheckpointId = document.getElementById('targetCheckpointId').value;
+  const targetClueId = document.getElementById('targetClueId').value;
+  const resultEl = document.getElementById('createResult');
+
+  const body = { code, type };
+  if (type === 'checkpoint_unlock') body.targetCheckpointId = Number(targetCheckpointId) || undefined;
+  else body.targetClueId = Number(targetClueId) || undefined;
+
+  const res = await fetch('/admin/api/access-codes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = `新增失敗 (${res.status}): ${data.error || ''}`;
+    return;
+  }
+  resultEl.textContent = '';
+  document.getElementById('codeInput').value = '';
+  document.getElementById('targetCheckpointId').value = '';
+  document.getElementById('targetClueId').value = '';
+  loadList();
+});
+
+if (token) loadList();
+</script>
+</body>
+</html>

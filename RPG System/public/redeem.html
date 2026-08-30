@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>權限碼兌換 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>權限碼兌換</h1>
+<p class="nav"><a href="index.html">&laquo; 回儀表板</a> <a href="clue-vault.html">線索庫</a></p>
+
+<div id="notLoggedIn" class="card" style="display:none">
+  <p>請先<a href="login.html">登入</a>學派帳號。</p>
+</div>
+
+<div id="content" class="card" style="display:none">
+  <p>輸入主辦提供的權限碼，兌換關卡解鎖或隱藏線索。每組碼你的隊伍只能兌換一次。</p>
+  <input id="codeInput" placeholder="輸入權限碼">
+  <button id="redeemBtn">兌換</button>
+  <p id="result"></p>
+</div>
+
+<script>
+const token = localStorage.getItem('schoolToken');
+if (!token) {
+  document.getElementById('notLoggedIn').style.display = '';
+} else {
+  document.getElementById('content').style.display = '';
+}
+
+document.getElementById('redeemBtn')?.addEventListener('click', async () => {
+  const code = document.getElementById('codeInput').value.trim();
+  const resultEl = document.getElementById('result');
+  resultEl.className = '';
+  if (!code) {
+    resultEl.className = 'error';
+    resultEl.textContent = '請輸入權限碼';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/access-codes/redeem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ code })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      resultEl.className = 'error';
+      resultEl.textContent = `兌換失敗 (${res.status}): ${data.error || ''}`;
+      return;
+    }
+    if (data.type === 'checkpoint_unlock') {
+      resultEl.textContent = `解鎖成功！關卡「${data.checkpoint.name}」已開放挑戰。`;
+    } else if (data.type === 'hidden_clue') {
+      resultEl.textContent = `兌換成功！獲得隱藏線索「${data.clue.name}」，可以到線索庫查看。`;
+    } else {
+      resultEl.textContent = JSON.stringify(data);
+    }
+    document.getElementById('codeInput').value = '';
+  } catch (err) {
+    resultEl.className = 'error';
+    resultEl.textContent = '連線失敗: ' + err.message;
+  }
+});
+</script>
+</body>
+</html>

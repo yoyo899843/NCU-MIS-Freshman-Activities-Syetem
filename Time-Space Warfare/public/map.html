@@ -25,22 +25,25 @@
 </head>
 <body>
 <div class="top-bar">
-  <strong>大地圖</strong> — 骨架階段：交摺點狀態、隊友即時定位待下一輪串接。
+  <strong>大地圖</strong> — 骨架階段：交摺點狀態待下一輪串接。
   <span id="checkpointStatus"></span>
+  <span id="teamStatus"></span>
 </div>
 <div id="map"></div>
 
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="geofence.js"></script>
 <script>
+const token = localStorage.getItem('playerToken');
+const playerInfo = JSON.parse(localStorage.getItem('playerInfo') || 'null');
+
 // 校園 bounding box（跟 geofence.js 的 CAMPUS_BOUNDS 是同一個範圍）
 const BOUNDS = L.latLngBounds(
   [24.964764, 121.184735],
   [24.972425, 121.197936]
 );
 const CENTER = BOUNDS.getCenter();
-
-startGeofence();
 
 const map = L.map('map', {
   minZoom: 15,
@@ -70,9 +73,44 @@ fetch('/api/map/checkpoints')
     document.getElementById('checkpointStatus').textContent = '（連線失敗）';
   });
 
-// 隊友即時定位：等玩家登入 + Socket.IO 'team:<teamId>' room 接上後，
-// 這裡改成監聽 'teammate:location' 事件，用 L.marker 即時更新隊友位置。
-// 目前骨架階段尚未連線，不會顯示任何玩家標記。
+// 隊友即時定位：只有同隊隊友之間可見彼此座標（伺服器只把 team:location 轉發到
+// 'team:<teamId>' room），看不到敵方。座標刻意不落地到 DB，斷線就會從地圖上消失。
+const teammateMarkers = new Map(); // playerId -> L.Marker
+
+if (token && playerInfo) {
+  const socket = io();
+
+  socket.on('connect', () => {
+    socket.emit('team:enter', { token }, ack => {
+      document.getElementById('teamStatus').textContent = ack?.ok
+        ? '（隊友定位已連線）'
+        : '（隊友定位連線失敗）';
+    });
+  });
+
+  socket.on('team:location', ({ playerId, displayName, lat, lng }) => {
+    let marker = teammateMarkers.get(playerId);
+    if (!marker) {
+      marker = L.marker([lat, lng]).addTo(map).bindTooltip(displayName || '隊友', { permanent: true });
+      teammateMarkers.set(playerId, marker);
+    } else {
+      marker.setLatLng([lat, lng]);
+    }
+  });
+
+  socket.on('team:left', ({ playerId }) => {
+    const marker = teammateMarkers.get(playerId);
+    if (marker) {
+      map.removeLayer(marker);
+      teammateMarkers.delete(playerId);
+    }
+  });
+
+  startGeofence((lat, lng) => socket.emit('team:location', { lat, lng }));
+} else {
+  document.getElementById('teamStatus').textContent = '（未登入，不分享/顯示隊友定位）';
+  startGeofence();
+}
 </script>
 </body>
 </html>
