@@ -40,6 +40,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="geofence.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
 if (!token) {
@@ -50,6 +51,10 @@ if (!token) {
 }
 
 function initMap() {
+  // GPS 圍籬：離開活動範圍會顯示紅色提示條（見 geofence.js），比照 Time-Space
+  // Warfare 只掛在地圖頁的做法——這裡是唯一需要判斷「人在不在範圍內」的頁面。
+  startGeofence();
+
   // 活動範圍 bounding box，跟 scripts/download-tiles.js 下載圖磚用的是同一個範圍。
   const BOUNDS = L.latLngBounds(
     [25.018806, 121.937006],
