@@ -5,35 +5,116 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>探索導覽 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  body { max-width: none; padding: 0; }
+  #map { height: 100vh; width: 100%; }
+  .top-bar {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    z-index: 1000;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.9rem;
+  }
+  .top-bar a { margin-right: 8px; }
+</style>
 </head>
 <body>
-<h1>探索導覽</h1>
-<p class="nav"><a href="index.html">&laquo; 回儀表板</a></p>
-
-<div id="notLoggedIn" class="card" style="display:none">
+<div id="notLoggedIn" class="card" style="display:none; margin: 16px;">
   <p>請先<a href="login.html">登入</a>學派帳號。</p>
 </div>
 
-<div id="content" class="card" style="display:none">
-  <p>骨架階段：這裡之後會是 10 個關卡點位的地圖，含全域探索進度、各點位線索取得進度。</p>
-  <p id="result"></p>
+<div id="content" style="display:none">
+  <div class="top-bar">
+    <a href="index.html">&laquo; 回儀表板</a>
+    <strong>探索導覽</strong>
+    <span id="progressSummary"></span>
+    <span id="loadError" class="error"></span>
+  </div>
+  <div id="map"></div>
 </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
 if (!token) {
   document.getElementById('notLoggedIn').style.display = '';
 } else {
   document.getElementById('content').style.display = '';
+  initMap();
+}
+
+function initMap() {
+  // 活動範圍 bounding box，跟 scripts/download-tiles.js 下載圖磚用的是同一個範圍。
+  const BOUNDS = L.latLngBounds(
+    [25.018806, 121.937006],
+    [25.021761, 121.940729]
+  );
+
+  const map = L.map('map', {
+    minZoom: 15,
+    maxZoom: 19,
+    maxBounds: BOUNDS.pad(0.2),
+    maxBoundsViscosity: 1.0
+  });
+  map.fitBounds(BOUNDS);
+
+  // 自行 host 的活動範圍 tile 圖磚（scripts/download-tiles.js 下載好放進
+  // public/tiles/），不對外連任何 tile server。
+  L.tileLayer('/tiles/{z}/{x}/{y}.png', {
+    minZoom: 15,
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+  }).addTo(map);
+
+  // 依解鎖/完成狀態決定關卡標記顏色：灰色未解鎖、藍色已解鎖待挑戰、綠色已完成挑戰。
+  function markerColor(cp) {
+    if (!cp.unlocked) return '#999';
+    if (cp.challengeStatus === 'completed') return '#2a8';
+    return '#06c';
+  }
+
   fetch('/api/checkpoints', { headers: { Authorization: 'Bearer ' + token } })
     .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
     .then(({ ok, status, data }) => {
-      document.getElementById('result').textContent = ok
-        ? JSON.stringify(data)
-        : `尚未實作 (${status}): ${data.error || ''}`;
+      if (!ok) {
+        document.getElementById('loadError').textContent = `讀取關卡資料失敗 (${status}): ${data.error || ''}`;
+        return;
+      }
+
+      const unlockedCount = data.filter(cp => cp.unlocked).length;
+      const completedCount = data.filter(cp => cp.challengeStatus === 'completed').length;
+      document.getElementById('progressSummary').textContent =
+        `已解鎖 ${unlockedCount}/${data.length} 關卡，已完成挑戰 ${completedCount}/${data.length}`;
+
+      data.forEach(cp => {
+        if (cp.mapLat == null || cp.mapLng == null) return;
+        const statusLabel = !cp.unlocked
+          ? '尚未解鎖'
+          : cp.challengeStatus === 'completed' ? '挑戰完成'
+          : cp.challengeStatus === 'in_progress' ? '挑戰中'
+          : '已解鎖，尚未挑戰';
+
+        L.circleMarker([cp.mapLat, cp.mapLng], {
+          radius: 10,
+          color: markerColor(cp),
+          fillColor: markerColor(cp),
+          fillOpacity: 0.85
+        })
+          .addTo(map)
+          .bindPopup(
+            `<strong>${cp.name}</strong><br>${cp.description || ''}<br>` +
+            `狀態：${statusLabel}<br>線索：${cp.clueCollected}/${cp.clueTotal}`
+          );
+      });
     })
     .catch(err => {
-      document.getElementById('result').textContent = '連線失敗: ' + err.message;
+      document.getElementById('loadError').textContent = '連線失敗: ' + err.message;
     });
 }
 </script>

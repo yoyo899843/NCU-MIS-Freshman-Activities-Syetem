@@ -17,9 +17,16 @@ const adminRoutes = require('./routes/admin');
 const app = express();
 app.use(express.json());
 
-// 靜態檔案（HTML/CSS/JS），活動期間可能還會調整，快取時間短一點，
-// 至少 1 小時內重複載入不用整包重抓。這個系統沒有自己 host 地圖圖磚，
-// 不需要比照 Time-Space Warfare 另外設 /tiles 的長效快取。
+// 地圖圖磚是活動前用 scripts/download-tiles.js 預先下載、內容不會變的靜態檔案，
+// 設長效快取（30 天 + immutable），避免多隊反覆開關探索導覽頁時重複下載同樣的圖磚，
+// 比照 Time-Space Warfare 的做法（見 PLAN.md 的頻寬考量）。
+app.use('/tiles', express.static(path.join(__dirname, '..', 'public', 'tiles'), {
+  maxAge: '30d',
+  immutable: true
+}));
+
+// 其餘靜態檔案（HTML/CSS/JS），活動期間可能還會調整，快取時間短一點，
+// 至少 1 小時內重複載入不用整包重抓。
 app.use(express.static(path.join(__dirname, '..', 'public'), {
   maxAge: '1h'
 }));
