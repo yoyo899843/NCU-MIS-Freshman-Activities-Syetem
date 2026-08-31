@@ -41,9 +41,29 @@ document.getElementById('toggleCameraBtn')?.addEventListener('click', () => {
   cameraRunning ? stopCamera() : startCamera();
 });
 
+// html5-qrcode 不是每種失敗都會丟標準 Error 物件——例如非安全連線（見下面
+// isSecureContext 檢查）的情況，它內部是直接 reject 一個純文字字串，根本沒有
+// .message 這個屬性，直接讀 err.message 只會拿到 undefined，訊息就變成一頭霧水
+// 的「無法啟動相機（undefined）」。這裡統一處理各種可能的錯誤形狀。
+function describeCameraError(err) {
+  if (typeof err === 'string' && err) return err;
+  if (err && typeof err.message === 'string' && err.message) return err.message;
+  if (err && typeof err.name === 'string' && err.name) return err.name;
+  return '未知錯誤';
+}
+
 async function startCamera() {
   const errorEl = document.getElementById('cameraError');
   errorEl.textContent = '';
+
+  // 相機（getUserMedia）只有在安全情境（https，或 localhost）下瀏覽器才會允許使用。
+  // 用 http://區網IP:port 這種方式在手機上開的話會直接被擋掉——先在這裡主動判斷、
+  // 給出清楚的原因，不要等函式庫丟出讓人看不懂的錯誤才發現。
+  if (!window.isSecureContext) {
+    errorEl.textContent = '無法啟動相機：這個頁面不是安全連線（需要 https 或 localhost），瀏覽器不允許使用相機。可以改用下方手動輸入，或透過 https 網址開啟這個頁面。';
+    return;
+  }
+
   try {
     html5QrCode = new Html5Qrcode('qr-reader');
     await html5QrCode.start(
@@ -61,7 +81,7 @@ async function startCamera() {
     document.getElementById('toggleCameraBtn').textContent = '關閉相機';
   } catch (err) {
     cameraRunning = false;
-    errorEl.textContent = '無法啟動相機（' + err.message + '），可以改用下方手動輸入。';
+    errorEl.textContent = '無法啟動相機（' + describeCameraError(err) + '），可以改用下方手動輸入。';
   }
 }
 
