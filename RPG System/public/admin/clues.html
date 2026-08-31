@@ -13,8 +13,6 @@
   select { display: block; width: 100%; padding: 8px; margin-bottom: 8px; }
   .row-actions button, .row-actions a { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 4px 0; }
   .checkpoint-tag { font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: #ddd; }
-  .qr-preview { margin-top: 4px; }
-  .qr-preview img { width: 64px; height: 64px; }
 </style>
 </head>
 <body>
@@ -49,13 +47,12 @@
   <h3>線索清單</h3>
   <table>
     <thead>
-      <tr><th>名稱</th><th>歸屬</th><th>QR Code</th><th></th></tr>
+      <tr><th>名稱</th><th>歸屬</th><th>QR 代碼</th><th></th></tr>
     </thead>
     <tbody id="cluesBody"></tbody>
   </table>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
 const token = localStorage.getItem('adminToken');
 if (!token) location.href = 'login.html';
@@ -99,26 +96,15 @@ async function loadClues() {
     <tr>
       <td>${escapeHtml(c.name)}</td>
       <td><span class="checkpoint-tag">${checkpointLabel(c)}</span></td>
-      <td>
-        <div class="qr-preview" id="qr-${c.id}"></div>
-        ${escapeHtml(c.qr_token)}
-      </td>
+      <td>${escapeHtml(c.qr_token)}</td>
       <td class="row-actions">
         <button onclick="startEdit(${c.id})">編輯</button>
         <button onclick="deleteClue(${c.id})">刪除</button>
-        <a href="qrcode-print.html?token=${encodeURIComponent(c.qr_token)}&name=${encodeURIComponent(c.name)}" target="_blank">列印</a>
+        <a href="qrcode-print.html?token=${encodeURIComponent(c.qr_token)}&name=${encodeURIComponent(c.name)}" target="_blank">查看 QR Code</a>
       </td>
     </tr>
   `).join('') || '<tr><td colspan="4">目前沒有線索</td></tr>';
   window.__clues = clues;
-
-  // qrcodejs 是直接把 QR code 畫進傳進去的容器（不是回傳一段圖片字串），
-  // 一定要等上面的 innerHTML 真的插入文件、容器元素存在之後才能 new QRCode(...)，
-  // 沒辦法在字串模板裡先畫好再一次塞進去。
-  clues.forEach(c => {
-    const el = document.getElementById(`qr-${c.id}`);
-    if (el) new QRCode(el, { text: c.qr_token, width: 64, height: 64 });
-  });
 }
 
 function escapeHtml(s) {
