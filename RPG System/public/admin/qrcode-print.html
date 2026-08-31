@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>列印 QR Code</title>
+<style>
+  body { font-family: system-ui, sans-serif; text-align: center; padding: 24px; }
+  h2 { margin-bottom: 4px; }
+  .token { color: #666; font-size: 0.85rem; margin-bottom: 16px; }
+  #qrcode { display: inline-block; margin: 8px auto 16px; }
+  button { padding: 8px 16px; font-size: 1rem; cursor: pointer; }
+  @media print {
+    button { display: none; }
+  }
+</style>
+</head>
+<body>
+<h2 id="clueName"></h2>
+<p class="token" id="clueToken"></p>
+<div id="qrcode"></div>
+<p><button onclick="window.print()">列印</button></p>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const token = params.get('token') || '';
+const name = params.get('name') || '';
+
+document.getElementById('clueName').textContent = name || '（未命名線索）';
+document.getElementById('clueToken').textContent = token;
+
+if (token) {
+  new QRCode(document.getElementById('qrcode'), { text: token, width: 240, height: 240 });
+} else {
+  document.getElementById('qrcode').textContent = '沒有帶入 QR 代碼內容（缺少 token 參數）';
+}
+</script>
+</body>
+</html>
