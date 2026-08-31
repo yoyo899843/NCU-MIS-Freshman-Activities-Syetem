@@ -15,12 +15,17 @@
 </div>
 
 <div id="content" class="card" style="display:none">
-  <p>骨架階段：這裡之後會是相機掃描 QR Code 的畫面（html5-qrcode），先用輸入框模擬。</p>
-  <input id="qrToken" placeholder="輸入/貼上 QR Code 內容（模擬掃描）">
+  <p>把 QR Code 對準相機掃描；沒有相機或掃不到的話，也可以在下方手動輸入內容。</p>
+  <div id="qr-reader" style="width:100%; max-width:400px; margin:0 auto 8px;"></div>
+  <button id="toggleCameraBtn">啟動相機掃描</button>
+  <p id="cameraError" class="error"></p>
+  <hr>
+  <input id="qrToken" placeholder="或手動輸入/貼上 QR Code 內容">
   <button id="scanBtn">送出</button>
   <p id="result"></p>
 </div>
 
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
 if (!token) {
@@ -29,8 +34,55 @@ if (!token) {
   document.getElementById('content').style.display = '';
 }
 
-document.getElementById('scanBtn')?.addEventListener('click', async () => {
-  const qrToken = document.getElementById('qrToken').value.trim();
+let html5QrCode = null;
+let cameraRunning = false;
+
+document.getElementById('toggleCameraBtn')?.addEventListener('click', () => {
+  cameraRunning ? stopCamera() : startCamera();
+});
+
+async function startCamera() {
+  const errorEl = document.getElementById('cameraError');
+  errorEl.textContent = '';
+  try {
+    html5QrCode = new Html5Qrcode('qr-reader');
+    await html5QrCode.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: 250 },
+      decodedText => {
+        // 掃到就自動關掉相機再送出，避免同一個碼在畫面還對著它時被連續觸發好幾次。
+        document.getElementById('qrToken').value = decodedText;
+        stopCamera();
+        submitScan(decodedText);
+      },
+      () => {} // 每一幀解碼失敗都會呼叫一次，鏡頭對準過程中本來就會一直發生，不用理會。
+    );
+    cameraRunning = true;
+    document.getElementById('toggleCameraBtn').textContent = '關閉相機';
+  } catch (err) {
+    cameraRunning = false;
+    errorEl.textContent = '無法啟動相機（' + err.message + '），可以改用下方手動輸入。';
+  }
+}
+
+async function stopCamera() {
+  if (html5QrCode && cameraRunning) {
+    try {
+      await html5QrCode.stop();
+      await html5QrCode.clear();
+    } catch (err) {
+      // 相機可能已經被瀏覽器關掉（例如切到背景），stop() 失敗不影響後續重新啟動。
+    }
+  }
+  cameraRunning = false;
+  document.getElementById('toggleCameraBtn').textContent = '啟動相機掃描';
+}
+
+document.getElementById('scanBtn')?.addEventListener('click', () => {
+  submitScan(document.getElementById('qrToken').value.trim());
+});
+
+async function submitScan(qrToken) {
   const resultEl = document.getElementById('result');
   resultEl.className = '';
 
@@ -60,7 +112,7 @@ document.getElementById('scanBtn')?.addEventListener('click', async () => {
     resultEl.className = 'error';
     resultEl.textContent = '連線失敗: ' + err.message;
   }
-});
+}
 </script>
 </body>
 </html>

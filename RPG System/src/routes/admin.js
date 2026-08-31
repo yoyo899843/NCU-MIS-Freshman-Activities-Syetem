@@ -1,11 +1,15 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const multer = require('multer');
+const { parse } = require('csv-parse');
 const db = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const asyncHandler = require('../middleware/asyncHandler');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
 // --- 簡單的登入失敗鎖定（記憶體內，process 重啟會重置，這裡只是防暴力破解的基本防線） ---
 const MAX_ATTEMPTS = 5;
@@ -136,14 +140,196 @@ router.delete('/schools/:id', asyncHandler(async (req, res) => {
   }
 }));
 
-router.get('/checkpoints', (req, res) => res.status(501).json({ error: 'not implemented' }));
+// 交摺點 CRUD 本身還沒做（見 PLAN.md），這裡先開一個唯讀清單，給線索管理畫面的
+// 「這個線索屬於哪個關卡」下拉選單用（比照 Time-Space Warfare 當初題庫管理的做法）。
+router.get('/checkpoints', asyncHandler(async (req, res) => {
+  const { rows } = await db.query('SELECT id, name FROM checkpoints ORDER BY id');
+  res.json(rows);
+}));
 router.post('/checkpoints', (req, res) => res.status(501).json({ error: 'not implemented' }));
 router.patch('/checkpoints/:id', (req, res) => res.status(501).json({ error: 'not implemented' }));
 
-router.get('/clues', (req, res) => res.status(501).json({ error: 'not implemented' }));
-router.post('/clues', (req, res) => res.status(501).json({ error: 'not implemented' }));
-router.patch('/clues/:id', (req, res) => res.status(501).json({ error: 'not implemented' }));
-router.delete('/clues/:id', (req, res) => res.status(501).json({ error: 'not implemented' }));
+const CLUE_COLUMNS = 'id, checkpoint_id, name, description, image_url, qr_token, created_at';
+
+router.get('/clues', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT c.id, c.checkpoint_id, c.name, c.description, c.image_url, c.qr_token, c.created_at,
+            cp.name AS checkpoint_name
+     FROM clues c
+     LEFT JOIN checkpoints cp ON cp.id = c.checkpoint_id
+     ORDER BY c.id DESC`
+  );
+  res.json(rows);
+}));
+
+// 新增/編輯共用的欄位驗證。回傳 { error } 或 { data }。
+// qrToken 留空就自動產生一組（CLUE- 開頭 + 12 碼隨機字元），管理員不用自己想一堆不會重複的代碼。
+function validateClueBody(body, checkpointIds) {
+  const name = (body.name || '').trim();
+  if (!name) return { error: '名稱不可為空' };
+
+  let checkpointId = null;
+  if (body.checkpointId !== null && body.checkpointId !== undefined && body.checkpointId !== '') {
+    checkpointId = Number.isInteger(body.checkpointId) ? body.checkpointId : parseInt(body.checkpointId, 10);
+    if (!Number.isInteger(checkpointId) || !checkpointIds.has(checkpointId)) {
+      return { error: '指定的關卡不存在' };
+    }
+  }
+
+  const description = (body.description || '').trim() || null;
+  const imageUrl = (body.imageUrl || '').trim() || null;
+  const qrToken = (body.qrToken || '').trim() || `CLUE-${crypto.randomBytes(6).toString('hex')}`;
+
+  return { data: { checkpointId, name, description, imageUrl, qrToken } };
+}
+
+router.post('/clues', asyncHandler(async (req, res) => {
+  const { rows: checkpoints } = await db.query('SELECT id FROM checkpoints');
+  const checkpointIds = new Set(checkpoints.map(c => c.id));
+
+  const validated = validateClueBody(req.body || {}, checkpointIds);
+  if (validated.error) return res.status(400).json({ error: validated.error });
+
+  const d = validated.data;
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO clues (checkpoint_id, name, description, image_url, qr_token)
+       VALUES ($1,$2,$3,$4,$5) RETURNING ${CLUE_COLUMNS}`,
+      [d.checkpointId, d.name, d.description, d.imageUrl, d.qrToken]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'QR 代碼已經被使用過了' });
+    throw err;
+  }
+}));
+
+router.patch('/clues/:id', asyncHandler(async (req, res) => {
+  const { rows: checkpoints } = await db.query('SELECT id FROM checkpoints');
+  const checkpointIds = new Set(checkpoints.map(c => c.id));
+
+  const { rows: existingRows } = await db.query(`SELECT * FROM clues WHERE id = $1`, [req.params.id]);
+  if (existingRows.length === 0) return res.status(404).json({ error: 'clue not found' });
+  const existing = existingRows[0];
+
+  // 支援部分更新：沒帶的欄位就沿用原本的值。qrToken 沒帶就沿用（不會被自動產生的新值覆蓋）。
+  const merged = {
+    checkpointId: req.body.checkpointId !== undefined ? req.body.checkpointId : existing.checkpoint_id,
+    name: req.body.name ?? existing.name,
+    description: req.body.description ?? existing.description,
+    imageUrl: req.body.imageUrl ?? existing.image_url,
+    qrToken: req.body.qrToken || existing.qr_token
+  };
+
+  const validated = validateClueBody(merged, checkpointIds);
+  if (validated.error) return res.status(400).json({ error: validated.error });
+
+  const d = validated.data;
+  try {
+    const { rows } = await db.query(
+      `UPDATE clues SET checkpoint_id=$1, name=$2, description=$3, image_url=$4, qr_token=$5
+       WHERE id = $6 RETURNING ${CLUE_COLUMNS}`,
+      [d.checkpointId, d.name, d.description, d.imageUrl, d.qrToken, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'QR 代碼已經被使用過了' });
+    throw err;
+  }
+}));
+
+router.delete('/clues/:id', asyncHandler(async (req, res) => {
+  try {
+    const { rowCount } = await db.query('DELETE FROM clues WHERE id = $1', [req.params.id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'clue not found' });
+    res.status(204).end();
+  } catch (err) {
+    // 已經被隊伍拿過（school_clues）、被用在權限碼（access_codes）或科技樹插槽正確答案
+    // （tech_tree_slots）的線索不能直接刪掉，FK 擋下來，避免默默弄壞既有進度/設定。
+    if (err.code === '23503') {
+      return res.status(409).json({ error: '這個線索已經被隊伍取得或被其他功能使用中，無法刪除' });
+    }
+    throw err;
+  }
+}));
+
+// CSV 欄位格式：關卡ID, 名稱, 描述, 圖片網址, QR代碼。
+// 「關卡ID」留空＝不屬於特定關卡（通用/隱藏線索）；「QR代碼」留空＝自動產生。
+// 比照 Time-Space Warfare 題庫匯入的做法：用 csv-parse 的 stream/async-iterator 介面
+// 逐筆處理、每 20 筆一批寫入、批次間讓出 event loop，避免大檔案同步解析卡住玩家端連線
+// （這個系統雖然沒有 Socket.IO，但同一個原則還是適用——不要用同步阻塞迴圈處理上傳檔案）。
+function validateCsvRow(record, rowNumber, checkpointIds) {
+  const name = (record['名稱'] || '').trim();
+  if (!name) return { error: `第 ${rowNumber} 列：名稱為空` };
+
+  const checkpointRaw = (record['關卡ID'] || '').trim();
+  let checkpointId = null;
+  if (checkpointRaw) {
+    checkpointId = parseInt(checkpointRaw, 10);
+    if (!Number.isInteger(checkpointId) || !checkpointIds.has(checkpointId)) {
+      return { error: `第 ${rowNumber} 列：關卡ID「${checkpointRaw}」不存在` };
+    }
+  }
+
+  const description = (record['描述'] || '').trim() || null;
+  const imageUrl = (record['圖片網址'] || '').trim() || null;
+  const qrToken = (record['QR代碼'] || '').trim() || `CLUE-${crypto.randomBytes(6).toString('hex')}`;
+
+  return { data: { checkpointId, name, description, imageUrl, qrToken } };
+}
+
+router.post('/clues/import', upload.single('file'), asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'file is required (multipart field name: file)' });
+
+  const { rows: checkpoints } = await db.query('SELECT id FROM checkpoints');
+  const checkpointIds = new Set(checkpoints.map(c => c.id));
+
+  const result = { inserted: 0, failed: [] };
+  const parser = parse(req.file.buffer, { columns: true, skip_empty_lines: true, trim: true, bom: true });
+
+  let rowNumber = 1; // 第 1 列是標題列，資料從第 2 列開始
+  let batch = [];
+
+  const flushBatch = async () => {
+    if (batch.length === 0) return;
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      for (const row of batch) {
+        await client.query(
+          `INSERT INTO clues (checkpoint_id, name, description, image_url, qr_token) VALUES ($1,$2,$3,$4,$5)`,
+          [row.checkpointId, row.name, row.description, row.imageUrl, row.qrToken]
+        );
+      }
+      await client.query('COMMIT');
+      result.inserted += batch.length;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      result.failed.push({ row: null, reason: '資料庫寫入失敗（這一批全數略過）：' + err.message });
+    } finally {
+      client.release();
+      batch = [];
+    }
+  };
+
+  for await (const record of parser) {
+    rowNumber += 1;
+    const validated = validateCsvRow(record, rowNumber, checkpointIds);
+    if (validated.error) {
+      result.failed.push({ row: rowNumber, reason: validated.error });
+      continue;
+    }
+    batch.push(validated.data);
+
+    if (batch.length >= 20) {
+      await flushBatch();
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+  await flushBatch();
+
+  res.json(result);
+}));
 
 // 權限碼管理：清單附兌換次數（方便看某組碼被幾隊兌換過）、新增、刪除。
 // 目的地（關卡/線索）本身的 CRUD 還沒做，這裡建立時只驗證目的地 id 真的存在。

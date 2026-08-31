@@ -20,6 +20,28 @@ function isWithinCampus(lat, lng) {
   );
 }
 
+// 有些頁面（例如 map.html）自己有一條 position:absolute、top:8px 的 .top-bar，
+// 跟這個 banner 一樣是 fixed/absolute 在畫面最上方，banner 顯示時會直接疊住蓋
+// 掉 .top-bar 裡的連結/文字。banner 顯示/隱藏時動態把 .top-bar 往下推開／還原，
+// 沒有 .top-bar 的頁面這裡就是無害的 no-op。
+function repositionTopBar(banner) {
+  const visible = banner.style.display !== 'none';
+  document.querySelectorAll('.top-bar').forEach(el => {
+    el.style.top = visible ? `${banner.offsetHeight + 8}px` : '8px';
+  });
+}
+
+function showBanner(banner, text) {
+  banner.textContent = text;
+  banner.style.display = '';
+  repositionTopBar(banner);
+}
+
+function hideBanner(banner) {
+  banner.style.display = 'none';
+  repositionTopBar(banner);
+}
+
 // onUpdate(lat, lng) 會在每次收到「校園範圍內」的定位時呼叫，
 // 之後要做隊友即時定位廣播（team:<teamId> room）可以接在這裡。
 function startGeofence(onUpdate) {
@@ -31,8 +53,7 @@ function startGeofence(onUpdate) {
   document.body.prepend(banner);
 
   if (!navigator.geolocation) {
-    banner.textContent = '此裝置不支援 GPS 定位，部分功能可能無法正常運作。';
-    banner.style.display = '';
+    showBanner(banner, '此裝置不支援 GPS 定位，部分功能可能無法正常運作。');
     return;
   }
 
@@ -44,23 +65,20 @@ function startGeofence(onUpdate) {
 
       if (isWithinCampus(latitude, longitude)) {
         outOfBoundsStreak = 0;
-        banner.style.display = 'none';
+        hideBanner(banner);
         onUpdate?.(latitude, longitude);
         return;
       }
 
       outOfBoundsStreak += 1;
       if (outOfBoundsStreak >= OUT_OF_BOUNDS_LIMIT) {
-        banner.textContent = '你的位置不在學校範圍，玩不了這個遊戲喔~~';
-        banner.style.display = '';
+        showBanner(banner, '你的位置不在學校範圍，玩不了這個遊戲喔~~');
       } else {
-        banner.textContent = '正在確認你的位置是否在校園範圍內...';
-        banner.style.display = '';
+        showBanner(banner, '正在確認你的位置是否在校園範圍內...');
       }
     },
     err => {
-      banner.textContent = '無法取得 GPS 定位（' + err.message + '），請確認已允許定位權限。';
-      banner.style.display = '';
+      showBanner(banner, '無法取得 GPS 定位（' + err.message + '），請確認已允許定位權限。');
     },
     { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
   );

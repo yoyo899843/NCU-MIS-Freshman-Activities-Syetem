@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>線索管理 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 720px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.85rem; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th { background: #eee; }
+  select { display: block; width: 100%; padding: 8px; margin-bottom: 8px; }
+  .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 0 0; }
+  .checkpoint-tag { font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: #ddd; }
+</style>
+</head>
+<body>
+<h1>線索管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <h3 id="formTitle">新增線索</h3>
+  <input id="name" placeholder="名稱">
+  <select id="checkpointId">
+    <option value="">（不屬於任何關卡／通用或隱藏線索）</option>
+  </select>
+  <input id="description" placeholder="描述（選填）">
+  <input id="imageUrl" placeholder="圖片網址（選填）">
+  <input id="qrToken" placeholder="QR 代碼（留空自動產生）">
+
+  <button id="saveBtn">新增線索</button>
+  <button id="cancelEditBtn" style="display:none">取消編輯</button>
+  <p id="formResult" class="error"></p>
+</div>
+
+<div class="card">
+  <h3>CSV 批次匯入</h3>
+  <p style="font-size:0.85rem">欄位格式：關卡ID, 名稱, 描述, 圖片網址, QR代碼（關卡ID 留空＝不屬於特定關卡，QR代碼 留空會自動產生）</p>
+  <p class="nav"><a href="sample-clues.csv" download>下載範例 CSV</a></p>
+  <input type="file" id="csvFile" accept=".csv">
+  <button id="importBtn">上傳匯入</button>
+  <p id="importResult"></p>
+</div>
+
+<div class="card">
+  <h3>線索清單</h3>
+  <table>
+    <thead>
+      <tr><th>名稱</th><th>歸屬</th><th>QR 代碼</th><th></th></tr>
+    </thead>
+    <tbody id="cluesBody"></tbody>
+  </table>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+const authHeaders = { Authorization: 'Bearer ' + token };
+let checkpoints = [];
+let editingId = null;
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { ...authHeaders, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function checkpointLabel(clue) {
+  return clue.checkpoint_id
+    ? `關卡：${clue.checkpoint_name || '#' + clue.checkpoint_id}`
+    : '通用／隱藏線索';
+}
+
+async function loadCheckpoints() {
+  const res = await api('/checkpoints');
+  checkpoints = await res.json();
+  const sel = document.getElementById('checkpointId');
+  sel.innerHTML = '<option value="">（不屬於任何關卡／通用或隱藏線索）</option>' +
+    checkpoints.map(c => `<option value="${c.id}">#${c.id} ${escapeHtml(c.name)}</option>`).join('');
+}
+
+async function loadClues() {
+  const res = await api('/clues');
+  const clues = await res.json();
+  const body = document.getElementById('cluesBody');
+  body.innerHTML = clues.map(c => `
+    <tr>
+      <td>${escapeHtml(c.name)}</td>
+      <td><span class="checkpoint-tag">${checkpointLabel(c)}</span></td>
+      <td>${escapeHtml(c.qr_token)}</td>
+      <td class="row-actions">
+        <button onclick="startEdit(${c.id})">編輯</button>
+        <button onclick="deleteClue(${c.id})">刪除</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="4">目前沒有線索</td></tr>';
+  window.__clues = clues;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function readForm() {
+  return {
+    name: document.getElementById('name').value.trim(),
+    checkpointId: document.getElementById('checkpointId').value || null,
+    description: document.getElementById('description').value.trim(),
+    imageUrl: document.getElementById('imageUrl').value.trim(),
+    qrToken: document.getElementById('qrToken').value.trim()
+  };
+}
+
+function resetForm() {
+  editingId = null;
+  document.getElementById('formTitle').textContent = '新增線索';
+  document.getElementById('saveBtn').textContent = '新增線索';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  document.getElementById('name').value = '';
+  document.getElementById('checkpointId').value = '';
+  document.getElementById('description').value = '';
+  document.getElementById('imageUrl').value = '';
+  document.getElementById('qrToken').value = '';
+}
+
+window.startEdit = function (id) {
+  const c = window.__clues.find(x => x.id === id);
+  if (!c) return;
+  editingId = id;
+  document.getElementById('formTitle').textContent = `編輯線索 #${id}`;
+  document.getElementById('saveBtn').textContent = '更新線索';
+  document.getElementById('cancelEditBtn').style.display = '';
+  document.getElementById('name').value = c.name;
+  document.getElementById('checkpointId').value = c.checkpoint_id || '';
+  document.getElementById('description').value = c.description || '';
+  document.getElementById('imageUrl').value = c.image_url || '';
+  document.getElementById('qrToken').value = c.qr_token;
+  window.scrollTo(0, 0);
+};
+
+window.deleteClue = async function (id) {
+  if (!confirm('確定要刪除這個線索嗎？已經被隊伍取得或被其他功能使用中的線索會被擋下來。')) return;
+  const res = await api(`/clues/${id}`, { method: 'DELETE' });
+  if (res.status === 409) {
+    const data = await res.json();
+    alert(data.error);
+    return;
+  }
+  await loadClues();
+};
+
+document.getElementById('cancelEditBtn').addEventListener('click', resetForm);
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('formResult');
+  const body = readForm();
+  const method = editingId ? 'PATCH' : 'POST';
+  const path = editingId ? `/clues/${editingId}` : '/clues';
+
+  const res = await api(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  resetForm();
+  await loadClues();
+});
+
+document.getElementById('importBtn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('csvFile');
+  const resultEl = document.getElementById('importResult');
+  if (!fileInput.files[0]) {
+    resultEl.textContent = '請先選擇 CSV 檔案';
+    resultEl.className = 'error';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  const res = await api('/clues/import', { method: 'POST', body: formData });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    resultEl.className = 'error';
+    return;
+  }
+  resultEl.className = '';
+  resultEl.textContent = `匯入完成：成功 ${data.inserted} 筆，失敗 ${data.failed.length} 筆。` +
+    (data.failed.length ? ' 失敗原因：' + data.failed.map(f => f.reason).join('；') : '');
+  await loadClues();
+});
+
+(async () => {
+  await loadCheckpoints();
+  await loadClues();
+})();
+</script>
+</body>
+</html>

@@ -95,12 +95,17 @@ function updateSelfMarker(lat, lng) {
 
 if (token && playerInfo) {
   const socket = io();
+  // team:enter 失敗（例如 token 過期/失效）時關掉這個旗標，讓下面的 team:location
+  // 不要繼續白白送出去——伺服器反正也會因為 socket.data.teamId 沒設定而丟棄，
+  // 但沒必要每次 GPS 更新都送一次注定被丟棄的事件。
+  let teamJoined = false;
 
   socket.on('connect', () => {
     socket.emit('team:enter', { token }, ack => {
-      document.getElementById('teamStatus').textContent = ack?.ok
+      teamJoined = !!ack?.ok;
+      document.getElementById('teamStatus').textContent = teamJoined
         ? '（隊友定位已連線）'
-        : '（隊友定位連線失敗）';
+        : '（隊友定位連線失敗，請重新登入）';
     });
   });
 
@@ -124,7 +129,7 @@ if (token && playerInfo) {
 
   startGeofence((lat, lng) => {
     updateSelfMarker(lat, lng);
-    socket.emit('team:location', { lat, lng });
+    if (teamJoined) socket.emit('team:location', { lat, lng });
   });
 } else {
   document.getElementById('teamStatus').textContent = '（未登入，不分享/顯示隊友定位）';

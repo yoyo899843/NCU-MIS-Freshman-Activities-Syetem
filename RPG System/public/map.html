@@ -77,6 +77,16 @@ function initMap() {
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
   }).addTo(map);
 
+  // 關卡 name/description 之後會開放 admin 編輯（見 admin.js 的 checkpoints CRUD，
+  // 目前還是 501 stub），屆時內容就不再是我們自己塞的測試資料、不能再假設它安全，
+  // 所以先在這裡跳脫，避免變成儲存型 XSS（惡意內容存進 DB，每個玩家點開這個
+  // 關卡的地圖標記時就在瀏覽器裡執行）。
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+  }
+
   // 依解鎖/完成狀態決定關卡標記顏色：灰色未解鎖、藍色已解鎖待挑戰、綠色已完成挑戰。
   function markerColor(cp) {
     if (!cp.unlocked) return '#999';
@@ -113,7 +123,7 @@ function initMap() {
         })
           .addTo(map)
           .bindPopup(
-            `<strong>${cp.name}</strong><br>${cp.description || ''}<br>` +
+            `<strong>${escapeHtml(cp.name)}</strong><br>${escapeHtml(cp.description)}<br>` +
             `狀態：${statusLabel}<br>線索：${cp.clueCollected}/${cp.clueTotal}`
           );
       });
