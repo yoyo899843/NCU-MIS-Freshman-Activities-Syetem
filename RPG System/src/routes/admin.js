@@ -404,6 +404,96 @@ router.delete('/access-codes/:id', asyncHandler(async (req, res) => {
   }
 }));
 
+// CSV 欄位格式：代碼, 類型, 目標ID。
+// 「類型」接受中文「關卡解鎖」/「隱藏線索」，也接受英文原始值 checkpoint_unlock/hidden_clue，
+// 不分大小寫、前後空白會被 trim 掉，方便直接在 Excel 填中文比較好懂。
+// 「目標ID」依類型分別對照關卡 ID 或線索 ID。比照題庫/線索匯入的做法：
+// stream/async-iterator 逐筆處理、每 20 筆一批寫入、批次間讓出 event loop。
+const ACCESS_CODE_TYPE_ALIASES = {
+  '關卡解鎖': 'checkpoint_unlock',
+  'checkpoint_unlock': 'checkpoint_unlock',
+  'checkpoint': 'checkpoint_unlock',
+  '隱藏線索': 'hidden_clue',
+  'hidden_clue': 'hidden_clue',
+  'clue': 'hidden_clue'
+};
+
+function validateAccessCodeCsvRow(record, rowNumber, checkpointIds, clueIds) {
+  const code = (record['代碼'] || '').trim();
+  if (!code) return { error: `第 ${rowNumber} 列：代碼為空` };
+
+  // toLowerCase() 對中文字元是無害的 no-op，所以中英文兩種鍵值可以共用同一次查表。
+  const typeRaw = (record['類型'] || '').trim().toLowerCase();
+  const type = ACCESS_CODE_TYPE_ALIASES[typeRaw];
+  if (!type) return { error: `第 ${rowNumber} 列：類型必須是「關卡解鎖」或「隱藏線索」` };
+
+  const targetRaw = (record['目標ID'] || '').trim();
+  const targetId = parseInt(targetRaw, 10);
+  if (!Number.isInteger(targetId)) return { error: `第 ${rowNumber} 列：目標ID必須是數字` };
+
+  if (type === 'checkpoint_unlock') {
+    if (!checkpointIds.has(targetId)) return { error: `第 ${rowNumber} 列：關卡ID「${targetRaw}」不存在` };
+    return { data: { code, type, targetCheckpointId: targetId, targetClueId: null } };
+  }
+  if (!clueIds.has(targetId)) return { error: `第 ${rowNumber} 列：線索ID「${targetRaw}」不存在` };
+  return { data: { code, type, targetCheckpointId: null, targetClueId: targetId } };
+}
+
+router.post('/access-codes/import', upload.single('file'), asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'file is required (multipart field name: file)' });
+
+  const { rows: checkpoints } = await db.query('SELECT id FROM checkpoints');
+  const checkpointIds = new Set(checkpoints.map(c => c.id));
+  const { rows: clues } = await db.query('SELECT id FROM clues');
+  const clueIds = new Set(clues.map(c => c.id));
+
+  const result = { inserted: 0, failed: [] };
+  const parser = parse(req.file.buffer, { columns: true, skip_empty_lines: true, trim: true, bom: true });
+
+  let rowNumber = 1; // 第 1 列是標題列，資料從第 2 列開始
+  let batch = [];
+
+  const flushBatch = async () => {
+    if (batch.length === 0) return;
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      for (const row of batch) {
+        await client.query(
+          `INSERT INTO access_codes (code, type, target_checkpoint_id, target_clue_id) VALUES ($1,$2,$3,$4)`,
+          [row.code, row.type, row.targetCheckpointId, row.targetClueId]
+        );
+      }
+      await client.query('COMMIT');
+      result.inserted += batch.length;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      result.failed.push({ row: null, reason: '資料庫寫入失敗（這一批全數略過，常見原因是代碼重複）：' + err.message });
+    } finally {
+      client.release();
+      batch = [];
+    }
+  };
+
+  for await (const record of parser) {
+    rowNumber += 1;
+    const validated = validateAccessCodeCsvRow(record, rowNumber, checkpointIds, clueIds);
+    if (validated.error) {
+      result.failed.push({ row: rowNumber, reason: validated.error });
+      continue;
+    }
+    batch.push(validated.data);
+
+    if (batch.length >= 20) {
+      await flushBatch();
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+  await flushBatch();
+
+  res.json(result);
+}));
+
 router.get('/tech-tree/branches', (req, res) => res.status(501).json({ error: 'not implemented' }));
 router.post('/tech-tree/branches', (req, res) => res.status(501).json({ error: 'not implemented' }));
 router.patch('/tech-tree/branches/:id', (req, res) => res.status(501).json({ error: 'not implemented' }));

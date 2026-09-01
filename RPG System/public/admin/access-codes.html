@@ -29,6 +29,15 @@
 </div>
 
 <div class="card">
+  <h3>CSV 批次匯入</h3>
+  <p style="font-size:0.85rem">欄位格式：代碼, 類型, 目標ID（類型填「關卡解鎖」或「隱藏線索」；目標ID 依類型分別對照關卡 ID 或線索 ID）</p>
+  <p class="nav"><a href="sample-access-codes.csv" download>下載範例 CSV</a></p>
+  <input type="file" id="csvFile" accept=".csv">
+  <button id="importBtn">上傳匯入</button>
+  <p id="importResult"></p>
+</div>
+
+<div class="card">
   <table>
     <thead>
       <tr><th>ID</th><th>碼</th><th>類型</th><th>目標</th><th>已兌換次數</th><th>建立時間</th><th></th></tr>
@@ -122,6 +131,35 @@ document.getElementById('createBtn').addEventListener('click', async () => {
   document.getElementById('codeInput').value = '';
   document.getElementById('targetCheckpointId').value = '';
   document.getElementById('targetClueId').value = '';
+  loadList();
+});
+
+document.getElementById('importBtn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('csvFile');
+  const resultEl = document.getElementById('importResult');
+  if (!fileInput.files[0]) {
+    resultEl.textContent = '請先選擇 CSV 檔案';
+    resultEl.className = 'error';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  const res = await fetch('/admin/api/access-codes/import', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token },
+    body: formData
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    resultEl.className = 'error';
+    return;
+  }
+  resultEl.className = '';
+  resultEl.textContent = `匯入完成：成功 ${data.inserted} 筆，失敗 ${data.failed.length} 筆。` +
+    (data.failed.length ? ' 失敗原因：' + data.failed.map(f => f.reason).join('；') : '');
   loadList();
 });
 
