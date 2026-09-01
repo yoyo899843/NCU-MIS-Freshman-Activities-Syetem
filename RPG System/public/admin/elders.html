@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>長老候選人管理 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 640px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th { background: #eee; }
+  .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 0 0; }
+  .voting-status { font-weight: bold; }
+  .voting-status.open { color: #2a8; }
+  .voting-status.closed { color: #c00; }
+</style>
+</head>
+<body>
+<h1>長老候選人管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <p>投票狀態：<span id="votingStatus" class="voting-status">讀取中...</span></p>
+  <button id="openVotingBtn">開放最終決策投票</button>
+  <p style="font-size:0.85rem">開放後無法關閉（設計上投票會一直開放到遊戲結束），重複按沒有副作用。</p>
+</div>
+
+<div class="card">
+  <h3 id="formTitle">新增候選人</h3>
+  <input id="name" placeholder="姓名">
+  <input id="description" placeholder="描述（選填）">
+  <button id="saveBtn">新增候選人</button>
+  <button id="cancelEditBtn" style="display:none">取消編輯</button>
+  <p id="formResult" class="error"></p>
+</div>
+
+<div class="card">
+  <h3>候選人 / 投票結果</h3>
+  <table>
+    <thead>
+      <tr><th>姓名</th><th>描述</th><th>得票數</th><th></th></tr>
+    </thead>
+    <tbody id="eldersBody"></tbody>
+  </table>
+  <p id="voteSummary" style="font-size:0.85rem"></p>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+let editingId = null;
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function loadVotingStatus() {
+  const res = await api('/game/state');
+  const state = await res.json();
+  const el = document.getElementById('votingStatus');
+  if (state.voting_unlocked_at) {
+    el.textContent = `已開放（${new Date(state.voting_unlocked_at).toLocaleString('zh-TW')}）`;
+    el.className = 'voting-status open';
+    document.getElementById('openVotingBtn').textContent = '投票已開放';
+  } else {
+    el.textContent = '尚未開放';
+    el.className = 'voting-status closed';
+  }
+}
+
+async function loadResults() {
+  const res = await api('/votes/results');
+  const data = await res.json();
+  const body = document.getElementById('eldersBody');
+  body.innerHTML = data.elders.map(e => `
+    <tr>
+      <td>${escapeHtml(e.name)}</td>
+      <td>${escapeHtml(e.description)}</td>
+      <td>${e.vote_count}</td>
+      <td class="row-actions">
+        <button onclick="startEdit(${e.id})">編輯</button>
+        <button onclick="deleteElder(${e.id})">刪除</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="4">目前沒有候選人</td></tr>';
+  document.getElementById('voteSummary').textContent =
+    `已投票 ${data.voted_schools} / ${data.total_schools} 個學派`;
+  window.__elders = data.elders;
+}
+
+function resetForm() {
+  editingId = null;
+  document.getElementById('formTitle').textContent = '新增候選人';
+  document.getElementById('saveBtn').textContent = '新增候選人';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  document.getElementById('name').value = '';
+  document.getElementById('description').value = '';
+}
+
+window.startEdit = function (id) {
+  const e = window.__elders.find(x => x.id === id);
+  if (!e) return;
+  editingId = id;
+  document.getElementById('formTitle').textContent = `編輯候選人 #${id}`;
+  document.getElementById('saveBtn').textContent = '更新候選人';
+  document.getElementById('cancelEditBtn').style.display = '';
+  document.getElementById('name').value = e.name;
+  document.getElementById('description').value = e.description || '';
+  window.scrollTo(0, 0);
+};
+
+window.deleteElder = async function (id) {
+  if (!confirm('確定要刪除這位候選人嗎？已經有隊伍投給他的話會被擋下來。')) return;
+  const res = await api(`/elders/${id}`, { method: 'DELETE' });
+  if (res.status === 409) {
+    const data = await res.json();
+    alert(data.error);
+    return;
+  }
+  await loadResults();
+};
+
+document.getElementById('cancelEditBtn').addEventListener('click', resetForm);
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('formResult');
+  const body = {
+    name: document.getElementById('name').value.trim(),
+    description: document.getElementById('description').value.trim()
+  };
+  const method = editingId ? 'PATCH' : 'POST';
+  const path = editingId ? `/elders/${editingId}` : '/elders';
+
+  const res = await api(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  resetForm();
+  await loadResults();
+});
+
+document.getElementById('openVotingBtn').addEventListener('click', async () => {
+  if (!confirm('確定要開放最終決策投票嗎？開放後無法關閉。')) return;
+  await api('/game/open-voting', { method: 'POST' });
+  await loadVotingStatus();
+});
+
+(async () => {
+  await loadVotingStatus();
+  await loadResults();
+})();
+</script>
+</body>
+</html>

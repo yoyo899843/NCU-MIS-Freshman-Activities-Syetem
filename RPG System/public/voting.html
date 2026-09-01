@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>最終決策 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  .elder-card { display: flex; align-items: flex-start; gap: 8px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 8px; cursor: pointer; }
+  .elder-card.selected { border-color: #333; background: #f0f0f0; }
+  .elder-card input { width: auto; margin: 4px 8px 0 0; }
+  .elder-name { font-weight: bold; }
+  .elder-desc { font-size: 0.85rem; color: #555; }
+</style>
 </head>
 <body>
 <h1>最終決策</h1>
@@ -14,28 +21,112 @@
   <p>請先<a href="login.html">登入</a>學派帳號。</p>
 </div>
 
+<div id="notOpen" class="card" style="display:none">
+  <p>投票尚未開放，請等待主辦於遊戲尾聲開放最終決策投票。</p>
+</div>
+
 <div id="content" class="card" style="display:none">
-  <p>骨架階段：投票功能預設鎖定，遊戲結束階段由後台開放。這裡之後會顯示 5 位長老候選人供指認。</p>
+  <p>請從以下候選人中指認一位長老。投票開放期間可以隨時改投，以最後一次送出的選擇為準。</p>
+  <p id="currentVote" style="font-weight:bold"></p>
+  <div id="elderList"></div>
+  <button id="voteBtn">送出投票</button>
   <p id="result"></p>
 </div>
 
 <script>
 const token = localStorage.getItem('schoolToken');
+let elders = [];
+let selectedElderId = null;
+
 if (!token) {
   document.getElementById('notLoggedIn').style.display = '';
 } else {
-  document.getElementById('content').style.display = '';
-  fetch('/api/elders', { headers: { Authorization: 'Bearer ' + token } })
-    .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
-    .then(({ ok, status, data }) => {
-      document.getElementById('result').textContent = ok
-        ? JSON.stringify(data)
-        : `尚未實作 (${status}): ${data.error || ''}`;
-    })
-    .catch(err => {
-      document.getElementById('result').textContent = '連線失敗: ' + err.message;
-    });
+  init();
 }
+
+async function init() {
+  const [eldersRes, votesRes] = await Promise.all([
+    fetch('/api/elders', { headers: { Authorization: 'Bearer ' + token } }),
+    fetch('/api/votes', { headers: { Authorization: 'Bearer ' + token } })
+  ]);
+
+  if (!eldersRes.ok || !votesRes.ok) {
+    document.getElementById('content').style.display = '';
+    document.getElementById('result').className = 'error';
+    document.getElementById('result').textContent = '讀取資料失敗，請重新整理頁面再試一次。';
+    return;
+  }
+
+  elders = await eldersRes.json();
+  const voteStatus = await votesRes.json();
+
+  if (!voteStatus.votingOpen) {
+    document.getElementById('notOpen').style.display = '';
+    return;
+  }
+
+  document.getElementById('content').style.display = '';
+  if (voteStatus.vote) {
+    selectedElderId = voteStatus.vote.elderId;
+    document.getElementById('currentVote').textContent = `目前投給：${voteStatus.vote.elderName}`;
+  }
+  renderElders();
+}
+
+function renderElders() {
+  const listEl = document.getElementById('elderList');
+  listEl.innerHTML = elders.map(e => `
+    <label class="elder-card${e.id === selectedElderId ? ' selected' : ''}" data-id="${e.id}">
+      <input type="radio" name="elder" value="${e.id}" ${e.id === selectedElderId ? 'checked' : ''}>
+      <div>
+        <div class="elder-name">${escapeHtml(e.name)}</div>
+        <div class="elder-desc">${escapeHtml(e.description || '')}</div>
+      </div>
+    </label>
+  `).join('') || '<p>目前沒有候選人。</p>';
+
+  listEl.querySelectorAll('.elder-card').forEach(card => {
+    card.addEventListener('click', () => {
+      selectedElderId = parseInt(card.dataset.id, 10);
+      listEl.querySelectorAll('.elder-card').forEach(c => c.classList.toggle('selected', c === card));
+      card.querySelector('input').checked = true;
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+document.getElementById('voteBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('result');
+  resultEl.className = '';
+
+  if (!selectedElderId) {
+    resultEl.className = 'error';
+    resultEl.textContent = '請先選一位候選人';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/votes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ elderId: selectedElderId })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      resultEl.className = 'error';
+      resultEl.textContent = `投票失敗 (${res.status}): ${data.error || ''}`;
+      return;
+    }
+    document.getElementById('currentVote').textContent = `目前投給：${data.elder.name}`;
+    resultEl.textContent = data.changed ? '投票已更新！' : '投票已送出！';
+  } catch (err) {
+    resultEl.className = 'error';
+    resultEl.textContent = '連線失敗: ' + err.message;
+  }
+});
 </script>
 </body>
 </html>

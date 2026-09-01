@@ -500,13 +500,92 @@ router.patch('/tech-tree/branches/:id', (req, res) => res.status(501).json({ err
 router.post('/tech-tree/slots', (req, res) => res.status(501).json({ error: 'not implemented' }));
 router.patch('/tech-tree/slots/:id', (req, res) => res.status(501).json({ error: 'not implemented' }));
 
-router.get('/elders', (req, res) => res.status(501).json({ error: 'not implemented' }));
-router.post('/elders', (req, res) => res.status(501).json({ error: 'not implemented' }));
+// 長老候選人管理：清單附得票數（方便主辦看目前投票結果），新增、編輯、刪除。
+router.get('/elders', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT e.id, e.name, e.description,
+       (SELECT COUNT(*)::int FROM school_votes sv WHERE sv.elder_id = e.id) AS vote_count
+     FROM elders e
+     ORDER BY e.id ASC`
+  );
+  res.json(rows);
+}));
+
+router.post('/elders', asyncHandler(async (req, res) => {
+  const { name, description } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name is required' });
+  }
+  const { rows } = await db.query(
+    'INSERT INTO elders (name, description) VALUES ($1, $2) RETURNING id, name, description',
+    [name.trim(), (description || '').trim() || null]
+  );
+  res.status(201).json(rows[0]);
+}));
+
+router.patch('/elders/:id', asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await db.query('SELECT * FROM elders WHERE id = $1', [req.params.id]);
+  if (existingRows.length === 0) return res.status(404).json({ error: 'elder not found' });
+  const existing = existingRows[0];
+
+  const name = req.body.name !== undefined ? String(req.body.name).trim() : existing.name;
+  if (!name) return res.status(400).json({ error: 'name cannot be empty' });
+  const description = req.body.description !== undefined ? (String(req.body.description).trim() || null) : existing.description;
+
+  const { rows } = await db.query(
+    'UPDATE elders SET name = $1, description = $2 WHERE id = $3 RETURNING id, name, description',
+    [name, description, req.params.id]
+  );
+  res.json(rows[0]);
+}));
+
+router.delete('/elders/:id', asyncHandler(async (req, res) => {
+  try {
+    const { rowCount } = await db.query('DELETE FROM elders WHERE id = $1', [req.params.id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'elder not found' });
+    res.status(204).end();
+  } catch (err) {
+    // 已經有隊伍投給這位候選人，FK 擋刪除，避免默默把已經投出去的票變成指向不存在的人。
+    if (err.code === '23503') {
+      return res.status(409).json({ error: 'cannot delete an elder that already has votes' });
+    }
+    throw err;
+  }
+}));
+
+// 投票結果：每位候選人的得票數 + 目前已投票／總學派數，給主辦即時看戰況用。
+router.get('/votes/results', asyncHandler(async (req, res) => {
+  const { rows: elders } = await db.query(
+    `SELECT e.id, e.name, e.description,
+       (SELECT COUNT(*)::int FROM school_votes sv WHERE sv.elder_id = e.id) AS vote_count
+     FROM elders e
+     ORDER BY vote_count DESC, e.id ASC`
+  );
+  const { rows: countRows } = await db.query(
+    `SELECT (SELECT COUNT(*)::int FROM schools) AS total_schools,
+            (SELECT COUNT(*)::int FROM school_votes) AS voted_schools`
+  );
+  res.json({ elders, ...countRows[0] });
+}));
 
 router.post('/game/start', (req, res) => res.status(501).json({ error: 'not implemented' }));
 router.post('/game/end', (req, res) => res.status(501).json({ error: 'not implemented' }));
-router.post('/game/open-voting', (req, res) => res.status(501).json({ error: 'not implemented' }));
-router.get('/game/state', (req, res) => res.status(501).json({ error: 'not implemented' }));
+
+// 投票開關獨立於整體遊戲 status（見 game_state.voting_unlocked_at），由主辦手動
+// 開放，通常在遊戲快結束、準備進入「最終決策」階段時按下。重複呼叫是安全的
+// （COALESCE 保留第一次開放的時間，不會被之後的呼叫往後推遲）。
+router.post('/game/open-voting', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `UPDATE game_state SET voting_unlocked_at = COALESCE(voting_unlocked_at, now())
+     WHERE id = 1 RETURNING voting_unlocked_at`
+  );
+  res.json({ votingUnlockedAt: rows[0].voting_unlocked_at });
+}));
+
+router.get('/game/state', asyncHandler(async (req, res) => {
+  const { rows } = await db.query('SELECT status, started_at, ended_at, voting_unlocked_at FROM game_state WHERE id = 1');
+  res.json(rows[0]);
+}));
 
 router.get('/scoreboard', (req, res) => res.status(501).json({ error: 'not implemented' }));
 
