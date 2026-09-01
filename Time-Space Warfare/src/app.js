@@ -11,6 +11,7 @@ const authRoutes = require('./routes/auth');
 const mapRoutes = require('./routes/map');
 const checkpointRoutes = require('./routes/checkpoints');
 const pkRoutes = require('./routes/pk');
+const locationRoutes = require('./routes/locations');
 const adminRoutes = require('./routes/admin');
 
 const app = express();
@@ -49,6 +50,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/map', mapRoutes);
 app.use('/api/checkpoints', checkpointRoutes);
 app.use('/api/pk', pkRoutes);
+app.use('/api/locations', locationRoutes);
 app.use('/admin/api', adminRoutes);
 
 app.use((err, req, res, next) => {

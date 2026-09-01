@@ -27,16 +27,20 @@
 <div class="top-bar">
   <strong>大地圖</strong> — 骨架階段：交摺點狀態待下一輪串接。
   <span id="checkpointStatus"></span>
-  <span id="teamStatus"></span>
+  <span id="locationStatus"></span>
 </div>
 <div id="map"></div>
 
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="geofence.js"></script>
 <script>
 const token = localStorage.getItem('playerToken');
 const playerInfo = JSON.parse(localStorage.getItem('playerInfo') || 'null');
+
+// 每 2 秒才動作一次——不是每次 GPS 更新就打一次 API，也不是即時推播：
+// 上傳自己的座標、以及跟伺服器要一次所有人目前的座標，都改成固定週期的 REST
+// 輪詢（見 src/routes/locations.js），不再用 Socket.IO。
+const LOCATION_INTERVAL_MS = 2000;
 
 // 校園 bounding box（跟 geofence.js 的 CAMPUS_BOUNDS 是同一個範圍）
 const BOUNDS = L.latLngBounds(
@@ -73,12 +77,8 @@ fetch('/api/map/checkpoints')
     document.getElementById('checkpointStatus').textContent = '（連線失敗）';
   });
 
-// 隊友即時定位：只有同隊隊友之間可見彼此座標（伺服器只把 team:location 轉發到
-// 'team:<teamId>' room），看不到敵方。座標刻意不落地到 DB，斷線就會從地圖上消失。
-const teammateMarkers = new Map(); // playerId -> L.Marker
-
-// 自己的位置：不用等伺服器廣播（伺服器本來就不會把座標送回發送者自己），
-// 收到 GPS 更新的當下直接畫在地圖上，用跟隊友不同的樣式（藍色圓點）分辨。
+// 自己的位置：不用等伺服器回應，收到 GPS 更新的當下直接畫在地圖上，
+// 用跟其他人不同的樣式（藍色圓點）分辨。
 let selfMarker = null;
 function updateSelfMarker(lat, lng) {
   if (!selfMarker) {
@@ -94,45 +94,73 @@ function updateSelfMarker(lat, lng) {
 }
 
 if (token && playerInfo) {
-  const socket = io();
-  // team:enter 失敗（例如 token 過期/失效）時關掉這個旗標，讓下面的 team:location
-  // 不要繼續白白送出去——伺服器反正也會因為 socket.data.teamId 沒設定而丟棄，
-  // 但沒必要每次 GPS 更新都送一次注定被丟棄的事件。
-  let teamJoined = false;
+  document.getElementById('locationStatus').textContent = '（定位分享中）';
 
-  socket.on('connect', () => {
-    socket.emit('team:enter', { token }, ack => {
-      teamJoined = !!ack?.ok;
-      document.getElementById('teamStatus').textContent = teamJoined
-        ? '（隊友定位已連線）'
-        : '（隊友定位連線失敗，請重新登入）';
-    });
-  });
+  // 大地圖直接顯示所有人的位置，不分陣營、不分隊伍——不用等隊友，任何登入的
+  // 玩家都看得到彼此。座標刻意不落地到 DB，斷線太久（伺服器端判斷超過 6 秒
+  // 沒收到更新）就會自動從別人的地圖上消失，不用額外處理「離線通知」。
+  const otherMarkers = new Map(); // playerId -> L.CircleMarker
+  const selfPlayerId = playerInfo.player.id;
 
-  socket.on('team:location', ({ playerId, displayName, lat, lng }) => {
-    let marker = teammateMarkers.get(playerId);
-    if (!marker) {
-      marker = L.marker([lat, lng]).addTo(map).bindTooltip(displayName || '隊友', { permanent: true });
-      teammateMarkers.set(playerId, marker);
-    } else {
-      marker.setLatLng([lat, lng]);
-    }
-  });
+  function factionColor(faction) {
+    return faction === 'repair' ? '#2a8' : '#c00';
+  }
+  function factionLabel(faction) {
+    return faction === 'repair' ? '時空修復者' : '時空破壞者';
+  }
 
-  socket.on('team:left', ({ playerId }) => {
-    const marker = teammateMarkers.get(playerId);
-    if (marker) {
-      map.removeLayer(marker);
-      teammateMarkers.delete(playerId);
-    }
-  });
-
+  // 目前收到的最新一次 GPS 讀值，每 2 秒的上傳計時器讀這個變數，
+  // 跟 geofence.js 實際多快收到新讀值（可能比 2 秒快很多）脫鉤。
+  let latestCoords = null;
   startGeofence((lat, lng) => {
+    latestCoords = { lat, lng };
     updateSelfMarker(lat, lng);
-    if (teamJoined) socket.emit('team:location', { lat, lng });
   });
+
+  setInterval(() => {
+    if (!latestCoords) return;
+    fetch('/api/locations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify(latestCoords)
+    }).catch(() => {}); // 單次上傳失敗不用特別處理，反正 2 秒後會再傳一次
+  }, LOCATION_INTERVAL_MS);
+
+  setInterval(() => {
+    fetch('/api/locations', { headers: { Authorization: 'Bearer ' + token } })
+      .then(res => res.json())
+      .then(players => {
+        const seenIds = new Set();
+        players.forEach(p => {
+          if (p.playerId === selfPlayerId) return; // 自己已經用 selfMarker 畫過了
+          seenIds.add(p.playerId);
+
+          let marker = otherMarkers.get(p.playerId);
+          if (!marker) {
+            marker = L.circleMarker([p.lat, p.lng], {
+              radius: 8,
+              color: factionColor(p.faction),
+              fillColor: factionColor(p.faction),
+              fillOpacity: 0.85
+            }).addTo(map).bindTooltip(`${p.displayName || '?'}（${factionLabel(p.faction)}）`, { permanent: true });
+            otherMarkers.set(p.playerId, marker);
+          } else {
+            marker.setLatLng([p.lat, p.lng]);
+          }
+        });
+
+        // 伺服器回傳的名單裡已經不在的人（斷線太久被判定離線），把標記移除。
+        otherMarkers.forEach((marker, playerId) => {
+          if (!seenIds.has(playerId)) {
+            map.removeLayer(marker);
+            otherMarkers.delete(playerId);
+          }
+        });
+      })
+      .catch(() => {});
+  }, LOCATION_INTERVAL_MS);
 } else {
-  document.getElementById('teamStatus').textContent = '（未登入，不分享/顯示隊友定位）';
+  document.getElementById('locationStatus').textContent = '（未登入，不分享/顯示其他人的定位）';
   startGeofence(updateSelfMarker);
 }
 </script>
