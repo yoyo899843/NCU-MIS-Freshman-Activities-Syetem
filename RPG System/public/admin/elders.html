@@ -14,6 +14,7 @@
   .voting-status { font-weight: bold; }
   .voting-status.open { color: #2a8; }
   .voting-status.closed { color: #c00; }
+  .voting-status.not-open { color: #888; }
 </style>
 </head>
 <body>
@@ -23,7 +24,8 @@
 <div class="card">
   <p>投票狀態：<span id="votingStatus" class="voting-status">讀取中...</span></p>
   <button id="openVotingBtn">開放最終決策投票</button>
-  <p style="font-size:0.85rem">開放後無法關閉（設計上投票會一直開放到遊戲結束），重複按沒有副作用。</p>
+  <button id="closeVotingBtn">關閉投票</button>
+  <p style="font-size:0.85rem">開放/關閉都可以重複按，沒有副作用；關閉後可以再按「開放」重新開放（各隊還是可以繼續改投）。</p>
 </div>
 
 <div class="card">
@@ -73,13 +75,24 @@ async function loadVotingStatus() {
   const res = await api('/game/state');
   const state = await res.json();
   const el = document.getElementById('votingStatus');
-  if (state.voting_unlocked_at) {
-    el.textContent = `已開放（${new Date(state.voting_unlocked_at).toLocaleString('zh-TW')}）`;
-    el.className = 'voting-status open';
-    document.getElementById('openVotingBtn').textContent = '投票已開放';
-  } else {
+  const openBtn = document.getElementById('openVotingBtn');
+  const closeBtn = document.getElementById('closeVotingBtn');
+
+  if (!state.voting_unlocked_at) {
     el.textContent = '尚未開放';
+    el.className = 'voting-status not-open';
+    openBtn.disabled = false;
+    closeBtn.disabled = true;
+  } else if (state.voting_closed_at) {
+    el.textContent = `已關閉（${new Date(state.voting_closed_at).toLocaleString('zh-TW')}）`;
     el.className = 'voting-status closed';
+    openBtn.disabled = false;
+    closeBtn.disabled = true;
+  } else {
+    el.textContent = `開放中（${new Date(state.voting_unlocked_at).toLocaleString('zh-TW')} 開始）`;
+    el.className = 'voting-status open';
+    openBtn.disabled = true;
+    closeBtn.disabled = false;
   }
 }
 
@@ -162,8 +175,14 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
 });
 
 document.getElementById('openVotingBtn').addEventListener('click', async () => {
-  if (!confirm('確定要開放最終決策投票嗎？開放後無法關閉。')) return;
+  if (!confirm('確定要開放最終決策投票嗎？')) return;
   await api('/game/open-voting', { method: 'POST' });
+  await loadVotingStatus();
+});
+
+document.getElementById('closeVotingBtn').addEventListener('click', async () => {
+  if (!confirm('確定要關閉最終決策投票嗎？關閉後隊伍將無法再投票或改票。')) return;
+  await api('/game/close-voting', { method: 'POST' });
   await loadVotingStatus();
 });
 

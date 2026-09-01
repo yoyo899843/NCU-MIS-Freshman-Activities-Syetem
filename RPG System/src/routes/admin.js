@@ -571,19 +571,34 @@ router.get('/votes/results', asyncHandler(async (req, res) => {
 router.post('/game/start', (req, res) => res.status(501).json({ error: 'not implemented' }));
 router.post('/game/end', (req, res) => res.status(501).json({ error: 'not implemented' }));
 
-// 投票開關獨立於整體遊戲 status（見 game_state.voting_unlocked_at），由主辦手動
-// 開放，通常在遊戲快結束、準備進入「最終決策」階段時按下。重複呼叫是安全的
-// （COALESCE 保留第一次開放的時間，不會被之後的呼叫往後推遲）。
+// 投票開關獨立於整體遊戲 status（見 game_state.voting_unlocked_at / voting_closed_at），
+// 由主辦手動開放，通常在遊戲快結束、準備進入「最終決策」階段時按下。
+// voting_unlocked_at 只記「最初開放的時間」，不會被之後的呼叫往後推遲；
+// 開放時順便把 voting_closed_at 清空，所以「關閉後再開放」也是走這支 API，
+// 效果等於重新開放投票（votes.js 判斷開放與否是看 unlocked 有值且 closed 沒值）。
 router.post('/game/open-voting', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `UPDATE game_state SET voting_unlocked_at = COALESCE(voting_unlocked_at, now())
-     WHERE id = 1 RETURNING voting_unlocked_at`
+    `UPDATE game_state
+     SET voting_unlocked_at = COALESCE(voting_unlocked_at, now()), voting_closed_at = NULL
+     WHERE id = 1 RETURNING voting_unlocked_at, voting_closed_at`
   );
-  res.json({ votingUnlockedAt: rows[0].voting_unlocked_at });
+  res.json({ votingUnlockedAt: rows[0].voting_unlocked_at, votingClosedAt: rows[0].voting_closed_at });
+}));
+
+// 手動關閉投票：投完票不代表遊戲結束，主辦可能想在收齊各隊意見後把投票關掉，
+// 避免有隊伍事後反悔亂改。重複呼叫是安全的（COALESCE 保留第一次關閉的時間）。
+router.post('/game/close-voting', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `UPDATE game_state SET voting_closed_at = COALESCE(voting_closed_at, now())
+     WHERE id = 1 RETURNING voting_unlocked_at, voting_closed_at`
+  );
+  res.json({ votingUnlockedAt: rows[0].voting_unlocked_at, votingClosedAt: rows[0].voting_closed_at });
 }));
 
 router.get('/game/state', asyncHandler(async (req, res) => {
-  const { rows } = await db.query('SELECT status, started_at, ended_at, voting_unlocked_at FROM game_state WHERE id = 1');
+  const { rows } = await db.query(
+    'SELECT status, started_at, ended_at, voting_unlocked_at, voting_closed_at FROM game_state WHERE id = 1'
+  );
   res.json(rows[0]);
 }));
 

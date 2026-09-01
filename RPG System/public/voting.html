@@ -25,6 +25,11 @@
   <p>投票尚未開放，請等待主辦於遊戲尾聲開放最終決策投票。</p>
 </div>
 
+<div id="closed" class="card" style="display:none">
+  <p>投票已經關閉，無法再投票或改票。</p>
+  <p id="closedVote" style="font-weight:bold"></p>
+</div>
+
 <div id="content" class="card" style="display:none">
   <p>請從以下候選人中指認一位長老。投票開放期間可以隨時改投，以最後一次送出的選擇為準。</p>
   <p id="currentVote" style="font-weight:bold"></p>
@@ -60,8 +65,15 @@ async function init() {
   elders = await eldersRes.json();
   const voteStatus = await votesRes.json();
 
-  if (!voteStatus.votingOpen) {
+  if (voteStatus.votingStatus === 'not_open') {
     document.getElementById('notOpen').style.display = '';
+    return;
+  }
+  if (voteStatus.votingStatus === 'closed') {
+    document.getElementById('closed').style.display = '';
+    document.getElementById('closedVote').textContent = voteStatus.vote
+      ? `你投給了：${voteStatus.vote.elderName}`
+      : '你在關閉前沒有投票。';
     return;
   }
 
