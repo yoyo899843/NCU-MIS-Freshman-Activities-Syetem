@@ -34,6 +34,7 @@
     <a href="index.html">&laquo; 回儀表板</a>
     <strong>探索導覽</strong>
     <span id="progressSummary"></span>
+    <span id="locationStatus"></span>
     <span id="loadError" class="error"></span>
   </div>
   <div id="map"></div>
@@ -43,18 +44,30 @@
 <script src="geofence.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
-if (!token) {
+const schoolInfo = JSON.parse(localStorage.getItem('schoolInfo') || 'null');
+if (!token || !schoolInfo) {
   document.getElementById('notLoggedIn').style.display = '';
 } else {
   document.getElementById('content').style.display = '';
   initMap();
 }
 
-function initMap() {
-  // GPS 圍籬：離開活動範圍會顯示紅色提示條（見 geofence.js），比照 Time-Space
-  // Warfare 只掛在地圖頁的做法——這裡是唯一需要判斷「人在不在範圍內」的頁面。
-  startGeofence();
+// 每 2 秒才動作一次——不是每次 GPS 更新就打一次 API：上傳自己的座標、以及跟
+// 伺服器要一次所有學派目前的座標，都是固定週期的 REST 輪詢（見
+// src/routes/locations.js），這個系統沒有用 Socket.IO。做法跟 Time-Space
+// Warfare 的 public/map.html 完全一樣。
+const LOCATION_INTERVAL_MS = 2000;
 
+// 固定色盤，依 schoolId 算雜湊後取色，讓每個學派的定位標記顏色在不同人的
+// 瀏覽器上都是同一個顏色（不用伺服器另外指定顏色）。
+const SCHOOL_COLORS = ['#c00', '#06c', '#2a8', '#f90', '#909'];
+function schoolColor(schoolId) {
+  let hash = 0;
+  for (const ch of String(schoolId)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return SCHOOL_COLORS[hash % SCHOOL_COLORS.length];
+}
+
+function initMap() {
   // 活動範圍 bounding box，跟 scripts/download-tiles.js 下載圖磚用的是同一個範圍。
   const BOUNDS = L.latLngBounds(
     [25.018806, 121.937006],
@@ -76,6 +89,85 @@ function initMap() {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
   }).addTo(map);
+
+  // 自己的位置：不用等伺服器回應，收到 GPS 更新的當下直接畫在地圖上，
+  // 用跟其他學派不同的樣式（藍色方塊感的圓點＋固定 tooltip）分辨。
+  let selfMarker = null;
+  function updateSelfMarker(lat, lng) {
+    if (!selfMarker) {
+      selfMarker = L.circleMarker([lat, lng], {
+        radius: 8,
+        color: '#000',
+        weight: 2,
+        fillColor: '#06c',
+        fillOpacity: 0.9
+      }).addTo(map).bindTooltip('你的位置', { permanent: true });
+    } else {
+      selfMarker.setLatLng([lat, lng]);
+    }
+  }
+
+  // GPS 圍籬：離開活動範圍會顯示紅色提示條（見 geofence.js），比照 Time-Space
+  // Warfare 只掛在地圖頁的做法——這裡是唯一需要判斷「人在不在範圍內」的頁面。
+  // 校園範圍內的每次讀值同時拿來畫自己的標記、留著給下面的 2 秒上傳計時器用。
+  let latestCoords = null;
+  startGeofence((lat, lng) => {
+    latestCoords = { lat, lng };
+    updateSelfMarker(lat, lng);
+  });
+
+  // 地圖直接顯示所有學派的位置，不分敵我——關掉瀏覽器/斷線也不會讓標記消失：
+  // 伺服器一直保留每個學派最後一次回報的座標，只是標記會從「連線中」（實心、
+  // 顯示「現在」）變成「離線」（半透明、顯示「X 分鐘前」），見下面 live 欄位。
+  document.getElementById('locationStatus').textContent = '（定位分享中）';
+  const otherMarkers = new Map(); // schoolId -> L.CircleMarker
+  const selfSchoolId = schoolInfo.id;
+
+  function statusText(school) {
+    if (school.live) return '現在';
+    const minutes = Math.floor((Date.now() - school.updatedAt) / 60000);
+    return minutes < 1 ? '剛離線' : `${minutes} 分鐘前`;
+  }
+
+  setInterval(() => {
+    if (!latestCoords) return;
+    fetch('/api/locations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify(latestCoords)
+    }).catch(() => {}); // 單次上傳失敗不用特別處理，反正 2 秒後會再傳一次
+  }, LOCATION_INTERVAL_MS);
+
+  setInterval(() => {
+    fetch('/api/locations', { headers: { Authorization: 'Bearer ' + token } })
+      .then(res => res.json())
+      .then(schools => {
+        // 這裡回來的名單不會因為斷線而少人，所以不用做「消失名單裡沒有的標記」
+        // 那種清理——每個學派只會一直被更新（位置 + 連線狀態），不會被移除。
+        schools.forEach(s => {
+          if (s.schoolId === selfSchoolId) return; // 自己已經用 selfMarker 畫過了
+
+          const color = schoolColor(s.schoolId);
+          const tooltipText = `${s.displayName || '?'}<br>${statusText(s)}`;
+
+          let marker = otherMarkers.get(s.schoolId);
+          if (!marker) {
+            marker = L.circleMarker([s.lat, s.lng], {
+              radius: 8,
+              color,
+              fillColor: color,
+              fillOpacity: s.live ? 0.85 : 0.35
+            }).addTo(map).bindTooltip(tooltipText, { permanent: true });
+            otherMarkers.set(s.schoolId, marker);
+          } else {
+            marker.setLatLng([s.lat, s.lng]);
+            marker.setStyle({ color, fillColor: color, fillOpacity: s.live ? 0.85 : 0.35 });
+            marker.setTooltipContent(tooltipText);
+          }
+        });
+      })
+      .catch(() => {});
+  }, LOCATION_INTERVAL_MS);
 
   // 關卡 name/description 之後會開放 admin 編輯（見 admin.js 的 checkpoints CRUD，
   // 目前還是 501 stub），屆時內容就不再是我們自己塞的測試資料、不能再假設它安全，

@@ -12,6 +12,7 @@ const clueRoutes = require('./routes/clues');
 const techTreeRoutes = require('./routes/tech-tree');
 const elderRoutes = require('./routes/elders');
 const voteRoutes = require('./routes/votes');
+const locationRoutes = require('./routes/locations');
 const adminRoutes = require('./routes/admin');
 
 const app = express();
@@ -47,6 +48,7 @@ app.use('/api/clues', clueRoutes);
 app.use('/api/tech-tree', techTreeRoutes);
 app.use('/api/elders', elderRoutes);
 app.use('/api/votes', voteRoutes);
+app.use('/api/locations', locationRoutes);
 app.use('/admin/api', adminRoutes);
 
 app.use((err, req, res, next) => {

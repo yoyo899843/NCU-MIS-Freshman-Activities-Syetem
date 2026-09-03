@@ -247,3 +247,11 @@
 
 - **校園圍籬（`geofence.js`）行為調整**：原本「連續 3 次判定在範圍外」會 `alert()` + 導回 `index.html`；改成只在畫面頂部顯示一條持續性的紅色警告條（「你的位置不在學校範圍，玩不了這個遊戲喔~~」），**不會**把玩家踢出頁面或強制導頁。
 - **玩家離線後定位「不消失」**（2026-09-03 調整）：一開始的版本是伺服器端超過 6 秒沒收到更新就直接把這筆資料從清單裡刪掉，導致關掉瀏覽器/斷線之後，這個人的標記幾秒內就從別人的地圖上完全消失。改成：`playerLocations.js` 永遠保留每個玩家最後一次回報的座標，`getAllLocations()` 改成幫每一筆多帶 `updatedAt`（最後上傳時間）跟 `live`（是否在 6 秒內，也就是判斷目前是否仍在連線中）兩個欄位，不再刪資料。前端 `map.html` 據此把其他玩家的標記分成兩種顯示：`live=true` 時是實心圓點、tooltip 顯示「現在」；`live=false`（斷線/關閉瀏覽器）時變成半透明、tooltip 改顯示「X 分鐘前」（斷線不到一分鐘先顯示「剛離線」，避免卡在「0 分鐘前」）。因為伺服器不再刪資料，前端也拿掉了原本「清單裡消失的人要移除標記」那段清理邏輯——每個出現過的玩家標記只會一直被更新，不會被移除。
+
+## RPG System — 探索導覽地圖學派定位分享（實作完成）
+
+原本 RPG System 的 `map.html` 只有關卡標記＋GPS 圍籬，沒有定位分享功能。這次把 Time-Space Warfare 那套「大地圖顯示所有人的位置、離線也不消失」的做法整套搬過來，架構完全比照（含一開始就用「離線不刪資料，帶 `live`/`updatedAt` 讓前端自己算」的版本，不用重蹈 Time-Space Warfare 先刪資料再改掉的彎路）：
+
+- **後端**：新增 `src/schoolLocations.js`（跟 `playerLocations.js` 同款的記憶體 Map，key 是 schoolId，不落地到 DB）、`src/routes/locations.js`（`POST/GET /api/locations`，掛 `schoolAuth`），`src/app.js` 掛上 `/api/locations`。
+- **前端（`public/map.html`）**：登入後的學派會每 2 秒上傳一次自己的座標、每 2 秒 poll 一次所有學派的位置；自己的位置收到 GPS 更新當下就畫（藍色圓點＋黑框，跟其他學派區分），其他學派的標記依 schoolId 雜湊固定上色（5 校各自一個顏色，不用伺服器額外指定），tooltip 顯示學派名稱＋狀態（`live` 時「現在」、離線時「X 分鐘前」/「剛離線」，離線時標記半透明）。地圖顯示所有學派，不分敵我，跟 Time-Space Warfare 一樣不特別做「隊友限定可見」。
+- **未變動**：GPS 圍籬（`geofence.js`）行為不變，仍是只在 `map.html` 顯示提示條、不導頁；`startGeofence()` 改成帶 `onUpdate` callback 供定位分享使用（原本是無參數呼叫，只做圍籬判斷）。
