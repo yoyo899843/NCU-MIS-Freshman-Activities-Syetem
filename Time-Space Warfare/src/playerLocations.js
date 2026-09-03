@@ -4,13 +4,17 @@
 //
 // 全域共用單一 instance（跟 db.js 的 pool 同一個道理），不要在其他檔案裡各自
 // new 一份，不然不同路由看到的資料會對不起來。
+//
+// 位置「不會消失」：關掉瀏覽器/斷線之後，這個玩家最後一次回報的座標會一直留著、
+// 一直顯示在別人的地圖上，只是標記狀態會從「連線中」變成「離線」。是否還在
+// 連線是用 live 這個欄位標出來（見 getAllLocations），前端據此決定要顯示「現在」
+// 還是「X 分鐘前」，不是由伺服器端刪資料來表示。
 
 const locations = new Map(); // playerId -> { displayName, faction, lat, lng, updatedAt }
 
-// 超過這麼久沒收到更新的位置，視為玩家已經離開/斷線，GET 的時候直接濾掉、
-// 順便清掉這筆記憶體，不會讓別人的地圖上留著一個永遠不動的殭屍標記。
-// 玩家端是每 2 秒上傳一次，這裡抓 3 倍緩衝，容忍一兩次上傳漏掉不會立刻消失。
-const STALE_MS = 6000;
+// 玩家端是每 2 秒上傳一次，超過這麼久沒收到新的更新，就視為目前斷線中
+// （只影響 live 這個欄位怎麼標，不會把資料刪掉）。
+const LIVE_MS = 6000;
 
 function setLocation(playerId, data) {
   locations.set(playerId, { ...data, updatedAt: Date.now() });
@@ -20,11 +24,15 @@ function getAllLocations() {
   const now = Date.now();
   const result = [];
   for (const [playerId, data] of locations) {
-    if (now - data.updatedAt > STALE_MS) {
-      locations.delete(playerId);
-      continue;
-    }
-    result.push({ playerId, displayName: data.displayName, faction: data.faction, lat: data.lat, lng: data.lng });
+    result.push({
+      playerId,
+      displayName: data.displayName,
+      faction: data.faction,
+      lat: data.lat,
+      lng: data.lng,
+      updatedAt: data.updatedAt,
+      live: now - data.updatedAt < LIVE_MS
+    });
   }
   return result;
 }

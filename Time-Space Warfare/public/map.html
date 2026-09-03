@@ -97,8 +97,9 @@ if (token && playerInfo) {
   document.getElementById('locationStatus').textContent = '（定位分享中）';
 
   // 大地圖直接顯示所有人的位置，不分陣營、不分隊伍——不用等隊友，任何登入的
-  // 玩家都看得到彼此。座標刻意不落地到 DB，斷線太久（伺服器端判斷超過 6 秒
-  // 沒收到更新）就會自動從別人的地圖上消失，不用額外處理「離線通知」。
+  // 玩家都看得到彼此。座標刻意不落地到 DB，但關掉瀏覽器/斷線也不會讓標記消失：
+  // 伺服器一直保留每個人最後一次回報的座標，只是標記會從「連線中」（實心、
+  // 顯示「現在」）變成「離線」（半透明、顯示「X 分鐘前」），見下面 live 欄位。
   const otherMarkers = new Map(); // playerId -> L.CircleMarker
   const selfPlayerId = playerInfo.player.id;
 
@@ -107,6 +108,13 @@ if (token && playerInfo) {
   }
   function factionLabel(faction) {
     return faction === 'repair' ? '時空修復者' : '時空破壞者';
+  }
+  // live=false 時，用最後上傳時間（updatedAt）換算成「X 分鐘前」；剛斷線不到
+  // 一分鐘先顯示「剛離線」，不然會一直卡在「0 分鐘前」很奇怪。
+  function statusText(player) {
+    if (player.live) return '現在';
+    const minutes = Math.floor((Date.now() - player.updatedAt) / 60000);
+    return minutes < 1 ? '剛離線' : `${minutes} 分鐘前`;
   }
 
   // 目前收到的最新一次 GPS 讀值，每 2 秒的上傳計時器讀這個變數，
@@ -130,30 +138,27 @@ if (token && playerInfo) {
     fetch('/api/locations', { headers: { Authorization: 'Bearer ' + token } })
       .then(res => res.json())
       .then(players => {
-        const seenIds = new Set();
+        // 這裡回來的名單不會因為斷線而少人，所以不用做「消失名單裡沒有的標記」
+        // 那種清理——每個人只會一直被更新（位置 + 連線狀態），不會被移除。
         players.forEach(p => {
           if (p.playerId === selfPlayerId) return; // 自己已經用 selfMarker 畫過了
-          seenIds.add(p.playerId);
+
+          const color = factionColor(p.faction);
+          const tooltipText = `${p.displayName || '?'}（${factionLabel(p.faction)}）<br>${statusText(p)}`;
 
           let marker = otherMarkers.get(p.playerId);
           if (!marker) {
             marker = L.circleMarker([p.lat, p.lng], {
               radius: 8,
-              color: factionColor(p.faction),
-              fillColor: factionColor(p.faction),
-              fillOpacity: 0.85
-            }).addTo(map).bindTooltip(`${p.displayName || '?'}（${factionLabel(p.faction)}）`, { permanent: true });
+              color,
+              fillColor: color,
+              fillOpacity: p.live ? 0.85 : 0.35
+            }).addTo(map).bindTooltip(tooltipText, { permanent: true });
             otherMarkers.set(p.playerId, marker);
           } else {
             marker.setLatLng([p.lat, p.lng]);
-          }
-        });
-
-        // 伺服器回傳的名單裡已經不在的人（斷線太久被判定離線），把標記移除。
-        otherMarkers.forEach((marker, playerId) => {
-          if (!seenIds.has(playerId)) {
-            map.removeLayer(marker);
-            otherMarkers.delete(playerId);
+            marker.setStyle({ color, fillColor: color, fillOpacity: p.live ? 0.85 : 0.35 });
+            marker.setTooltipContent(tooltipText);
           }
         });
       })

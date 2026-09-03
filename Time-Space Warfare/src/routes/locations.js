@@ -21,8 +21,10 @@ router.post('/', (req, res) => {
   res.status(204).end();
 });
 
-// 大地圖直接顯示所有還活著（最近更新過）的玩家位置，不分陣營、不分隊伍——
-// 玩家端每 2 秒 poll 一次（見 public/map.html），不用 Socket.IO 推播。
+// 大地圖顯示每個玩家「最後已知」的位置，不分陣營、不分隊伍，關掉瀏覽器/斷線
+// 也不會從清單消失——只是每一筆會多帶 live（是否仍在連線中）跟 updatedAt
+// （最後上傳時間），前端據此顯示「現在」或「X 分鐘前」（見 public/map.html）。
+// 玩家端每 2 秒 poll 一次，不用 Socket.IO 推播。
 router.get('/', (req, res) => {
   res.json(getAllLocations());
 });
