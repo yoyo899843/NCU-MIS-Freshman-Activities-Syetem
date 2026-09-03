@@ -5,42 +5,188 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理後台 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="../style.css">
+<style>
+  .status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-weight: bold;
+    color: #fff;
+  }
+  .status-not_started { background: #999; }
+  .status-in_progress { background: #2a7d2a; }
+  .status-ended { background: #c00; }
+  .voting-badge { background: #999; }
+  .voting-badge.open { background: #2a7d2a; }
+  .voting-badge.closed { background: #c60; }
+</style>
 </head>
 <body>
 <h1>管理後台</h1>
 <div class="card">
-  <p>骨架階段：關卡/科技樹/遊戲進程等管理功能留待下一輪開發。以下驗證登入狀態是否有效（呼叫一支受保護的 API）。</p>
-  <p id="status">檢查登入狀態中...</p>
-  <p class="nav"><a href="schools.html">學派管理</a> <a href="clues.html">線索管理</a> <a href="access-codes.html">權限碼管理</a> <a href="elders.html">長老候選人管理</a></p>
+  <p class="nav">
+    <a href="schools.html">學派管理</a>
+    <a href="checkpoints.html">關卡管理</a>
+    <a href="clues.html">線索管理</a>
+    <a href="access-codes.html">權限碼管理</a>
+    <a href="tech-tree.html">科技樹管理</a>
+    <a href="elders.html">長老候選人管理</a>
+    <a href="scoreboard.html">戰況板</a>
+  </p>
+</div>
+
+<div class="card">
+  <h3>遊戲進程控制</h3>
+  <p>目前狀態：<span id="statusBadge" class="status-badge">載入中...</span></p>
+  <p id="timestamps" style="font-size:0.85rem;color:#666"></p>
+  <button id="startBtn">開始遊戲</button>
+  <button id="endBtn">強制結束遊戲</button>
+  <p id="controlResult" class="error"></p>
+</div>
+
+<div class="card">
+  <h3>最終決策投票控制</h3>
+  <p>投票狀態：<span id="votingBadge" class="status-badge voting-badge">載入中...</span></p>
+  <p id="votingCounts" style="font-size:0.85rem;color:#666"></p>
+  <button id="openVotingBtn">開放投票</button>
+  <button id="closeVotingBtn">關閉投票</button>
+  <p id="votingResult" class="error"></p>
+  <div id="votingResults" style="margin-top:8px"></div>
+</div>
+
+<div class="card">
   <button id="logoutBtn">登出</button>
 </div>
 
 <script>
 const token = localStorage.getItem('adminToken');
-const statusEl = document.getElementById('status');
+if (!token) location.href = 'login.html';
 
-if (!token) {
-  location.href = 'login.html';
-} else {
-  fetch('/admin/api/game/state', {
-    headers: { Authorization: 'Bearer ' + token }
-  }).then(async res => {
-    if (res.status === 401) {
-      localStorage.removeItem('adminToken');
-      location.href = 'login.html';
-      return;
-    }
-    const data = await res.json();
-    statusEl.textContent = `登入有效。呼叫 /admin/api/game/state 回應 (${res.status}): ${JSON.stringify(data)}`;
-  }).catch(err => {
-    statusEl.textContent = '連線失敗: ' + err.message;
+const statusLabels = { not_started: '未開始', in_progress: '進行中', ended: '已結束' };
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
   });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
 }
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderState(state) {
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = statusLabels[state.status] || state.status;
+  badge.className = 'status-badge status-' + state.status;
+
+  const parts = [];
+  if (state.started_at) parts.push(`開始於 ${new Date(state.started_at).toLocaleString()}`);
+  if (state.ended_at) parts.push(`結束於 ${new Date(state.ended_at).toLocaleString()}`);
+  document.getElementById('timestamps').textContent = parts.join('　');
+
+  document.getElementById('startBtn').disabled = state.status === 'in_progress';
+  document.getElementById('endBtn').disabled = state.status !== 'in_progress';
+
+  renderVotingBadge(state);
+}
+
+function renderVotingBadge(state) {
+  const badge = document.getElementById('votingBadge');
+  let label, cls;
+  if (!state.voting_unlocked_at) {
+    label = '尚未開放'; cls = '';
+  } else if (state.voting_closed_at) {
+    label = '已關閉'; cls = 'closed';
+  } else {
+    label = '開放中'; cls = 'open';
+  }
+  badge.textContent = label;
+  badge.className = 'status-badge voting-badge' + (cls ? ' ' + cls : '');
+
+  document.getElementById('openVotingBtn').disabled = cls === 'open';
+  document.getElementById('closeVotingBtn').disabled = cls !== 'open';
+}
+
+async function loadState() {
+  const res = await api('/game/state');
+  renderState(await res.json());
+}
+
+async function loadVotingResults() {
+  const res = await api('/votes/results');
+  const data = await res.json();
+  document.getElementById('votingCounts').textContent = `已投票 ${data.voted_schools}/${data.total_schools} 個學派`;
+  document.getElementById('votingResults').innerHTML = data.elders.map(e =>
+    `<div>${escapeHtml(e.name)}：${e.vote_count} 票</div>`
+  ).join('') || '<p>目前沒有任何候選人。</p>';
+}
+
+document.getElementById('startBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('controlResult');
+  const res = await api('/game/start', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  renderState(data);
+});
+
+document.getElementById('endBtn').addEventListener('click', async () => {
+  if (!confirm('確定要強制結束遊戲嗎？')) return;
+  const resultEl = document.getElementById('controlResult');
+  const res = await api('/game/end', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  renderState(data);
+});
+
+document.getElementById('openVotingBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('votingResult');
+  const res = await api('/game/open-voting', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  await loadState();
+  await loadVotingResults();
+});
+
+document.getElementById('closeVotingBtn').addEventListener('click', async () => {
+  if (!confirm('確定要關閉投票嗎？關閉後隊伍就不能再投票或改票了。')) return;
+  const resultEl = document.getElementById('votingResult');
+  const res = await api('/game/close-voting', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  await loadState();
+  await loadVotingResults();
+});
 
 document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('adminToken');
   location.href = 'login.html';
 });
+
+loadState();
+loadVotingResults();
 </script>
 </body>
 </html>

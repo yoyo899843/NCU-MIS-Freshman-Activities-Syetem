@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>關卡管理 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 720px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.85rem; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th { background: #eee; }
+  .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 4px 0; }
+  label.checkbox { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  label.checkbox input { width: auto; margin: 0; }
+</style>
+</head>
+<body>
+<h1>關卡管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <h3 id="formTitle">新增關卡</h3>
+  <input id="name" placeholder="名稱">
+  <input id="description" placeholder="描述（選填）">
+  <input id="mapLat" placeholder="座標緯度（選填，例如 25.0205）">
+  <input id="mapLng" placeholder="座標經度（選填，例如 121.938）">
+  <label class="checkbox"><input type="checkbox" id="isLockedByDefault"> 預設鎖定（要靠關卡解鎖碼才能開放挑戰）</label>
+
+  <button id="saveBtn">新增關卡</button>
+  <button id="cancelEditBtn" style="display:none">取消編輯</button>
+  <p id="formResult" class="error"></p>
+</div>
+
+<div class="card">
+  <h3>關卡清單</h3>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>名稱</th><th>座標</th><th>預設狀態</th><th></th></tr>
+    </thead>
+    <tbody id="checkpointsBody"></tbody>
+  </table>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+let editingId = null;
+let checkpoints = [];
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function loadCheckpoints() {
+  const res = await api('/checkpoints');
+  checkpoints = await res.json();
+  const body = document.getElementById('checkpointsBody');
+  body.innerHTML = checkpoints.map(c => `
+    <tr>
+      <td>${c.id}</td>
+      <td>${escapeHtml(c.name)}</td>
+      <td>${c.map_lat != null && c.map_lng != null ? `${c.map_lat}, ${c.map_lng}` : '（未設定）'}</td>
+      <td>${c.is_locked_by_default ? '預設鎖定' : '預設開放'}</td>
+      <td class="row-actions">
+        <button onclick="startEdit(${c.id})">編輯</button>
+        <button onclick="deleteCheckpoint(${c.id})">刪除</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="5">目前沒有任何關卡</td></tr>';
+}
+
+function readForm() {
+  return {
+    name: document.getElementById('name').value.trim(),
+    description: document.getElementById('description').value.trim(),
+    mapLat: document.getElementById('mapLat').value.trim(),
+    mapLng: document.getElementById('mapLng').value.trim(),
+    isLockedByDefault: document.getElementById('isLockedByDefault').checked
+  };
+}
+
+function resetForm() {
+  editingId = null;
+  document.getElementById('formTitle').textContent = '新增關卡';
+  document.getElementById('saveBtn').textContent = '新增關卡';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  document.getElementById('name').value = '';
+  document.getElementById('description').value = '';
+  document.getElementById('mapLat').value = '';
+  document.getElementById('mapLng').value = '';
+  document.getElementById('isLockedByDefault').checked = false;
+}
+
+window.startEdit = function (id) {
+  const c = checkpoints.find(x => x.id === id);
+  if (!c) return;
+  editingId = id;
+  document.getElementById('formTitle').textContent = `編輯關卡 #${id}`;
+  document.getElementById('saveBtn').textContent = '更新關卡';
+  document.getElementById('cancelEditBtn').style.display = '';
+  document.getElementById('name').value = c.name;
+  document.getElementById('description').value = c.description || '';
+  document.getElementById('mapLat').value = c.map_lat ?? '';
+  document.getElementById('mapLng').value = c.map_lng ?? '';
+  document.getElementById('isLockedByDefault').checked = !!c.is_locked_by_default;
+  window.scrollTo(0, 0);
+};
+
+window.deleteCheckpoint = async function (id) {
+  if (!confirm('確定要刪除這個關卡嗎？已經有隊伍進度或被其他功能使用中的關卡會被擋下來。')) return;
+  const res = await api(`/checkpoints/${id}`, { method: 'DELETE' });
+  if (res.status === 409) {
+    const data = await res.json();
+    alert(data.error);
+    return;
+  }
+  await loadCheckpoints();
+};
+
+document.getElementById('cancelEditBtn').addEventListener('click', resetForm);
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('formResult');
+  const body = readForm();
+  const method = editingId ? 'PATCH' : 'POST';
+  const path = editingId ? `/checkpoints/${editingId}` : '/checkpoints';
+
+  const res = await api(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  resetForm();
+  await loadCheckpoints();
+});
+
+loadCheckpoints();
+</script>
+</body>
+</html>

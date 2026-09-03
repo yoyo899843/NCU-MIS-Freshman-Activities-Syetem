@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>玩家帳號管理 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 900px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 0.85rem; }
+  th { background: #eee; }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
+  .tag-repair { background: #2a6dd1; }
+  .tag-disrupt { background: #c0392b; }
+  .tag-captain { background: #999; margin-left: 4px; }
+  .pin-form { display: flex; gap: 4px; align-items: center; }
+  .pin-form input { width: 70px; padding: 4px; margin: 0; }
+  .pin-form button { width: auto; padding: 4px 8px; }
+  .pin-msg { font-size: 0.75rem; }
+  .pin-msg.ok { color: #2a7d2a; }
+  .pin-msg.error { color: #c00; }
+</style>
+</head>
+<body>
+<h1>玩家帳號管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <input id="searchInput" placeholder="搜尋代號...">
+  <button id="refreshBtn">重新整理</button>
+  <table>
+    <thead>
+      <tr>
+        <th>隊伍</th>
+        <th>代號</th>
+        <th>PIN 碼</th>
+        <th>加入時間</th>
+        <th>重設 PIN</th>
+      </tr>
+    </thead>
+    <tbody id="playersBody"></tbody>
+  </table>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+const factionLabel = f => f === 'repair' ? '修復者' : f === 'disrupt' ? '破壞者' : f;
+
+let players = [];
+
+function renderRows() {
+  const keyword = document.getElementById('searchInput').value.trim();
+  const filtered = keyword ? players.filter(p => p.display_name.includes(keyword)) : players;
+
+  document.getElementById('playersBody').innerHTML = filtered.map(p => `
+    <tr>
+      <td>
+        <span class="tag tag-${p.faction}">${factionLabel(p.faction)} ${p.team_number}</span>
+        ${p.is_captain ? '<span class="tag tag-captain">隊長</span>' : ''}
+      </td>
+      <td>${escapeHtml(p.display_name)}</td>
+      <td><code>${escapeHtml(p.pin || '(未設定)')}</code></td>
+      <td>${new Date(p.created_at).toLocaleString()}</td>
+      <td>
+        <div class="pin-form">
+          <input id="pinInput-${p.id}" inputmode="numeric" pattern="\\d*" maxlength="4" placeholder="新 PIN">
+          <button onclick="resetPin(${p.id})">覆蓋</button>
+        </div>
+        <div class="pin-msg" id="pinMsg-${p.id}"></div>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="5">目前沒有任何玩家</td></tr>';
+
+  // 只允許輸入數字，跟玩家登入頁的 PIN 輸入限制一致。
+  filtered.forEach(p => {
+    const input = document.getElementById(`pinInput-${p.id}`);
+    input?.addEventListener('input', () => {
+      input.value = input.value.replace(/\D/g, '').slice(0, 4);
+    });
+  });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str ?? '';
+  return div.innerHTML;
+}
+
+async function loadPlayers() {
+  const res = await api('/players');
+  players = await res.json();
+  renderRows();
+}
+
+window.resetPin = async function (playerId) {
+  const input = document.getElementById(`pinInput-${playerId}`);
+  const msgEl = document.getElementById(`pinMsg-${playerId}`);
+  const pin = input.value;
+
+  if (!/^\d{4}$/.test(pin)) {
+    msgEl.textContent = 'PIN 必須是 4 位數字';
+    msgEl.className = 'pin-msg error';
+    return;
+  }
+  if (!confirm(`確定要把這位玩家的 PIN 覆蓋成 ${pin} 嗎？`)) return;
+
+  const res = await api(`/players/${playerId}/pin`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    msgEl.textContent = data.error || `失敗 (${res.status})`;
+    msgEl.className = 'pin-msg error';
+    return;
+  }
+  msgEl.textContent = '已更新';
+  msgEl.className = 'pin-msg ok';
+  await loadPlayers();
+};
+
+document.getElementById('refreshBtn').addEventListener('click', loadPlayers);
+document.getElementById('searchInput').addEventListener('input', renderRows);
+loadPlayers();
+</script>
+</body>
+</html>

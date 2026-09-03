@@ -239,7 +239,25 @@
 - **PgAdmin 已接上**：`PgAdmin/compose.yml` 多接了 `rpg-internal` network，重啟後確認能解析到 `rpg-db`——這是等 `RPG System` 自己的 db 建好之後才回頭做的（比照當初 `Time-Space Warfare` 上線後才把 `PgAdmin` 接上去的順序，`PLAN.md` 先前就記錄過這個「之後回來接」的計畫）。
 - **已測試**：全部 15 張資料表建立成功；`/health` 回 200；未帶 token 打 `/admin/api/*` 回 401；建一組學派帳號 + admin 帳號，兩邊登入都成功，密碼錯誤正確回 401；**交叉測試角色隔離**——拿學派 token 打 admin API 被拒（`not an admin token`）、拿 admin token 打學派 API 也被拒（`not a school token`），確認沒有重蹈 Time-Space Warfare 當初發現過的「JWT 只驗簽章沒驗角色」那個漏洞；所有 stub 端點正確回 501；`rpg-db` 沒有加入 `ncumis-camp` 共用網路，只有 `rpg-app` 加入；用 Playwright 開真瀏覽器測完整登入流程（登入 → 換頁 → Dashboard 正確顯示學派中文名稱與六大模組連結），過程無 JS 錯誤。
 
-**之後幾輪才做**：科技樹拖曳互動與檢查邏輯判定、QR 掃描、地圖視覺化呈現方式、權限碼兌換與投票的實際邏輯、admin 端全部 CRUD 與後台管理介面。
+（後續：QR 掃描、地圖視覺化、權限碼兌換、投票邏輯、學派/線索/長老候選人的 admin CRUD 都已經在骨架完成後陸續補上——這些不是我在這次對話裡做的，是外部/其他 session 補的，這裡不重複記錄細節。下面這節記錄我這輪實際完成的部分：科技樹核心機制、關卡與科技樹的 admin CRUD、遊戲進程控制、投票控制介面、戰況板。）
+
+## RPG System — 科技樹核心機制＋剩餘 admin 管理功能（實作完成）
+
+把 RPG System 剩下的 501 stub 路由全部做成真的可用，這是整個遊戲最後一塊還沒做的核心玩法（數位偵探／科技樹）加上主辦端需要的管理介面。
+
+- **科技樹玩家端**（`src/routes/tech-tree.js`）：
+  - `GET /api/tech-tree`：回傳每個分支＋底下槽位目前狀態（這支隊伍放了哪張線索、有沒有鎖定、分支有沒有解鎖）。**絕對不會回傳槽位的正確答案**（`tech_tree_slots.correct_clue_id`）——只有 admin 端看得到，不然等於直接洩題。
+  - `POST /api/tech-tree/slots/:slotId/place`：把手上的線索放進槽位（或傳 `clueId: null` 清空）。只能放這支隊伍自己線索庫裡已經有的線索（查 `school_clues`），已經鎖定（驗證成功過）的槽位不能再改。
+  - `POST /api/tech-tree/check`：**一次檢查這支隊伍目前所有「已放置、還沒鎖定」的槽位**（不是一次一格），對的鎖定＋寫入 `school_check_attempts`；錯的只留嘗試紀錄（用來算扣分），槽位不會被清空，可以換線索重試。檢查完順便判斷有沒有分支因此整條槽位都鎖定、達成就寫入 `school_branch_unlocks`（一次解鎖、不會被之後新增的槽位收回）。
+  - `GET /api/tech-tree/branches/:branchId/story`：只有這支隊伍已經解鎖過這個分支才能讀，沒解鎖回 403。
+- **關卡 admin CRUD**（`src/routes/admin.js`）：`POST/PATCH/DELETE /admin/api/checkpoints`（原本只有唯讀清單），DELETE 有 FK 保護（已經有隊伍進度/被線索或權限碼引用的關卡不能刪）。前端新增 [public/admin/checkpoints.html](RPG%20System/public/admin/checkpoints.html)。
+- **科技樹 admin CRUD**：`GET/POST/PATCH/DELETE /admin/api/tech-tree/branches`（含巢狀 slots）、`POST/PATCH/DELETE /admin/api/tech-tree/slots`，一樣有 FK 保護（已經有隊伍互動過的槽位/分支不能刪）。前端新增 [public/admin/tech-tree.html](RPG%20System/public/admin/tech-tree.html)（分支表單 + 巢狀槽位表格，槽位編輯用 `prompt()` 簡化，不做美化）。
+- **遊戲進程控制**：`POST /admin/api/game/start`、`/game/end`，邏輯比照 Time-Space Warfare（只是這個系統沒有 Socket.IO，前端純靠重新呼叫 `/game/state` 拿最新狀態，不會有即時推播）。連同原本已存在但沒有介面的投票開關（`/game/open-voting`、`/game/close-voting`）、投票結果（`/votes/results`）一起做成管理頁面：[public/admin/index.html](RPG%20System/public/admin/index.html) 新增「遊戲進程控制」「最終決策投票控制」兩張卡片＋全部管理子頁面的導覽連結。
+- **戰況板**：`GET /admin/api/scoreboard`，計分即時算（不存累計分數欄位，呼應 schema 設計）——每答對一格科技樹槽位 +10 分、檢查邏輯答錯一次 -2 分，分數可能是負的。前端新增 [public/admin/scoreboard.html](RPG%20System/public/admin/scoreboard.html)。
+- **玩家端科技樹頁面**（[public/tech-tree.html](RPG%20System/public/tech-tree.html)）：改用 `<select>` 下拉選單代替 HTML5 原生拖曳——原生 drag-and-drop 在手機瀏覽器上預設不支援觸控，而這整個系統就是手機操作的活動，所以下拉選單其實才是正確的手機端互動方式，不是為了省事簡化。選完立刻呼叫 place API 自動儲存，底部一顆「檢查邏輯」按鈕一次檢查所有待驗證的槽位，答對/答錯用短暫變色給視覺回饋，分支解鎖後出現「閱讀分支劇情」按鈕（彈窗顯示劇情文字）。
+- **已測試**（全部走 `docker compose up -d --build` 重建的容器，透過 curl 端對端驗證）：admin 建關卡/分支/槽位成功；學派掃碼取得線索後，嘗試放置「自己沒有的線索」被擋（400）；放錯答案送檢查回 `correct:false`、不鎖定、可重放；放對答案送檢查回 `correct:true`、鎖定、且兩格都對後分支自動出現在 `newlyUnlockedBranches`；鎖定後的槽位無法再變更（409）；解鎖前讀劇情回 403、解鎖後成功；戰況板分數計算正確（2 對 1 錯 = 20 − 2 = 18 分）；`game/start` 重複呼叫回 409；刪除已有隊伍互動過的槽位/分支被 FK 擋下（409）；全部新增的 HTML 頁面（含 admin 新頁面）都能正常回應 200。測試資料事後已清除，`game_state` 已重設回 `not_started`。
+
+**明確沒做的**（不在這次要求範圍內，需要另外確認規格才動）：`school_checkpoint_progress.challenge_status`（關卡本身的「挑戰」進行中/完成狀態）目前沒有任何 API 會去改變它，schema 裡有這個欄位但一直是預設值 `not_started`——原始 API 設計清單裡也沒有對應的端點，不確定這個「挑戰」具體要怎麼觸發/由誰標記完成（QR 掃描？現場主辦人工標記？跟科技樹綁在一起？），需要使用者再說明才不會做錯方向。
 
 ## Time-Space Warfare — 大地圖玩家定位分享（實作完成，含後續調整）
 

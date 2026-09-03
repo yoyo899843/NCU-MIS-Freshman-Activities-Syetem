@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>科技樹管理 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 760px; }
+  textarea { width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; font: inherit; min-height: 80px; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 0.85rem; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th { background: #eee; }
+  .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 4px 0; }
+  .branch-card { margin-bottom: 16px; }
+  .inline-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .inline-form input, .inline-form select { width: auto; flex: 1; min-width: 120px; margin: 0; }
+  .inline-form button { width: auto; }
+</style>
+</head>
+<body>
+<h1>科技樹管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+<p style="font-size:0.85rem;color:#666">槽位的「正確答案」只有這裡看得到——玩家端的數位偵探頁面不會顯示，玩家只能靠自己手上的線索去試。</p>
+
+<div class="card">
+  <h3 id="branchFormTitle">新增分支</h3>
+  <input id="branchName" placeholder="分支名稱">
+  <textarea id="branchStory" placeholder="分支劇情內容（選填，整條槽位都答對後玩家才看得到）"></textarea>
+  <input id="branchOrder" type="number" placeholder="顯示順序（選填，預設 0）">
+  <button id="saveBranchBtn">新增分支</button>
+  <button id="cancelBranchEditBtn" style="display:none">取消編輯</button>
+  <p id="branchFormResult" class="error"></p>
+</div>
+
+<div id="branchList"></div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+let branches = [];
+let clues = [];
+let editingBranchId = null;
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function loadClues() {
+  const res = await api('/clues');
+  clues = await res.json();
+}
+
+async function loadBranches() {
+  const res = await api('/tech-tree/branches');
+  branches = await res.json();
+  render();
+}
+
+function clueOptionsHtml(selectedId) {
+  return clues.map(c => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>#${c.id} ${escapeHtml(c.name)}</option>`).join('');
+}
+
+function render() {
+  const listEl = document.getElementById('branchList');
+  listEl.innerHTML = branches.map(b => `
+    <div class="card branch-card" data-branch-id="${b.id}">
+      <div class="row-actions" style="display:flex; justify-content:space-between; align-items:center">
+        <strong>${escapeHtml(b.name)}</strong>
+        <span>
+          <button onclick="startEditBranch(${b.id})">編輯分支</button>
+          <button onclick="deleteBranch(${b.id})">刪除分支</button>
+        </span>
+      </div>
+      <p style="font-size:0.8rem;color:#666">顯示順序：${b.display_order}${b.story_content ? '　劇情內容：' + escapeHtml(b.story_content.slice(0, 40)) + (b.story_content.length > 40 ? '...' : '') : '（尚未填寫劇情內容）'}</p>
+
+      <table>
+        <thead><tr><th>順序</th><th>正確答案線索</th><th></th></tr></thead>
+        <tbody>
+          ${b.slots.map(s => `
+            <tr>
+              <td>${s.slot_order}</td>
+              <td>#${s.correct_clue_id} ${escapeHtml(s.correct_clue_name)}</td>
+              <td class="row-actions">
+                <button onclick="startEditSlot(${s.id}, ${b.id}, ${s.slot_order}, ${s.correct_clue_id})">編輯</button>
+                <button onclick="deleteSlot(${s.id})">刪除</button>
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="3">這個分支還沒有任何槽位</td></tr>'}
+        </tbody>
+      </table>
+
+      <div class="inline-form" data-add-slot-for="${b.id}">
+        <input type="number" class="slotOrderInput" placeholder="順序（例如 1）">
+        <select class="slotClueInput"><option value="">選擇正確答案線索</option>${clueOptionsHtml(null)}</select>
+        <button onclick="addSlot(${b.id}, this)">新增槽位</button>
+      </div>
+      <p class="slotFormResult error" style="font-size:0.85rem"></p>
+    </div>
+  `).join('') || '<p class="card">目前沒有任何科技樹分支。</p>';
+}
+
+function readBranchForm() {
+  return {
+    name: document.getElementById('branchName').value.trim(),
+    storyContent: document.getElementById('branchStory').value.trim(),
+    displayOrder: document.getElementById('branchOrder').value.trim()
+  };
+}
+
+function resetBranchForm() {
+  editingBranchId = null;
+  document.getElementById('branchFormTitle').textContent = '新增分支';
+  document.getElementById('saveBranchBtn').textContent = '新增分支';
+  document.getElementById('cancelBranchEditBtn').style.display = 'none';
+  document.getElementById('branchName').value = '';
+  document.getElementById('branchStory').value = '';
+  document.getElementById('branchOrder').value = '';
+}
+
+window.startEditBranch = function (id) {
+  const b = branches.find(x => x.id === id);
+  if (!b) return;
+  editingBranchId = id;
+  document.getElementById('branchFormTitle').textContent = `編輯分支 #${id}`;
+  document.getElementById('saveBranchBtn').textContent = '更新分支';
+  document.getElementById('cancelBranchEditBtn').style.display = '';
+  document.getElementById('branchName').value = b.name;
+  document.getElementById('branchStory').value = b.story_content || '';
+  document.getElementById('branchOrder').value = b.display_order;
+  window.scrollTo(0, 0);
+};
+
+window.deleteBranch = async function (id) {
+  if (!confirm('確定要刪除這個分支嗎？底下還有槽位、或已有隊伍解鎖過的分支會被擋下來（要先把槽位刪光）。')) return;
+  const res = await api(`/tech-tree/branches/${id}`, { method: 'DELETE' });
+  if (res.status === 409) {
+    const data = await res.json();
+    alert(data.error);
+    return;
+  }
+  await loadBranches();
+};
+
+document.getElementById('cancelBranchEditBtn').addEventListener('click', resetBranchForm);
+
+document.getElementById('saveBranchBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('branchFormResult');
+  const body = readBranchForm();
+  const method = editingBranchId ? 'PATCH' : 'POST';
+  const path = editingBranchId ? `/tech-tree/branches/${editingBranchId}` : '/tech-tree/branches';
+
+  const res = await api(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  resetBranchForm();
+  await loadBranches();
+});
+
+window.addSlot = async function (branchId, btn) {
+  const wrapper = btn.closest('.inline-form');
+  const slotOrder = wrapper.querySelector('.slotOrderInput').value.trim();
+  const correctClueId = wrapper.querySelector('.slotClueInput').value;
+  const resultEl = wrapper.parentElement.querySelector('.slotFormResult');
+
+  if (!correctClueId) {
+    resultEl.textContent = '請選擇這個槽位的正確答案線索';
+    return;
+  }
+
+  const res = await api('/tech-tree/slots', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branchId, slotOrder, correctClueId })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  await loadBranches();
+};
+
+window.startEditSlot = function (slotId, branchId, slotOrder, correctClueId) {
+  const newOrder = prompt('新的順序：', slotOrder);
+  if (newOrder === null) return;
+  const clueIdStr = prompt('新的正確答案線索 ID（在上方表格可以查到線索 ID）：', correctClueId);
+  if (clueIdStr === null) return;
+  updateSlot(slotId, branchId, newOrder, clueIdStr);
+};
+
+async function updateSlot(slotId, branchId, slotOrder, correctClueId) {
+  const res = await api(`/tech-tree/slots/${slotId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branchId, slotOrder, correctClueId })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error || `失敗 (${res.status})`);
+    return;
+  }
+  await loadBranches();
+}
+
+window.deleteSlot = async function (id) {
+  if (!confirm('確定要刪除這個槽位嗎？已經有隊伍互動過的槽位會被擋下來。')) return;
+  const res = await api(`/tech-tree/slots/${id}`, { method: 'DELETE' });
+  if (res.status === 409) {
+    const data = await res.json();
+    alert(data.error);
+    return;
+  }
+  await loadBranches();
+};
+
+(async () => {
+  await loadClues();
+  await loadBranches();
+})();
+</script>
+</body>
+</html>

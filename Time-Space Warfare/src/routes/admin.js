@@ -324,6 +324,46 @@ router.get('/pk-duels', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
+// 玩家帳號管理：列出所有隊伍/玩家，含 PIN（明碼，見 migrations/005_player_pin_plaintext.sql
+// 的說明——主辦/隊輔本來就看得到，這裡只是把原本要用 PgAdmin 查的資料搬到後台頁面）。
+router.get('/players', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(`
+    SELECT p.id, p.display_name, p.is_captain, p.pin, p.created_at,
+           t.id AS team_id, t.faction, t.team_number
+    FROM players p
+    JOIN teams t ON t.id = p.team_id
+    ORDER BY t.faction, t.team_number, p.is_captain DESC, p.id
+  `);
+  res.json(rows);
+}));
+
+// 用新 PIN 直接覆蓋掉舊 PIN——給隊輔忘記/打錯 PIN 卡住登入時，管理員在後台直接
+// 幫忙重設，不用再請他們去翻 PgAdmin。留稽核紀錄（比照 cancel-penalty 的做法）。
+router.patch('/players/:id/pin', asyncHandler(async (req, res) => {
+  const { pin } = req.body || {};
+  if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+    return res.status(400).json({ error: 'pin must be exactly 4 digits' });
+  }
+
+  const { rows: existingRows } = await db.query('SELECT id, pin FROM players WHERE id = $1', [req.params.id]);
+  if (existingRows.length === 0) return res.status(404).json({ error: 'player not found' });
+  const before = existingRows[0];
+
+  const { rows } = await db.query(
+    `UPDATE players SET pin = $1 WHERE id = $2
+     RETURNING id, display_name, is_captain, pin, created_at, team_id`,
+    [pin, req.params.id]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'reset_player_pin', 'player', $2, $3, $4)`,
+    [req.admin.sub, req.params.id, JSON.stringify({ pin: before.pin }), JSON.stringify({ pin })]
+  );
+
+  res.json(rows[0]);
+}));
+
 router.post('/overrides/score', (req, res) => res.status(501).json({ error: 'not implemented' }));
 
 // 取消某一場 PK 對戰的扣分懲罰：把當初扣掉的分數加回對應交摺點，並留下稽核紀錄。
