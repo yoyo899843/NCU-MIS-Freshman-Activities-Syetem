@@ -20,6 +20,12 @@
   .pin-msg { font-size: 0.75rem; }
   .pin-msg.ok { color: #2a7d2a; }
   .pin-msg.error { color: #c00; }
+  .faction-form { display: flex; gap: 4px; align-items: center; }
+  .faction-form select { padding: 4px; margin: 0; }
+  .faction-form button { width: auto; padding: 4px 8px; }
+  .faction-msg { font-size: 0.75rem; }
+  .faction-msg.ok { color: #2a7d2a; }
+  .faction-msg.error { color: #c00; }
 </style>
 </head>
 <body>
@@ -37,6 +43,7 @@
         <th>PIN 碼</th>
         <th>加入時間</th>
         <th>重設 PIN</th>
+        <th>調整陣營</th>
       </tr>
     </thead>
     <tbody id="playersBody"></tbody>
@@ -84,8 +91,18 @@ function renderRows() {
         </div>
         <div class="pin-msg" id="pinMsg-${p.id}"></div>
       </td>
+      <td>
+        <div class="faction-form">
+          <select id="factionInput-${p.id}">
+            <option value="repair" ${p.faction === 'repair' ? 'selected' : ''}>修復者</option>
+            <option value="disrupt" ${p.faction === 'disrupt' ? 'selected' : ''}>破壞者</option>
+          </select>
+          <button onclick="changeFaction(${p.id})">變更</button>
+        </div>
+        <div class="faction-msg" id="factionMsg-${p.id}"></div>
+      </td>
     </tr>
-  `).join('') || '<tr><td colspan="5">目前沒有任何玩家</td></tr>';
+  `).join('') || '<tr><td colspan="6">目前沒有任何玩家</td></tr>';
 
   // 只允許輸入數字，跟玩家登入頁的 PIN 輸入限制一致。
   filtered.forEach(p => {
@@ -133,6 +150,33 @@ window.resetPin = async function (playerId) {
   }
   msgEl.textContent = '已更新';
   msgEl.className = 'pin-msg ok';
+  await loadPlayers();
+};
+
+// 人工調整隊伍陣營：改的是這位玩家所屬「隊伍」的陣營，不是玩家個人的欄位——
+// 現在一隊剛好只有一個玩家，所以介面上看起來像是在改玩家，實際上後端動的是
+// teams.faction（見 admin.js 的 PATCH /players/:id/faction）。
+window.changeFaction = async function (playerId) {
+  const select = document.getElementById(`factionInput-${playerId}`);
+  const msgEl = document.getElementById(`factionMsg-${playerId}`);
+  const faction = select.value;
+  const factionText = faction === 'repair' ? '修復者' : '破壞者';
+
+  if (!confirm(`確定要把這支隊伍改成「${factionText}」陣營嗎？`)) return;
+
+  const res = await api(`/players/${playerId}/faction`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ faction })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    msgEl.textContent = data.error || `失敗 (${res.status})`;
+    msgEl.className = 'faction-msg error';
+    return;
+  }
+  msgEl.textContent = '已更新';
+  msgEl.className = 'faction-msg ok';
   await loadPlayers();
 };
 

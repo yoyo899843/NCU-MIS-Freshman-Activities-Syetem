@@ -364,6 +364,42 @@ router.patch('/players/:id/pin', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
+// 人工調整隊伍陣營（修復者/破壞者）——陣營原本是登入時自動平均分配的，但主辦
+// 可能因為現場人數不均、活動節奏等理由想手動調整某支隊伍。改的是 teams.faction，
+// 不是 player 本身的欄位，但入口沿用 /players/:id 這支（跟 PIN 重設一致，前端
+// players.html 本來就是以玩家列為單位在操作），內部用玩家的 team_id 找到對應隊伍。
+// 已經打過的關卡分數（checkpoint_attempts.faction）是當下的快照，不會被這裡的
+// 變更追溯改掉——那是歷史紀錄，不是「這支隊伍現在是哪一隊」的當前狀態。
+router.patch('/players/:id/faction', asyncHandler(async (req, res) => {
+  const { faction } = req.body || {};
+  if (!['repair', 'disrupt'].includes(faction)) {
+    return res.status(400).json({ error: 'faction must be repair or disrupt' });
+  }
+
+  const { rows: existingRows } = await db.query(
+    `SELECT p.id, p.team_id, t.faction FROM players p JOIN teams t ON t.id = p.team_id WHERE p.id = $1`,
+    [req.params.id]
+  );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'player not found' });
+  const before = existingRows[0];
+
+  await db.query('UPDATE teams SET faction = $1 WHERE id = $2', [faction, before.team_id]);
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'change_team_faction', 'team', $2, $3, $4)`,
+    [req.admin.sub, before.team_id, JSON.stringify({ faction: before.faction }), JSON.stringify({ faction })]
+  );
+
+  const { rows } = await db.query(
+    `SELECT p.id, p.display_name, p.is_captain, p.pin, p.created_at,
+            t.id AS team_id, t.faction, t.team_number
+     FROM players p JOIN teams t ON t.id = p.team_id WHERE p.id = $1`,
+    [req.params.id]
+  );
+  res.json(rows[0]);
+}));
+
 router.post('/overrides/score', (req, res) => res.status(501).json({ error: 'not implemented' }));
 
 // 取消某一場 PK 對戰的扣分懲罰：把當初扣掉的分數加回對應交摺點，並留下稽核紀錄。
