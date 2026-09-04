@@ -70,25 +70,30 @@ function schoolColor(schoolId) {
 function initMap() {
   // 地圖「可以看/可以拖曳」的範圍，刻意跟 geofence.js 的 CAMPUS_BOUNDS（GPS
   // 圍籬、判定玩不玩得了遊戲）分開設定，兩者是不同的東西：這裡只管地圖 UI
-  // 讓使用者看多廣，跟能不能玩遊戲無關，所以直接拉大到「實際下載到的圖磚
-  // 範圍」（scripts/download-tiles.js 用的活動 bbox 在算 zoom 15 該抓哪些
-  // 圖磚時，因為 tile 是固定網格切的正方形，實際抓下來的範圍比那組窄的
-  // bbox 大一整圈，算出來大約是 1.1km x 2.2km，見 download-tiles.js 的
-  // BBOX 常數）。
+  // 讓使用者看多廣，跟能不能玩遊戲無關。
+  //
+  // 這裡直接用「minZoom~maxZoom（17,18,19）這幾層『真的都有』圖磚覆蓋的
+  // 交集範圍」，並且再往內縮一點點（約 15 公尺）——不是為了節省範圍，是
+  // 避開「算出來的邊界剛好精準卡在圖磚格線上」時，浮點數捨入可能讓 Leaflet
+  // 去要求格線另一側、根本沒下載過的那一格圖磚。已經直接對照 public/tiles/
+  // 底下實際存在的檔案驗證過 zoom 17/18/19 在這個範圍內完全沒有缺漏。
   const BOUNDS = L.latLngBounds(
-    [25.015929, 121.926270],
-    [25.025884, 121.948242]
+    [25.017930, 121.932598],
+    [25.022016, 121.941227]
   );
 
   // minZoom 決定「使用者最多能縮多小」，要跟上面 BOUNDS 的大小成比例——縮到
   // minZoom 時，畫面實際看到的地理範圍如果比 maxBounds 限制的範圍還大，
   // Leaflet 會不斷把畫面拉回置中、超出範圍的部分也沒有圖磚可畫（一片空白）。
-  // BOUNDS 現在放大了，minZoom 也要跟著從 18 往下調回 17，兩者要一起改，
-  // 不能只改其中一個。
+  //
+  // maxBounds 刻意不加 .pad(...)：BOUNDS 本身已經是「剛好完整覆蓋、還往內縮
+  // 過」的範圍，再加 padding 只會把 maxBounds 往外推到超出實際圖磚覆蓋範圍，
+  // 又重演同樣的空白問題（已經實測驗證過：加 0.2 padding 後，zoom 17/18/19
+  // 都會出現大量缺漏的圖磚格）。
   const map = L.map('map', {
-    minZoom: 17,
+    minZoom: 18,
     maxZoom: 19,
-    maxBounds: BOUNDS.pad(0.2),
+    maxBounds: BOUNDS,
     maxBoundsViscosity: 1.0
   });
   map.fitBounds(BOUNDS);
