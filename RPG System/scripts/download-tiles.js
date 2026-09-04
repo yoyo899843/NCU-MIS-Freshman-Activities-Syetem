@@ -27,9 +27,9 @@ if (!process.env.CARTO_API_KEY) {
 }
 
 const BBOX = {
-  minLat: 25.018806,
+  minLat: 25.018085,
   maxLat: 25.021761,
-  minLng: 121.937006,
+  minLng: 121.932794,
   maxLng: 121.940729
 };
 
