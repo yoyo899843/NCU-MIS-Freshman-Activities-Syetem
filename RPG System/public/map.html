@@ -133,8 +133,9 @@ function initMap() {
   });
 
   // 地圖直接顯示所有學派的位置，不分敵我——關掉瀏覽器/斷線也不會讓標記消失：
-  // 伺服器一直保留每個學派最後一次回報的座標，只是標記會從「連線中」（實心、
-  // 顯示「現在」）變成「離線」（半透明、顯示「X 分鐘前」），見下面 live 欄位。
+  // 伺服器一直保留每個學派最後一次回報的座標。標記本身固定常亮（不管有沒有
+  // 連線都是同一個亮度），只有 tooltip 文字會顯示「現在」或「X 分鐘前」區分
+  // 是不是還在線上，見下面 live 欄位。
   document.getElementById('locationStatus').textContent = '（定位分享中）';
   const otherMarkers = new Map(); // schoolId -> L.CircleMarker
   const selfSchoolId = schoolInfo.id;
@@ -166,18 +167,19 @@ function initMap() {
           const color = schoolColor(s.schoolId);
           const tooltipText = `${s.displayName || '?'}<br>${statusText(s)}`;
 
+          // 常亮：不管 live 是不是 true，標記的亮度/顏色都一樣，只有 tooltip
+          // 文字（上面的 statusText）會顯示是不是還在線上。
           let marker = otherMarkers.get(s.schoolId);
           if (!marker) {
             marker = L.circleMarker([s.lat, s.lng], {
               radius: 8,
               color,
               fillColor: color,
-              fillOpacity: s.live ? 0.85 : 0.35
+              fillOpacity: 0.85
             }).addTo(map).bindTooltip(tooltipText, { permanent: true });
             otherMarkers.set(s.schoolId, marker);
           } else {
             marker.setLatLng([s.lat, s.lng]);
-            marker.setStyle({ color, fillColor: color, fillOpacity: s.live ? 0.85 : 0.35 });
             marker.setTooltipContent(tooltipText);
           }
         });
