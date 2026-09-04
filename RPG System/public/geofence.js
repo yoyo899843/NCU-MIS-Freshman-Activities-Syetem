@@ -1,12 +1,17 @@
 // GPS 圍籬：持續追蹤裝置目前的 GPS 位置，離開活動範圍就顯示提示。
-// 做法跟 Time-Space Warfare 的 public/geofence.js 完全一樣，範圍改成
-// scripts/download-tiles.js 下載圖磚時用的同一個 bounding box，兩邊要改要一起改。
-
+// 做法跟 Time-Space Warfare 的 public/geofence.js 完全一樣。
+//
+// 範圍覆蓋「實際下載到的圖磚範圍」，不是 scripts/download-tiles.js 裡那組比較窄
+// 的活動 bounding box 本身——tile 是固定網格切出來的正方形，用那組窄範圍去算
+// 要抓哪些 tile 時，最低（格子最大）的 zoom 15 那一層，抓下來的圖磚實際涵蓋的
+// 區域比原本設定的範圍大上一圈，這裡直接取那圈的真實邊界，避免玩家在「地圖上
+// 明明有圖、卻被判定在範圍外」的地方卡到。跟 public/map.html 的 BOUNDS 要保持
+// 一致，兩邊要改要一起改。
 const CAMPUS_BOUNDS = {
-  minLat: 25.018806,
-  maxLat: 25.021761,
-  minLng: 121.937006,
-  maxLng: 121.940729
+  minLat: 25.015929,
+  maxLat: 25.025884,
+  minLng: 121.926270,
+  maxLng: 121.948242
 };
 
 // GPS 訊號在範圍邊界附近常會跳動（誤差可能有幾十公尺），連續判定超過 OUT_OF_BOUNDS_LIMIT

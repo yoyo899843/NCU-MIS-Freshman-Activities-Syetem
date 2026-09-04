@@ -68,10 +68,16 @@ function schoolColor(schoolId) {
 }
 
 function initMap() {
-  // 活動範圍 bounding box，跟 scripts/download-tiles.js 下載圖磚用的是同一個範圍。
+  // 遊戲範圍覆蓋「實際下載到的圖磚範圍」，不是 download-tiles.js 裡那組比較窄的
+  // 活動 bounding box本身。tile 是固定網格切出來的正方形，download-tiles.js 用
+  // 那組窄範圍去算要抓哪些 tile 時，最低（也是格子最大格）的 zoom 15 那一層，
+  // 抓下來的圖磚實際涵蓋的區域比原本設定的範圍大上一圈（zoom 15 每格約 1.1 公里，
+  // 遠比活動範圍本身大）。這裡直接取 zoom 15 那圈圖磚的真實邊界當遊戲範圍，
+  // 讓玩家不會在「地圖上明明有圖、但被判定在遊戲範圍外」的地方卡到。
+  // 這個範圍跟 geofence.js 的 CAMPUS_BOUNDS 要保持一致，兩邊要改要一起改。
   const BOUNDS = L.latLngBounds(
-    [25.018806, 121.937006],
-    [25.021761, 121.940729]
+    [25.015929, 121.926270],
+    [25.025884, 121.948242]
   );
 
   const map = L.map('map', {
