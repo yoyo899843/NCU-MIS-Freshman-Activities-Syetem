@@ -76,8 +76,14 @@ function initMap() {
     [25.022659, 121.941720]
   );
 
+  // minZoom 決定「使用者最多能縮多小」。這裡活動範圍本身只有 530x576 公尺，
+  // 比一張 zoom 15 的圖磚（約 1.1 公里見方）還小——如果 minZoom 設 15，
+  // 使用者一縮小，畫面實際看到的地理範圍就會比 maxBounds 限制的範圍還大，
+  // Leaflet 找不到地方可以合理擺放視窗，就會不斷把畫面拉回置中、視窗裡超出
+  // maxBounds 的部分也沒有圖磚可畫（一片空白）。minZoom 訂在 18，讓「縮到最小」
+  // 時看到的地理範圍還是比 maxBounds 小，才不會一直卡在邊界上。
   const map = L.map('map', {
-    minZoom: 15,
+    minZoom: 18,
     maxZoom: 19,
     maxBounds: BOUNDS.pad(0.2),
     maxBoundsViscosity: 1.0
