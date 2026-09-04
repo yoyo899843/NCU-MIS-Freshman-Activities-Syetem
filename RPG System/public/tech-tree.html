@@ -16,6 +16,7 @@
   .slot-label { width: 64px; flex-shrink: 0; font-size: 0.85rem; color: #666; }
   .slot-row select { flex: 1; margin: 0; }
   .slot-row.locked select { background: #eaffea; border-color: #2a7d2a; }
+  .slot-row.unreachable select { background: #f0f0f0; color: #999; }
   .slot-flash-correct { background: #eaffea !important; }
   .slot-flash-wrong { background: #ffeaea !important; }
   .story-box { white-space: pre-wrap; background: #fafafa; border: 1px solid #ddd; border-radius: 6px; padding: 12px; margin-top: 8px; }
@@ -34,6 +35,8 @@
   <div class="card">
     <p>把左側下拉選單改成手上的線索、放進你認為對的槽位，放好之後按下方「檢查邏輯」一次驗證。答對的槽位會鎖定變綠，答錯不會扣光——只是會留下嘗試紀錄（影響最終計分），可以換一張線索再試。整條分支的槽位都答對之後，就能閱讀這個分支的劇情。</p>
   </div>
+
+  <div class="card">目前扣除積分：<strong id="errorScore">0</strong></div>
 
   <div id="branchList"></div>
 
@@ -93,7 +96,9 @@ async function loadTechTree() {
     branches = [];
     return;
   }
-  branches = await res.json();
+  const data = await res.json();
+  branches = data.branches;
+  document.getElementById('errorScore').textContent = data.errorScore;
 }
 
 function clueOptionsHtml(selectedClueId) {
@@ -117,10 +122,10 @@ function render() {
         <span class="badge ${b.unlocked ? 'badge-unlocked' : 'badge-locked'}">${b.unlocked ? '已解鎖' : `${b.slots.filter(s => s.isLocked).length}/${b.slots.length} 完成`}</span>
       </div>
       ${b.slots.map(s => `
-        <div class="slot-row ${s.isLocked ? 'locked' : ''}" data-slot-id="${s.id}">
+        <div class="slot-row ${s.isLocked ? 'locked' : ''} ${!s.reachable ? 'unreachable' : ''}" data-slot-id="${s.id}">
           <span class="slot-label">槽位 ${s.slotOrder}</span>
-          <select ${s.isLocked ? 'disabled' : ''} onchange="placeClue(${s.id}, this.value)">
-            ${clueOptionsHtml(s.placedClueId)}
+          <select ${s.isLocked || !s.reachable ? 'disabled' : ''} onchange="placeClue(${s.id}, this.value)">
+            ${s.reachable ? clueOptionsHtml(s.placedClueId) : '<option>（前面的槽位還沒完成）</option>'}
           </select>
         </div>
       `).join('') || '<p style="font-size:0.85rem;color:#666">這個分支還沒有設定任何槽位。</p>'}

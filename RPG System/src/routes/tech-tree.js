@@ -11,7 +11,10 @@ router.use(schoolAuth);
 // 這裡任何一支 API 都絕對不能把它回傳給玩家端，不然就等於直接洩題。
 
 // 每個分支＋底下槽位目前的狀態：這支隊伍放了什麼線索、有沒有鎖定（驗證正確）、
-// 分支本身有沒有解鎖（school_branch_unlocks 是不是有這一筆）。
+// 分支本身有沒有解鎖（school_branch_unlocks 是不是有這一筆）、這一格目前排得到
+// 排不到（reachable，見下面順序限制的說明）。scoreDeducted 是目前總共扣了多少
+// 分——刻意不開欄位存這個數字，直接從 school_check_attempts 的錯誤次數即時算，
+// 避免存了一份跟實際紀錄兜不起來的累計值（跟這個系統一貫的計分設計原則一致）。
 router.get('/', asyncHandler(async (req, res) => {
   const schoolId = req.school.sub;
 
@@ -34,35 +37,54 @@ router.get('/', asyncHandler(async (req, res) => {
     [schoolId]
   );
 
-  const branches = branchRows.map(b => ({
-    id: b.id,
-    name: b.name,
-    displayOrder: b.display_order,
-    unlocked: b.unlocked,
-    slots: slotRows
-      .filter(s => s.branch_id === b.id)
-      .map(s => ({
-        id: s.id,
-        slotOrder: s.slot_order,
-        placedClueId: s.placed_clue_id,
-        placedClueName: s.placed_clue_name,
-        isLocked: s.is_locked
-      }))
-  }));
+  const { rows: errorRows } = await db.query(
+    'SELECT COUNT(*)::int AS error_count FROM school_check_attempts WHERE school_id = $1 AND is_correct = false',
+    [schoolId]
+  );
 
-  res.json(branches);
+  const branches = branchRows.map(b => {
+    const slots = slotRows.filter(s => s.branch_id === b.id);
+    // 順序限制：一個槽位「排得到」的條件是同一分支裡排在它前面（slot_order 較小）
+    // 的槽位全部都已經鎖定。第一格永遠排得到（沒有更前面的槽位）。
+    let blocked = false;
+    return {
+      id: b.id,
+      name: b.name,
+      displayOrder: b.display_order,
+      unlocked: b.unlocked,
+      slots: slots.map(s => {
+        const reachable = !blocked;
+        if (!s.is_locked) blocked = true;
+        return {
+          id: s.id,
+          slotOrder: s.slot_order,
+          placedClueId: s.placed_clue_id,
+          placedClueName: s.placed_clue_name,
+          isLocked: s.is_locked,
+          reachable
+        };
+      })
+    };
+  });
+
+  res.json({ errorScore: errorRows[0].error_count, branches });
 }));
 
 // 把手上的一張線索放進（或清空）一個槽位。已經鎖定（驗證成功過）的槽位不能再改，
 // 對應規格「對了鎖定變綠...不可再改」。只能放這支隊伍自己已經拿到的線索
 // （school_clues 裡有的），不能放別人手上、自己還沒拿到的線索。
+//
+// 順序限制：同一分支的槽位要照 slot_order 由小到大依序解鎖，前面的槽位還沒鎖定
+// （驗證正確）之前，不能跳著放線索到後面的槽位——但不用一次把整條分支排完，
+// 排到目前排得到的那一格、按檢查邏輯，之後隨時可以回來繼續排下一格。
 router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
   const schoolId = req.school.sub;
   const slotId = parseInt(req.params.slotId, 10);
   if (!Number.isInteger(slotId)) return res.status(400).json({ error: 'invalid slot id' });
 
-  const { rows: slotRows } = await db.query('SELECT id FROM tech_tree_slots WHERE id = $1', [slotId]);
+  const { rows: slotRows } = await db.query('SELECT id, branch_id, slot_order FROM tech_tree_slots WHERE id = $1', [slotId]);
   if (slotRows.length === 0) return res.status(404).json({ error: 'slot not found' });
+  const slot = slotRows[0];
 
   const { rows: placementRows } = await db.query(
     'SELECT is_locked FROM school_slot_placements WHERE school_id = $1 AND slot_id = $2',
@@ -70,6 +92,17 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
   );
   if (placementRows[0]?.is_locked) {
     return res.status(409).json({ error: 'this slot is already locked in and cannot be changed' });
+  }
+
+  const { rows: earlierRows } = await db.query(
+    `SELECT COUNT(*)::int AS unfinished
+     FROM tech_tree_slots s
+     LEFT JOIN school_slot_placements ssp ON ssp.slot_id = s.id AND ssp.school_id = $1
+     WHERE s.branch_id = $2 AND s.slot_order < $3 AND COALESCE(ssp.is_locked, false) = false`,
+    [schoolId, slot.branch_id, slot.slot_order]
+  );
+  if (earlierRows[0].unfinished > 0) {
+    return res.status(409).json({ error: 'you must complete the earlier slots in this branch first' });
   }
 
   // clueId 是 null／沒帶 = 把這個槽位清空。
