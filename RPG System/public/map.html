@@ -43,19 +43,12 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="geofence.js"></script>
 <script>
-const token = localStorage.getItem('schoolToken');
-const schoolInfo = JSON.parse(localStorage.getItem('schoolInfo') || 'null');
-if (!token || !schoolInfo) {
-  document.getElementById('notLoggedIn').style.display = '';
-} else {
-  document.getElementById('content').style.display = '';
-  initMap();
-}
-
-// 每 2 秒才動作一次——不是每次 GPS 更新就打一次 API：上傳自己的座標、以及跟
-// 伺服器要一次所有學派目前的座標，都是固定週期的 REST 輪詢（見
-// src/routes/locations.js），這個系統沒有用 Socket.IO。做法跟 Time-Space
-// Warfare 的 public/map.html 完全一樣。
+// 這幾個常數/函式一定要放在 initMap() 被呼叫「之前」——initMap() 裡面同步用到
+// LOCATION_INTERVAL_MS（setInterval 的第二個參數，呼叫當下就會讀值，不是等
+// callback 觸發才讀），如果宣告寫在 initMap() 呼叫之後，const 的 temporal dead
+// zone 會讓這裡直接丟 ReferenceError、把 initMap() 剩下的內容全部中斷執行
+// ——包含最下面畫關卡標記那段，這正是之前「關卡點位看不到」的真正原因
+// （用無頭瀏覽器實際跑過，主控台真的噴出這個錯誤，不是靠猜的）。
 const LOCATION_INTERVAL_MS = 2000;
 
 // 固定色盤，依 schoolId 算雜湊後取色，讓每個學派的定位標記顏色在不同人的
@@ -65,6 +58,15 @@ function schoolColor(schoolId) {
   let hash = 0;
   for (const ch of String(schoolId)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return SCHOOL_COLORS[hash % SCHOOL_COLORS.length];
+}
+
+const token = localStorage.getItem('schoolToken');
+const schoolInfo = JSON.parse(localStorage.getItem('schoolInfo') || 'null');
+if (!token || !schoolInfo) {
+  document.getElementById('notLoggedIn').style.display = '';
+} else {
+  document.getElementById('content').style.display = '';
+  initMap();
 }
 
 function initMap() {
