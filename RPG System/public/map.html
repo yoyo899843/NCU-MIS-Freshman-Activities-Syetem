@@ -68,22 +68,25 @@ function schoolColor(schoolId) {
 }
 
 function initMap() {
-  // 遊戲範圍是使用者提供的實際活動 bounding box，外加約 100 公尺緩衝，
-  // 理由（GPS 飄移容忍、為什麼不直接取整個 zoom 15 圖磚網格範圍）見
-  // geofence.js 的 CAMPUS_BOUNDS 註解——兩邊要保持一致，要改一起改。
+  // 地圖「可以看/可以拖曳」的範圍，刻意跟 geofence.js 的 CAMPUS_BOUNDS（GPS
+  // 圍籬、判定玩不玩得了遊戲）分開設定，兩者是不同的東西：這裡只管地圖 UI
+  // 讓使用者看多廣，跟能不能玩遊戲無關，所以直接拉大到「實際下載到的圖磚
+  // 範圍」（scripts/download-tiles.js 用的活動 bbox 在算 zoom 15 該抓哪些
+  // 圖磚時，因為 tile 是固定網格切的正方形，實際抓下來的範圍比那組窄的
+  // bbox 大一整圈，算出來大約是 1.1km x 2.2km，見 download-tiles.js 的
+  // BBOX 常數）。
   const BOUNDS = L.latLngBounds(
-    [25.017908, 121.936015],
-    [25.022659, 121.941720]
+    [25.015929, 121.926270],
+    [25.025884, 121.948242]
   );
 
-  // minZoom 決定「使用者最多能縮多小」。這裡活動範圍本身只有 530x576 公尺，
-  // 比一張 zoom 15 的圖磚（約 1.1 公里見方）還小——如果 minZoom 設 15，
-  // 使用者一縮小，畫面實際看到的地理範圍就會比 maxBounds 限制的範圍還大，
-  // Leaflet 找不到地方可以合理擺放視窗，就會不斷把畫面拉回置中、視窗裡超出
-  // maxBounds 的部分也沒有圖磚可畫（一片空白）。minZoom 訂在 18，讓「縮到最小」
-  // 時看到的地理範圍還是比 maxBounds 小，才不會一直卡在邊界上。
+  // minZoom 決定「使用者最多能縮多小」，要跟上面 BOUNDS 的大小成比例——縮到
+  // minZoom 時，畫面實際看到的地理範圍如果比 maxBounds 限制的範圍還大，
+  // Leaflet 會不斷把畫面拉回置中、超出範圍的部分也沒有圖磚可畫（一片空白）。
+  // BOUNDS 現在放大了，minZoom 也要跟著從 18 往下調回 17，兩者要一起改，
+  // 不能只改其中一個。
   const map = L.map('map', {
-    minZoom: 18,
+    minZoom: 17,
     maxZoom: 19,
     maxBounds: BOUNDS.pad(0.2),
     maxBoundsViscosity: 1.0
