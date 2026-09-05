@@ -13,7 +13,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, homelab]
+    runs-on: [self-hosted, ncu-web server]
     steps:
       - name: Pull
         run: |
