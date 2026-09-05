@@ -1,0 +1,19 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, homelab]
+    steps:
+      - name: Redeploy
+        run: |
+          cd /home/yoyo/NCU-MIS-Freshman-Activities-Syetem
+          git pull --ff-only
+          docker compose up -d --build --remove-orphans
+          docker compose ps
