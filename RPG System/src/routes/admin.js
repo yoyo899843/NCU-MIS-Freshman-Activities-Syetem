@@ -69,7 +69,11 @@ router.post('/login', asyncHandler(async (req, res) => {
 router.use(adminAuth);
 router.use(gatekeeperGuard);
 
-// 管理端帳號權限管理：只有管理員能看、能改。
+// 管理端帳號管理：只有管理員能看、能操作。
+//
+// 「管理員」這一級是固定的：只能在伺服器上用 scripts/create-admin.js 建立或
+// 調整，沒有任何 HTTP 端點可以新增管理員、也不能把誰升成管理員（呼應
+// PLAN.md 的安全決策）。後台這裡能管的只有「關主」帳號。
 router.get('/admins', requireFullAdmin, asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     'SELECT id, email, display_name, role, created_at FROM admin_users ORDER BY id ASC'
@@ -77,37 +81,95 @@ router.get('/admins', requireFullAdmin, asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-router.patch('/admins/:id/role', requireFullAdmin, asyncHandler(async (req, res) => {
-  const { role } = req.body || {};
-  if (!['admin', 'gatekeeper'].includes(role)) {
-    return res.status(400).json({ error: 'role must be admin or gatekeeper' });
+// 新增關主帳號。role 寫死成 gatekeeper，就算 request body 送 role 進來也不理，
+// 避免這支 API 變成「從網頁新增管理員」的後門。
+router.post('/admins', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { email, password, displayName } = req.body || {};
+  if (!email || typeof email !== 'string' || !email.trim()) {
+    return res.status(400).json({ error: 'email is required' });
+  }
+  if (!password || typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: '密碼長度至少需要 8 個字元' });
   }
 
-  const targetId = parseInt(req.params.id, 10);
-  if (!Number.isInteger(targetId)) return res.status(400).json({ error: 'invalid id' });
+  const passwordHash = await bcrypt.hash(password, 12);
 
-  // 不准把自己降成關主——不然最後一個管理員手滑就再也沒有人能改權限了，
-  // 只能進伺服器下 CLI 指令救回來。要降自己的權限請另一個管理員操作。
-  if (targetId === req.admin.sub && role !== 'admin') {
-    return res.status(400).json({ error: '不能把自己降成關主，請由另一位管理員操作' });
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO admin_users (email, password_hash, display_name, role)
+       VALUES ($1, $2, $3, 'gatekeeper')
+       RETURNING id, email, display_name, role, created_at`,
+      [email.trim(), passwordHash, (displayName || '').trim() || null]
+    );
+
+    await db.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+       VALUES ($1, 'create_gatekeeper', 'admin_user', $2, NULL, $3)`,
+      [req.admin.sub, String(rows[0].id), JSON.stringify({ email: rows[0].email, role: 'gatekeeper' })]
+    );
+
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: '這個 email 已經有帳號了' });
+    throw err;
+  }
+}));
+
+// 重設關主密碼。管理員的密碼不能從這裡改——管理員一律走 CLI。
+router.patch('/admins/:id/password', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { password } = req.body || {};
+  if (!password || typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: '密碼長度至少需要 8 個字元' });
   }
 
-  const { rows: existingRows } = await db.query('SELECT id, role FROM admin_users WHERE id = $1', [targetId]);
-  if (existingRows.length === 0) return res.status(404).json({ error: 'admin user not found' });
-  const before = existingRows[0];
-
-  const { rows } = await db.query(
-    'UPDATE admin_users SET role = $1 WHERE id = $2 RETURNING id, email, display_name, role, created_at',
-    [role, targetId]
+  const { rows: existingRows } = await db.query(
+    'SELECT id, role FROM admin_users WHERE id = $1', [req.params.id]
   );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'admin user not found' });
+  if (existingRows[0].role !== 'gatekeeper') {
+    return res.status(403).json({ error: '管理員帳號只能在伺服器上用 CLI 調整' });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  await db.query('UPDATE admin_users SET password_hash = $1 WHERE id = $2', [passwordHash, req.params.id]);
 
   await db.query(
     `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-     VALUES ($1, 'change_admin_role', 'admin_user', $2, $3, $4)`,
-    [req.admin.sub, String(targetId), JSON.stringify({ role: before.role }), JSON.stringify({ role })]
+     VALUES ($1, 'reset_gatekeeper_password', 'admin_user', $2, NULL, NULL)`,
+    [req.admin.sub, String(req.params.id)]
   );
 
-  res.json(rows[0]);
+  res.json({ id: Number(req.params.id), passwordReset: true });
+}));
+
+// 刪除關主帳號。同樣不能刪管理員。
+router.delete('/admins/:id', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await db.query(
+    'SELECT id, email, role FROM admin_users WHERE id = $1', [req.params.id]
+  );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'admin user not found' });
+  if (existingRows[0].role !== 'gatekeeper') {
+    return res.status(403).json({ error: '管理員帳號只能在伺服器上用 CLI 調整' });
+  }
+
+  try {
+    await db.query('DELETE FROM admin_users WHERE id = $1', [req.params.id]);
+  } catch (err) {
+    // 這個關主已經留下操作紀錄（admin_actions 有 FK 指過來），刪掉的話稽核就
+    // 斷了，所以擋下來。真的要移除請改成重設密碼讓他登不進來。
+    if (err.code === '23503') {
+      return res.status(409).json({ error: '這個關主已經有操作紀錄，不能刪除（可以改成重設密碼讓他無法登入）' });
+    }
+    throw err;
+  }
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'delete_gatekeeper', 'admin_user', $2, $3, NULL)`,
+    [req.admin.sub, String(req.params.id), JSON.stringify({ email: existingRows[0].email })]
+  );
+
+  res.status(204).end();
 }));
 
 // 目前登入者自己的身分（前端用來決定要不要顯示管理員限定的功能入口）。
