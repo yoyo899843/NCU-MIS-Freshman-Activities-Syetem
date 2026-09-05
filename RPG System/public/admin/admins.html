@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>帳號權限管理 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 720px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th { background: #eee; }
+  .role-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
+  .role-admin { background: #2a7d2a; }
+  .role-gatekeeper { background: #c60; }
+  .row-actions select { width: auto; display: inline-block; padding: 4px; margin: 0 4px 0 0; }
+  .row-actions button { width: auto; display: inline-block; padding: 4px 8px; }
+  .self-tag { font-size: 0.75rem; color: #666; margin-left: 4px; }
+</style>
+</head>
+<body>
+<h1>帳號權限管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <p><strong>管理員</strong>：什麼都能做（設定內容、管帳號、控制遊戲進程）。</p>
+  <p><strong>關主</strong>：現場工作人員。可以看所有清單跟戰況板、幫隊伍標記關卡解鎖/完成、直接發線索給隊伍；不能改設定、不能管帳號、不能控制遊戲進程。</p>
+  <p style="font-size:0.85rem;color:#666">新增帳號一律要在伺服器上執行 <code>node scripts/create-admin.js &lt;email&gt; &lt;密碼&gt; "&lt;名稱&gt;" [admin|gatekeeper]</code>，這裡只能調整既有帳號的權限。</p>
+</div>
+
+<div class="card">
+  <h3>帳號清單</h3>
+  <table>
+    <thead>
+      <tr><th>Email</th><th>名稱</th><th>目前權限</th><th>調整</th></tr>
+    </thead>
+    <tbody id="adminsBody"></tbody>
+  </table>
+  <p id="result" class="error"></p>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+let me = null;
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const roleLabel = r => r === 'gatekeeper' ? '關主' : '管理員';
+
+async function load() {
+  const meRes = await api('/me');
+  me = await meRes.json();
+
+  const res = await api('/admins');
+  if (res.status === 403) {
+    document.getElementById('adminsBody').innerHTML =
+      '<tr><td colspan="4">你目前是關主，沒有權限查看/調整帳號權限。</td></tr>';
+    return;
+  }
+  const admins = await res.json();
+
+  document.getElementById('adminsBody').innerHTML = admins.map(a => {
+    const isSelf = a.id === me.id;
+    return `
+    <tr>
+      <td>${escapeHtml(a.email)}${isSelf ? '<span class="self-tag">（你自己）</span>' : ''}</td>
+      <td>${escapeHtml(a.display_name || '')}</td>
+      <td><span class="role-badge role-${a.role}">${roleLabel(a.role)}</span></td>
+      <td class="row-actions">
+        <select id="role-${a.id}">
+          <option value="admin" ${a.role === 'admin' ? 'selected' : ''}>管理員</option>
+          <option value="gatekeeper" ${a.role === 'gatekeeper' ? 'selected' : ''}>關主</option>
+        </select>
+        <button onclick="changeRole(${a.id})">變更</button>
+      </td>
+    </tr>
+  `;
+  }).join('') || '<tr><td colspan="4">目前沒有任何管理端帳號</td></tr>';
+}
+
+window.changeRole = async function (id) {
+  const role = document.getElementById(`role-${id}`).value;
+  const resultEl = document.getElementById('result');
+  resultEl.textContent = '';
+
+  if (!confirm(`確定要把這個帳號的權限改成「${roleLabel(role)}」嗎？`)) return;
+
+  const res = await api(`/admins/${id}/role`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  await load();
+};
+
+load();
+</script>
+</body>
+</html>

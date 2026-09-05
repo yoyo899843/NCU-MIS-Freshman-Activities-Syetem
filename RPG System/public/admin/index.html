@@ -24,18 +24,22 @@
 <body>
 <h1>管理後台</h1>
 <div class="card">
+  <p>目前身分：<strong id="roleLabel">載入中...</strong></p>
   <p class="nav">
-    <a href="schools.html">學派管理</a>
-    <a href="checkpoints.html">關卡管理</a>
-    <a href="clues.html">線索管理</a>
-    <a href="access-codes.html">權限碼管理</a>
-    <a href="tech-tree.html">科技樹管理</a>
-    <a href="elders.html">長老候選人管理</a>
+    <a href="schools.html" class="admin-only" style="display:none">學派管理</a>
+    <a href="checkpoints.html" class="admin-only" style="display:none">關卡管理</a>
+    <a href="clues.html" class="admin-only" style="display:none">線索管理</a>
+    <a href="access-codes.html" class="admin-only" style="display:none">權限碼管理</a>
+    <a href="tech-tree.html" class="admin-only" style="display:none">科技樹管理</a>
+    <a href="elders.html" class="admin-only" style="display:none">長老候選人管理</a>
+    <a href="admins.html" class="admin-only" style="display:none">帳號權限管理</a>
     <a href="scoreboard.html">戰況板</a>
+    <a href="gatekeeper.html">關主現場操作</a>
   </p>
+  <p id="gatekeeperNote" style="display:none;font-size:0.85rem;color:#c60">你目前是「關主」，可以用「關主現場操作」幫隊伍標記關卡、發線索，以及查看戰況板；設定類的功能（學派、關卡、線索、權限碼、科技樹、長老、遊戲進程）只有管理員能改。</p>
 </div>
 
-<div class="card">
+<div class="card admin-only" style="display:none">
   <h3>遊戲進程控制</h3>
   <p>目前狀態：<span id="statusBadge" class="status-badge">載入中...</span></p>
   <p id="timestamps" style="font-size:0.85rem;color:#666"></p>
@@ -44,7 +48,7 @@
   <p id="controlResult" class="error"></p>
 </div>
 
-<div class="card">
+<div class="card admin-only" style="display:none">
   <h3>最終決策投票控制</h3>
   <p>投票狀態：<span id="votingBadge" class="status-badge voting-badge">載入中...</span></p>
   <p id="votingCounts" style="font-size:0.85rem;color:#666"></p>
@@ -185,8 +189,26 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   location.href = 'login.html';
 });
 
-loadState();
-loadVotingResults();
+// 依目前登入者的權限層級決定要顯示哪些東西。純前端隱藏只是介面上的體貼，
+// 真正的權限是後端 middleware/gatekeeperGuard.js 在擋，關主就算自己打 API
+// 也一樣會被 403 擋下來。
+async function loadMe() {
+  const res = await api('/me');
+  const me = await res.json();
+  const isAdmin = me.adminRole === 'admin';
+  document.getElementById('roleLabel').textContent = isAdmin ? '管理員' : '關主';
+  document.getElementById('gatekeeperNote').style.display = isAdmin ? 'none' : '';
+  document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+  return isAdmin;
+}
+
+(async () => {
+  const isAdmin = await loadMe();
+  if (isAdmin) {
+    await loadState();
+    await loadVotingResults();
+  }
+})();
 </script>
 </body>
 </html>

@@ -6,6 +6,7 @@ const multer = require('multer');
 const { parse } = require('csv-parse');
 const db = require('../db');
 const adminAuth = require('../middleware/adminAuth');
+const { gatekeeperGuard, requireFullAdmin } = require('../middleware/gatekeeperGuard');
 const asyncHandler = require('../middleware/asyncHandler');
 
 const router = express.Router();
@@ -47,17 +48,206 @@ router.post('/login', asyncHandler(async (req, res) => {
 
   failedAttempts.delete(email);
 
+  // role: 'admin' 是「這是一張管理端的 token」（跟學派端的 role: 'school' 區分），
+  // adminRole 才是權限層級（管理員/關主），兩個是不同意思、不要混在同一個欄位。
   const token = jwt.sign(
-    { sub: user.id, email: user.email, displayName: user.display_name, role: 'admin' },
+    {
+      sub: user.id,
+      email: user.email,
+      displayName: user.display_name,
+      role: 'admin',
+      adminRole: user.role
+    },
     process.env.JWT_SECRET,
     { expiresIn: '12h' }
   );
 
-  res.json({ token });
+  res.json({ token, adminRole: user.role });
 }));
 
-// 以下全部需要登入
+// 以下全部需要登入（adminAuth），而且要通過權限層級檢查（gatekeeperGuard）
 router.use(adminAuth);
+router.use(gatekeeperGuard);
+
+// 管理端帳號權限管理：只有管理員能看、能改。
+router.get('/admins', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, email, display_name, role, created_at FROM admin_users ORDER BY id ASC'
+  );
+  res.json(rows);
+}));
+
+router.patch('/admins/:id/role', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { role } = req.body || {};
+  if (!['admin', 'gatekeeper'].includes(role)) {
+    return res.status(400).json({ error: 'role must be admin or gatekeeper' });
+  }
+
+  const targetId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(targetId)) return res.status(400).json({ error: 'invalid id' });
+
+  // 不准把自己降成關主——不然最後一個管理員手滑就再也沒有人能改權限了，
+  // 只能進伺服器下 CLI 指令救回來。要降自己的權限請另一個管理員操作。
+  if (targetId === req.admin.sub && role !== 'admin') {
+    return res.status(400).json({ error: '不能把自己降成關主，請由另一位管理員操作' });
+  }
+
+  const { rows: existingRows } = await db.query('SELECT id, role FROM admin_users WHERE id = $1', [targetId]);
+  if (existingRows.length === 0) return res.status(404).json({ error: 'admin user not found' });
+  const before = existingRows[0];
+
+  const { rows } = await db.query(
+    'UPDATE admin_users SET role = $1 WHERE id = $2 RETURNING id, email, display_name, role, created_at',
+    [role, targetId]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'change_admin_role', 'admin_user', $2, $3, $4)`,
+    [req.admin.sub, String(targetId), JSON.stringify({ role: before.role }), JSON.stringify({ role })]
+  );
+
+  res.json(rows[0]);
+}));
+
+// 目前登入者自己的身分（前端用來決定要不要顯示管理員限定的功能入口）。
+router.get('/me', (req, res) => {
+  res.json({
+    id: req.admin.sub,
+    email: req.admin.email,
+    displayName: req.admin.displayName,
+    adminRole: req.admin.adminRole || 'admin'
+  });
+});
+
+// --- 關主也能做的現場操作（見 middleware/gatekeeperGuard.js 的白名單） ---
+
+// 幫某支隊伍把某個關卡標記成已解鎖（原本要靠關卡解鎖碼兌換）。
+router.post('/schools/:schoolId/checkpoints/:checkpointId/unlock', asyncHandler(async (req, res) => {
+  const { schoolId, checkpointId } = req.params;
+
+  const { rows: exists } = await db.query(
+    `SELECT (SELECT COUNT(*) FROM schools WHERE id = $1)::int AS school_count,
+            (SELECT COUNT(*) FROM checkpoints WHERE id = $2)::int AS checkpoint_count`,
+    [schoolId, checkpointId]
+  );
+  if (exists[0].school_count === 0) return res.status(404).json({ error: 'school not found' });
+  if (exists[0].checkpoint_count === 0) return res.status(404).json({ error: 'checkpoint not found' });
+
+  // 已經解鎖過就保留原本的解鎖時間，不要被覆寫成現在。
+  const { rows } = await db.query(
+    `INSERT INTO school_checkpoint_progress (school_id, checkpoint_id, unlocked_at)
+     VALUES ($1, $2, now())
+     ON CONFLICT (school_id, checkpoint_id) DO UPDATE
+       SET unlocked_at = COALESCE(school_checkpoint_progress.unlocked_at, EXCLUDED.unlocked_at)
+     RETURNING school_id, checkpoint_id, unlocked_at, challenge_status`,
+    [schoolId, checkpointId]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'unlock_checkpoint_for_school', 'school_checkpoint', $2, NULL, $3)`,
+    [req.admin.sub, `${schoolId}:${checkpointId}`, JSON.stringify(rows[0])]
+  );
+
+  res.json(rows[0]);
+}));
+
+// 幫某支隊伍把某個關卡標記成挑戰完成（現場關主確認過關之後按的）。
+// 順便確保這個關卡對這支隊伍是解鎖狀態——不會出現「挑戰完成但沒解鎖」的怪狀態。
+router.post('/schools/:schoolId/checkpoints/:checkpointId/complete', asyncHandler(async (req, res) => {
+  const { schoolId, checkpointId } = req.params;
+
+  const { rows: exists } = await db.query(
+    `SELECT (SELECT COUNT(*) FROM schools WHERE id = $1)::int AS school_count,
+            (SELECT COUNT(*) FROM checkpoints WHERE id = $2)::int AS checkpoint_count`,
+    [schoolId, checkpointId]
+  );
+  if (exists[0].school_count === 0) return res.status(404).json({ error: 'school not found' });
+  if (exists[0].checkpoint_count === 0) return res.status(404).json({ error: 'checkpoint not found' });
+
+  const { rows } = await db.query(
+    `INSERT INTO school_checkpoint_progress
+       (school_id, checkpoint_id, unlocked_at, challenge_status, challenge_completed_at)
+     VALUES ($1, $2, now(), 'completed', now())
+     ON CONFLICT (school_id, checkpoint_id) DO UPDATE
+       SET unlocked_at = COALESCE(school_checkpoint_progress.unlocked_at, EXCLUDED.unlocked_at),
+           challenge_status = 'completed',
+           challenge_completed_at = COALESCE(school_checkpoint_progress.challenge_completed_at, EXCLUDED.challenge_completed_at)
+     RETURNING school_id, checkpoint_id, unlocked_at, challenge_status, challenge_completed_at`,
+    [schoolId, checkpointId]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'complete_checkpoint_for_school', 'school_checkpoint', $2, NULL, $3)`,
+    [req.admin.sub, `${schoolId}:${checkpointId}`, JSON.stringify(rows[0])]
+  );
+
+  res.json(rows[0]);
+}));
+
+// 單一隊伍目前的詳細進度（哪些關卡解鎖/完成、拿到哪些線索），給關主現場操作頁
+// 用來顯示「這支隊伍現在到哪了」。戰況板那支 /scoreboard 只有加總數字，
+// 沒有逐筆 id，所以另外開這一支。
+router.get('/schools/:schoolId/progress', asyncHandler(async (req, res) => {
+  const { schoolId } = req.params;
+
+  const { rows: schoolRows } = await db.query('SELECT id FROM schools WHERE id = $1', [schoolId]);
+  if (schoolRows.length === 0) return res.status(404).json({ error: 'school not found' });
+
+  const { rows: progressRows } = await db.query(
+    `SELECT checkpoint_id, unlocked_at, challenge_status
+     FROM school_checkpoint_progress WHERE school_id = $1`,
+    [schoolId]
+  );
+  const { rows: clueRows } = await db.query(
+    'SELECT clue_id FROM school_clues WHERE school_id = $1',
+    [schoolId]
+  );
+
+  res.json({
+    schoolId: Number(schoolId),
+    unlockedCheckpointIds: progressRows.filter(r => r.unlocked_at).map(r => r.checkpoint_id),
+    completedCheckpointIds: progressRows.filter(r => r.challenge_status === 'completed').map(r => r.checkpoint_id),
+    ownedClueIds: clueRows.map(r => r.clue_id)
+  });
+}));
+
+// 直接發一個線索給某支隊伍（不用讓他們自己掃碼或兌換權限碼）。
+// acquired_via 記成 'staff'，跟自己掃到的 'scan'、自己兌換的 'code' 分開，
+// 之後查得出來這個線索是怎麼到這支隊伍手上的。
+router.post('/schools/:schoolId/clues/:clueId', asyncHandler(async (req, res) => {
+  const { schoolId, clueId } = req.params;
+
+  const { rows: exists } = await db.query(
+    `SELECT (SELECT COUNT(*) FROM schools WHERE id = $1)::int AS school_count,
+            (SELECT COUNT(*) FROM clues WHERE id = $2)::int AS clue_count`,
+    [schoolId, clueId]
+  );
+  if (exists[0].school_count === 0) return res.status(404).json({ error: 'school not found' });
+  if (exists[0].clue_count === 0) return res.status(404).json({ error: 'clue not found' });
+
+  // 已經有這個線索就當作成功（不重複發、也不報錯），回傳 alreadyOwned 讓前端可以提示。
+  const { rows: inserted } = await db.query(
+    `INSERT INTO school_clues (school_id, clue_id, acquired_via)
+     VALUES ($1, $2, 'staff')
+     ON CONFLICT (school_id, clue_id) DO NOTHING
+     RETURNING acquired_at`,
+    [schoolId, clueId]
+  );
+  const alreadyOwned = inserted.length === 0;
+
+  if (!alreadyOwned) {
+    await db.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+       VALUES ($1, 'grant_clue_to_school', 'school_clue', $2, NULL, $3)`,
+      [req.admin.sub, `${schoolId}:${clueId}`, JSON.stringify({ acquiredVia: 'staff' })]
+    );
+  }
+
+  res.json({ schoolId: Number(schoolId), clueId: Number(clueId), alreadyOwned });
+}));
 
 // 學派管理：帳號密碼明碼儲存（不雜湊）——這是主辦控制的固定帳號，不是玩家自己設的
 // 密碼，主辦需要能直接在後台查到/管理每組學派目前的帳密（例如忘記密碼時直接看，

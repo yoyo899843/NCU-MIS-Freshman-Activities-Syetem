@@ -33,6 +33,30 @@ const BBOX = {
   maxLng: 121.940729
 };
 
+// 地圖要能看到活動範圍外一點點，抓圖磚時往外多留這麼多公尺。
+const MARGIN_M = 150;
+
+// 「基準矩形」＝ BBOX 外擴 MARGIN_M。每一個 zoom 都下載覆蓋這同一塊矩形的圖磚。
+//
+// 這裡刻意不要每個 zoom 各自拿 BBOX 去算格子範圍——tile 是固定網格，格子越小
+// （zoom 越大），往外對齊到格線的溢出就越少，算出來的實際覆蓋範圍會變成
+// 「zoom 越大、涵蓋的地理範圍越小」（實測 z15 有 2216 公尺寬，z19 只剩 901
+// 公尺）。結果就是同一個地點在 z18 看得到、放大到 z19 就變一片空白。
+// 改成所有 zoom 都對齊同一塊矩形之後，放大縮小看到的範圍就一致了。
+function expandedArea() {
+  const midLat = (BBOX.minLat + BBOX.maxLat) / 2;
+  const latMargin = MARGIN_M / 111320;
+  const lngMargin = MARGIN_M / (111320 * Math.cos((midLat * Math.PI) / 180));
+  return {
+    minLat: BBOX.minLat - latMargin,
+    maxLat: BBOX.maxLat + latMargin,
+    minLng: BBOX.minLng - lngMargin,
+    maxLng: BBOX.maxLng + lngMargin
+  };
+}
+
+const AREA = expandedArea();
+
 const ZOOM_RANGE = [15, 19]; // [minZoom, maxZoom]
 const OUTPUT_DIR = path.join(__dirname, '..', 'public', 'tiles');
 const DELAY_MS = 300; // 禮貌性延遲
@@ -81,8 +105,8 @@ async function main() {
   let total = 0;
 
   for (let z = minZoom; z <= maxZoom; z++) {
-    const topLeft = lngLatToTile(BBOX.minLng, BBOX.maxLat, z);
-    const bottomRight = lngLatToTile(BBOX.maxLng, BBOX.minLat, z);
+    const topLeft = lngLatToTile(AREA.minLng, AREA.maxLat, z);
+    const bottomRight = lngLatToTile(AREA.maxLng, AREA.minLat, z);
 
     for (let x = topLeft.x; x <= bottomRight.x; x++) {
       for (let y = topLeft.y; y <= bottomRight.y; y++) {

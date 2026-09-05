@@ -21,11 +21,18 @@
 <body>
 <h1>管理後台</h1>
 <div class="card">
-  <p class="nav"><a href="questions.html">題庫管理</a> <a href="pk-duels.html">PK 對戰管理</a> <a href="players.html">玩家帳號管理</a></p>
+  <p>目前身分：<strong id="roleLabel">載入中...</strong></p>
+  <p class="nav">
+    <a href="questions.html">題庫管理</a>
+    <a href="pk-duels.html">PK 對戰管理</a>
+    <a href="players.html">玩家帳號管理</a>
+    <a href="admins.html" class="admin-only" style="display:none">帳號權限管理</a>
+  </p>
   <p>交摺點管理、一般積分戰況覆寫等功能留待下一輪開發。</p>
+  <p id="gatekeeperNote" style="display:none;font-size:0.85rem;color:#c60">你目前是「關主」，只能查看資料，不能修改（題庫、遊戲進程、PIN 重設等都會被擋下）。</p>
 </div>
 
-<div class="card">
+<div class="card admin-only" style="display:none">
   <h3>遊戲進程控制</h3>
   <p>目前狀態：<span id="statusBadge" class="status-badge">載入中...</span></p>
   <p id="timestamps" style="font-size:0.85rem;color:#666"></p>
@@ -106,7 +113,23 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   location.href = 'login.html';
 });
 
-loadState();
+// 依目前登入者的權限層級決定要顯示哪些東西。純前端隱藏只是介面上的體貼，
+// 真正的權限是後端 middleware/gatekeeperGuard.js 在擋，關主就算自己打 API
+// 也一樣會被 403 擋下來。
+async function loadMe() {
+  const res = await api('/me');
+  const me = await res.json();
+  const isAdmin = me.adminRole === 'admin';
+  document.getElementById('roleLabel').textContent = isAdmin ? '管理員' : '關主';
+  document.getElementById('gatekeeperNote').style.display = isAdmin ? 'none' : '';
+  document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+  return isAdmin;
+}
+
+(async () => {
+  const isAdmin = await loadMe();
+  if (isAdmin) await loadState();
+})();
 </script>
 </body>
 </html>

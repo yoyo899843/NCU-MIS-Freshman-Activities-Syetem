@@ -5,6 +5,7 @@ const multer = require('multer');
 const { parse } = require('csv-parse');
 const db = require('../db');
 const adminAuth = require('../middleware/adminAuth');
+const { gatekeeperGuard, requireFullAdmin } = require('../middleware/gatekeeperGuard');
 const asyncHandler = require('../middleware/asyncHandler');
 const { getIO } = require('../io');
 
@@ -47,17 +48,77 @@ router.post('/login', asyncHandler(async (req, res) => {
 
   failedAttempts.delete(email);
 
+  // role: 'admin' 是「這是一張管理端的 token」（跟玩家端的 role: 'player' 區分），
+  // adminRole 才是權限層級（管理員/關主），兩個是不同意思、不要混在同一個欄位。
   const token = jwt.sign(
-    { sub: user.id, email: user.email, displayName: user.display_name, role: 'admin' },
+    {
+      sub: user.id,
+      email: user.email,
+      displayName: user.display_name,
+      role: 'admin',
+      adminRole: user.role
+    },
     process.env.JWT_SECRET,
     { expiresIn: '12h' }
   );
 
-  res.json({ token });
+  res.json({ token, adminRole: user.role });
 }));
 
-// 以下全部需要登入
+// 以下全部需要登入（adminAuth），而且要通過權限層級檢查（gatekeeperGuard）
 router.use(adminAuth);
+router.use(gatekeeperGuard);
+
+// 管理端帳號權限管理：只有管理員能看、能改。
+router.get('/admins', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, email, display_name, role, created_at FROM admin_users ORDER BY id ASC'
+  );
+  res.json(rows);
+}));
+
+router.patch('/admins/:id/role', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { role } = req.body || {};
+  if (!['admin', 'gatekeeper'].includes(role)) {
+    return res.status(400).json({ error: 'role must be admin or gatekeeper' });
+  }
+
+  const targetId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(targetId)) return res.status(400).json({ error: 'invalid id' });
+
+  // 不准把自己降成關主——不然最後一個管理員手滑就再也沒有人能改權限了，
+  // 只能進伺服器下 CLI 指令救回來。要降自己的權限請另一位管理員操作。
+  if (targetId === req.admin.sub && role !== 'admin') {
+    return res.status(400).json({ error: '不能把自己降成關主，請由另一位管理員操作' });
+  }
+
+  const { rows: existingRows } = await db.query('SELECT id, role FROM admin_users WHERE id = $1', [targetId]);
+  if (existingRows.length === 0) return res.status(404).json({ error: 'admin user not found' });
+  const before = existingRows[0];
+
+  const { rows } = await db.query(
+    'UPDATE admin_users SET role = $1 WHERE id = $2 RETURNING id, email, display_name, role, created_at',
+    [role, targetId]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'change_admin_role', 'admin_user', $2, $3, $4)`,
+    [req.admin.sub, String(targetId), JSON.stringify({ role: before.role }), JSON.stringify({ role })]
+  );
+
+  res.json(rows[0]);
+}));
+
+// 目前登入者自己的身分（前端用來決定要不要顯示管理員限定的功能入口）。
+router.get('/me', (req, res) => {
+  res.json({
+    id: req.admin.sub,
+    email: req.admin.email,
+    displayName: req.admin.displayName,
+    adminRole: req.admin.adminRole || 'admin'
+  });
+});
 
 // 交摺點 CRUD 本身還沒做（見 PLAN.md），這裡先開一個唯讀清單，給題目管理畫面的
 // 「這題屬於哪個交摺點」下拉選單用。

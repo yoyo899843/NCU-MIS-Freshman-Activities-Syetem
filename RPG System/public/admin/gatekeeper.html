@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>關主現場操作 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 720px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th { background: #eee; }
+  .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 4px 0; }
+  select { display: block; width: 100%; padding: 8px; margin-bottom: 8px; }
+  .msg { font-size: 0.85rem; }
+  .msg.ok { color: #2a7d2a; }
+  .msg.error { color: #c00; }
+</style>
+</head>
+<body>
+<h1>關主現場操作</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <p>選一支隊伍，然後幫他們標記關卡解鎖／完成，或直接發線索給他們。管理員也可以用這頁。</p>
+  <select id="schoolSelect"></select>
+  <p id="globalMsg" class="msg"></p>
+</div>
+
+<div class="card">
+  <h3>關卡</h3>
+  <table>
+    <thead><tr><th>關卡</th><th>這支隊伍的狀態</th><th>操作</th></tr></thead>
+    <tbody id="checkpointsBody"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>線索</h3>
+  <table>
+    <thead><tr><th>線索</th><th>這支隊伍</th><th>操作</th></tr></thead>
+    <tbody id="cluesBody"></tbody>
+  </table>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+let schools = [];
+let checkpoints = [];
+let clues = [];
+let progress = { unlockedIds: new Set(), completedIds: new Set(), ownedClueIds: new Set() };
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function selectedSchoolId() {
+  return parseInt(document.getElementById('schoolSelect').value, 10);
+}
+
+async function loadLists() {
+  const [schoolsRes, checkpointsRes, cluesRes] = await Promise.all([
+    api('/schools'), api('/checkpoints'), api('/clues')
+  ]);
+  schools = await schoolsRes.json();
+  checkpoints = await checkpointsRes.json();
+  clues = await cluesRes.json();
+
+  document.getElementById('schoolSelect').innerHTML = schools.map(s =>
+    `<option value="${s.id}">${escapeHtml(s.display_name)}（${escapeHtml(s.username)}）</option>`
+  ).join('') || '<option value="">（目前沒有任何學派帳號）</option>';
+}
+
+// 這支隊伍目前的進度：關卡解鎖/完成、已經拿到哪些線索。
+async function loadProgress() {
+  const schoolId = selectedSchoolId();
+  progress = { unlockedIds: new Set(), completedIds: new Set(), ownedClueIds: new Set() };
+  if (!Number.isInteger(schoolId)) return;
+
+  const res = await api(`/schools/${schoolId}/progress`);
+  if (!res.ok) return;
+  const data = await res.json();
+
+  data.unlockedCheckpointIds.forEach(id => progress.unlockedIds.add(id));
+  data.completedCheckpointIds.forEach(id => progress.completedIds.add(id));
+  data.ownedClueIds.forEach(id => progress.ownedClueIds.add(id));
+}
+
+function renderTables() {
+  document.getElementById('checkpointsBody').innerHTML = checkpoints.map(c => {
+    const done = progress.completedIds.has(c.id);
+    const unlocked = progress.unlockedIds.has(c.id) || done;
+    const status = done ? '挑戰完成' : (unlocked ? '已解鎖' : '未解鎖');
+    return `
+      <tr>
+        <td>${escapeHtml(c.name)}</td>
+        <td>${status}</td>
+        <td class="row-actions">
+          <button onclick="markCheckpoint(${c.id}, 'unlock')">標記解鎖</button>
+          <button onclick="markCheckpoint(${c.id}, 'complete')">標記完成</button>
+        </td>
+      </tr>`;
+  }).join('') || '<tr><td colspan="3">目前沒有任何關卡</td></tr>';
+
+  document.getElementById('cluesBody').innerHTML = clues.map(c => `
+      <tr>
+        <td>${escapeHtml(c.name)}</td>
+        <td>${progress.ownedClueIds.has(c.id) ? '已擁有' : '—'}</td>
+        <td class="row-actions"><button onclick="grantClue(${c.id})">發給這支隊伍</button></td>
+      </tr>`).join('') || '<tr><td colspan="3">目前沒有任何線索</td></tr>';
+}
+
+function showMsg(text, ok) {
+  const el = document.getElementById('globalMsg');
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'error');
+}
+
+window.markCheckpoint = async function (checkpointId, action) {
+  const schoolId = selectedSchoolId();
+  if (!Number.isInteger(schoolId)) return showMsg('請先選一支隊伍', false);
+
+  const res = await api(`/schools/${schoolId}/checkpoints/${checkpointId}/${action}`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) return showMsg(data.error || `失敗 (${res.status})`, false);
+
+  showMsg(action === 'unlock' ? '已標記解鎖' : '已標記挑戰完成', true);
+  await loadProgress();
+  renderTables();
+};
+
+window.grantClue = async function (clueId) {
+  const schoolId = selectedSchoolId();
+  if (!Number.isInteger(schoolId)) return showMsg('請先選一支隊伍', false);
+
+  const res = await api(`/schools/${schoolId}/clues/${clueId}`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) return showMsg(data.error || `失敗 (${res.status})`, false);
+
+  showMsg(data.alreadyOwned ? '這支隊伍本來就有這個線索了' : '已發給這支隊伍', true);
+  await loadProgress();
+  renderTables();
+};
+
+document.getElementById('schoolSelect').addEventListener('change', async () => {
+  await loadProgress();
+  renderTables();
+});
+
+(async () => {
+  await loadLists();
+  await loadProgress();
+  renderTables();
+})();
+</script>
+</body>
+</html>
