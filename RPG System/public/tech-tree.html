@@ -6,21 +6,63 @@
 <title>數位偵探 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="style.css">
 <style>
-  body { max-width: 640px; }
-  .branch-card { margin-bottom: 16px; }
+  body { max-width: 960px; }
+  .tt-layout { display: flex; gap: 16px; align-items: flex-start; }
+  .vault-panel { width: 200px; flex-shrink: 0; max-height: 75vh; overflow-y: auto; }
+  .vault-card {
+    background: #fff; border: 1px solid #ddd; border-radius: 6px;
+    padding: 8px; margin-bottom: 8px; cursor: grab; touch-action: none; user-select: none;
+  }
+  .vault-card strong { display: block; font-size: 0.85rem; }
+  .vault-card p { font-size: 0.75rem; color: #666; margin: 4px 0 0; }
+  .tree-panel { flex: 1; min-width: 0; }
   .branch-title { display: flex; justify-content: space-between; align-items: center; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
   .badge-locked { background: #999; }
   .badge-unlocked { background: #2a7d2a; }
-  .slot-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #eee; }
-  .slot-label { width: 64px; flex-shrink: 0; font-size: 0.85rem; color: #666; }
-  .slot-row select { flex: 1; margin: 0; }
-  .slot-row.locked select { background: #eaffea; border-color: #2a7d2a; }
-  .slot-row.unreachable select { background: #f0f0f0; color: #999; }
-  .slot-flash-correct { background: #eaffea !important; }
-  .slot-flash-wrong { background: #ffeaea !important; }
+  .branch-row { display: flex; align-items: center; gap: 4px; margin: 40px 0 8px; overflow-x: auto; padding: 4px; }
+  .slot-arrow { flex-shrink: 0; color: #999; font-size: 1.1rem; }
+  .slot-box {
+    position: relative; width: 92px; height: 56px; flex-shrink: 0;
+    border: 2px solid #ccc; border-radius: 6px; background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 4px; box-sizing: border-box;
+  }
+  .slot-box-text { font-size: 0.75rem; word-break: break-all; color: #666; }
+  .slot-box.staged { border-color: #06c; background: #e9f2ff; }
+  .slot-box.staged .slot-box-text { color: #06c; font-weight: bold; }
+  .slot-box.locked { border-color: #2a7d2a; background: #eaffea; }
+  .slot-box.locked .slot-box-text { color: #2a7d2a; font-weight: bold; }
+  .slot-box.unreachable { border-color: #ddd; background: #f0f0f0; }
+  .slot-box.unreachable .slot-box-text { color: #bbb; }
+  .slot-box.dragover { outline: 3px dashed #06c; outline-offset: 2px; }
+  .slot-clear {
+    position: absolute; top: -8px; right: -8px; width: 18px; height: 18px;
+    border-radius: 50%; background: #c00; color: #fff; font-size: 0.7rem;
+    line-height: 18px; text-align: center; cursor: pointer;
+  }
+  .slot-bubble {
+    position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    margin-bottom: 10px; background: #fff; border: 1px solid #333; border-radius: 6px;
+    padding: 6px 8px; font-size: 0.7rem; width: 150px; text-align: left; z-index: 5;
+  }
+  .slot-bubble::after {
+    content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    border: 6px solid transparent; border-top-color: #333;
+  }
+  .slot-bubble strong { display: block; margin-bottom: 2px; }
   .story-box { white-space: pre-wrap; background: #fafafa; border: 1px solid #ddd; border-radius: 6px; padding: 12px; margin-top: 8px; }
-  .check-bar { position: sticky; bottom: 0; background: #fff; padding: 8px 0; border-top: 1px solid #ddd; }
+  .check-bar { position: sticky; bottom: 0; background: #fff; padding: 8px 0; border-top: 1px solid #ddd; text-align: right; }
+  .check-bar button {
+    width: auto; display: inline-block; padding: 10px 24px; border-radius: 999px;
+    background: #e8c343; color: #333; font-weight: bold; border: none;
+  }
+  .drag-ghost {
+    position: fixed; pointer-events: none; z-index: 2000; opacity: 0.9;
+    background: #fff; border: 2px solid #06c; border-radius: 6px;
+    padding: 6px 10px; font-size: 0.8rem; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    max-width: 140px;
+  }
 </style>
 </head>
 <body>
@@ -33,16 +75,23 @@
 
 <div id="content" style="display:none">
   <div class="card">
-    <p>把左側下拉選單改成手上的線索、放進你認為對的槽位，放好之後按下方「檢查邏輯」一次驗證。答對的槽位會鎖定變綠，答錯不會扣光——只是會留下嘗試紀錄（影響最終計分），可以換一張線索再試。整條分支的槽位都答對之後，就能閱讀這個分支的劇情。</p>
+    <p>把左側線索庫的線索拖到右邊你認為對的格子裡（格子灰色代表前面還沒完成、輪不到）。放好之後按右下角「提交結果」一次驗證。答對的格子會鎖定變綠；答錯不會扣光，只是會留下嘗試紀錄（累加左上角的扣分），可以換一張線索再試。整條分支都答對之後，就能閱讀這個分支的劇情。</p>
   </div>
 
   <div class="card">目前扣除積分：<strong id="errorScore">0</strong></div>
 
-  <div id="branchList"></div>
-
-  <div class="check-bar">
-    <button id="checkBtn">檢查邏輯</button>
-    <p id="checkResult"></p>
+  <div class="tt-layout">
+    <div class="vault-panel card">
+      <strong>線索庫清單</strong>
+      <div id="vaultList" style="margin-top:8px"></div>
+    </div>
+    <div class="tree-panel">
+      <div id="branchList"></div>
+      <div class="check-bar">
+        <button id="checkBtn">提交結果</button>
+        <p id="checkResult"></p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -65,6 +114,10 @@ if (!token) {
 
 let branches = [];
 let vault = [];
+let dragState = null; // { clueId, ghostEl } — 目前正在拖曳中的線索
+
+// 固定色盤，依分支順序取色，純粹用來視覺區分不同分支（跟資料無關）。
+const BRANCH_COLORS = ['#7fd9b0', '#f7a8c4', '#a8c8f0', '#f7d488', '#c9a8f0'];
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -76,6 +129,10 @@ async function api(path, options = {}) {
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function clueById(id) {
+  return vault.find(c => c.id === id);
 }
 
 async function init() {
@@ -101,41 +158,152 @@ async function loadTechTree() {
   document.getElementById('errorScore').textContent = data.errorScore;
 }
 
-function clueOptionsHtml(selectedClueId) {
-  const owned = vault.map(c =>
-    `<option value="${c.id}" ${c.id === selectedClueId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
-  ).join('');
-  return `<option value="">（未放置）</option>${owned}`;
+// 目前已經被放進任何格子（不管是已鎖定還是還沒送出檢查）的線索 id，
+// 這些線索要從左側線索庫的清單裡拿掉，不能同時放進兩個格子。
+function placedClueIds() {
+  const ids = new Set();
+  branches.forEach(b => b.slots.forEach(s => { if (s.placedClueId) ids.add(s.placedClueId); }));
+  return ids;
 }
 
 function render() {
+  renderVault();
+  renderBranches();
+}
+
+function renderVault() {
+  const used = placedClueIds();
+  const available = vault.filter(c => !used.has(c.id));
+  const listEl = document.getElementById('vaultList');
+  listEl.innerHTML = available.map(c => `
+    <div class="vault-card" data-clue-id="${c.id}">
+      <strong>${escapeHtml(c.name)}</strong>
+      <p>${escapeHtml(c.description || '')}</p>
+    </div>
+  `).join('') || '<p style="font-size:0.8rem;color:#666">線索庫是空的。</p>';
+
+  listEl.querySelectorAll('.vault-card').forEach(cardEl => {
+    const clueId = parseInt(cardEl.dataset.clueId, 10);
+    attachVaultDrag(cardEl, clueId);
+  });
+}
+
+function renderBranches() {
   const listEl = document.getElementById('branchList');
   if (branches.length === 0) {
     listEl.innerHTML = '<p class="card">目前還沒有設定任何科技樹分支。</p>';
     return;
   }
 
-  listEl.innerHTML = branches.map(b => `
-    <div class="card branch-card" data-branch-id="${b.id}">
+  listEl.innerHTML = branches.map((b, i) => {
+    const color = BRANCH_COLORS[i % BRANCH_COLORS.length];
+    return `
+    <div class="card" data-branch-id="${b.id}">
       <div class="branch-title">
         <strong>${escapeHtml(b.name)}</strong>
         <span class="badge ${b.unlocked ? 'badge-unlocked' : 'badge-locked'}">${b.unlocked ? '已解鎖' : `${b.slots.filter(s => s.isLocked).length}/${b.slots.length} 完成`}</span>
       </div>
-      ${b.slots.map(s => `
-        <div class="slot-row ${s.isLocked ? 'locked' : ''} ${!s.reachable ? 'unreachable' : ''}" data-slot-id="${s.id}">
-          <span class="slot-label">槽位 ${s.slotOrder}</span>
-          <select ${s.isLocked || !s.reachable ? 'disabled' : ''} onchange="placeClue(${s.id}, this.value)">
-            ${s.reachable ? clueOptionsHtml(s.placedClueId) : '<option>（前面的槽位還沒完成）</option>'}
-          </select>
-        </div>
-      `).join('') || '<p style="font-size:0.85rem;color:#666">這個分支還沒有設定任何槽位。</p>'}
+      <div class="branch-row">
+        ${b.slots.map((s, idx) => renderSlot(s, idx, color)).join('')}
+      </div>
       ${b.unlocked ? `<button onclick="readStory(${b.id})">閱讀分支劇情</button>` : ''}
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
-window.placeClue = async function (slotId, clueIdValue) {
-  const clueId = clueIdValue === '' ? null : parseInt(clueIdValue, 10);
+function renderSlot(s, idx, branchColor) {
+  const clue = s.placedClueId ? clueById(s.placedClueId) : null;
+  const stateClass = s.isLocked ? 'locked' : (!s.reachable ? 'unreachable' : (s.placedClueId ? 'staged' : ''));
+  const droppable = s.reachable && !s.isLocked;
+  const borderColor = s.isLocked ? '#2a7d2a' : (s.placedClueId ? '#06c' : (s.reachable ? branchColor : '#ddd'));
+
+  return `
+    ${idx > 0 ? '<span class="slot-arrow">&rarr;</span>' : ''}
+    <div class="slot-box ${stateClass}" data-slot-id="${s.id}" data-droppable="${droppable}" style="border-color:${borderColor}">
+      ${s.placedClueId ? `
+        <div class="slot-bubble">
+          <strong>${escapeHtml(s.placedClueName || '')}</strong>
+          ${escapeHtml(clue?.description || '')}
+        </div>
+      ` : ''}
+      ${s.placedClueId && !s.isLocked ? `<span class="slot-clear" onclick="clearSlot(${s.id})">&times;</span>` : ''}
+      <span class="slot-box-text">${
+        s.placedClueId ? escapeHtml(s.placedClueName) : (s.reachable ? '拖曳線索至此' : '尚未輪到')
+      }</span>
+    </div>
+  `;
+}
+
+// 用 Pointer Events（不是 HTML5 的 draggable/dragstart）實作拖曳，滑鼠、觸控螢幕
+// 都是同一套事件，手機瀏覽器也能正常拖——這個系統主要是給玩家用手機操作的，
+// 舊版 HTML5 Drag and Drop API 在觸控裝置上基本上不能用。
+function attachVaultDrag(cardEl, clueId) {
+  cardEl.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    const clue = clueById(clueId);
+    if (!clue) return;
+
+    const ghost = document.createElement('div');
+    ghost.className = 'drag-ghost';
+    ghost.textContent = clue.name;
+    document.body.appendChild(ghost);
+    positionGhost(ghost, e.clientX, e.clientY);
+
+    dragState = { clueId, ghostEl: ghost };
+    try { cardEl.setPointerCapture(e.pointerId); } catch (err) { /* 部分瀏覽器對合成事件的 pointerId 可能會擋，不影響後面用 addEventListener 接的邏輯 */ }
+
+    const onMove = ev => {
+      positionGhost(ghost, ev.clientX, ev.clientY);
+      updateDropHighlight(ev.clientX, ev.clientY);
+    };
+    const onUp = ev => {
+      cardEl.removeEventListener('pointermove', onMove);
+      cardEl.removeEventListener('pointerup', onUp);
+      cardEl.removeEventListener('pointercancel', onUp);
+      finishDrag(ev.clientX, ev.clientY);
+    };
+    cardEl.addEventListener('pointermove', onMove);
+    cardEl.addEventListener('pointerup', onUp);
+    cardEl.addEventListener('pointercancel', onUp);
+  });
+}
+
+function positionGhost(ghost, x, y) {
+  ghost.style.left = (x + 12) + 'px';
+  ghost.style.top = (y + 12) + 'px';
+}
+
+function findDropzoneAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  const box = el?.closest('.slot-box');
+  return box && box.dataset.droppable === 'true' ? box : null;
+}
+
+function updateDropHighlight(x, y) {
+  document.querySelectorAll('.slot-box.dragover').forEach(el => el.classList.remove('dragover'));
+  findDropzoneAt(x, y)?.classList.add('dragover');
+}
+
+async function finishDrag(x, y) {
+  const state = dragState;
+  dragState = null;
+  if (!state) return;
+  state.ghostEl.remove();
+  document.querySelectorAll('.slot-box.dragover').forEach(el => el.classList.remove('dragover'));
+
+  const box = findDropzoneAt(x, y);
+  if (!box) return; // 沒放到合法的格子上，線索就當作沒拖走，畫面不用變
+
+  const slotId = parseInt(box.dataset.slotId, 10);
+  await placeClue(slotId, state.clueId);
+}
+
+window.clearSlot = async function (slotId) {
+  await placeClue(slotId, null);
+};
+
+async function placeClue(slotId, clueId) {
   const res = await api(`/api/tech-tree/slots/${slotId}/place`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -144,20 +312,18 @@ window.placeClue = async function (slotId, clueIdValue) {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     alert(data.error || `失敗 (${res.status})`);
-    await loadTechTree();
-    render();
     return;
   }
-  // 找出剛剛更新的那一格，直接就地更新資料，不用整份重抓，避免使用者手上其他
-  // 還沒放好的下拉選單被重畫打斷。
   for (const b of branches) {
     const slot = b.slots.find(s => s.id === slotId);
     if (slot) {
       slot.placedClueId = clueId;
+      slot.placedClueName = clueId ? clueById(clueId)?.name ?? null : null;
       break;
     }
   }
-};
+  render();
+}
 
 window.readStory = async function (branchId) {
   const res = await api(`/api/tech-tree/branches/${branchId}/story`);
@@ -189,20 +355,14 @@ document.getElementById('checkBtn').addEventListener('click', async () => {
   }
 
   if (data.results.length === 0) {
-    resultEl.textContent = '目前沒有任何已放置、待檢查的槽位。';
+    resultEl.textContent = '目前沒有任何已放置、待檢查的格子。';
   } else {
     const correctCount = data.results.filter(r => r.correct).length;
     resultEl.textContent = `檢查完成：${correctCount}/${data.results.length} 格正確。` +
       (data.newlyUnlockedBranches.length ? ` 有 ${data.newlyUnlockedBranches.length} 個分支剛剛解鎖！` : '');
-
-    // 短暫閃一下顏色給視覺回饋，正式狀態（鎖定/樣式）等下面 loadTechTree() 重抓完再定案。
-    data.results.forEach(r => {
-      const row = document.querySelector(`.slot-row[data-slot-id="${r.slotId}"]`);
-      row?.classList.add(r.correct ? 'slot-flash-correct' : 'slot-flash-wrong');
-    });
   }
 
-  await loadTechTree();
+  await Promise.all([loadVault(), loadTechTree()]);
   render();
 });
 </script>
