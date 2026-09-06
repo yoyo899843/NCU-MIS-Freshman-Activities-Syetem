@@ -3,177 +3,162 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>模板 3 霓虹檔案 - 資管皇家學院數位探查儀</title>
+<title>模板 3 靛藍檔案 - 資管皇家學院數位探查儀</title>
 <!--
-  模板 3：霓虹檔案（Neon Dossier）
-  概念：現代深色 App——玻璃卡片、紫青漸層、大圓角，六大模組做成圖示磚。
-  優點：最像「一個做好的產品」，新生第一眼最有感，元件最好複用。
-  缺點：漸層/光暈多，做起來最花時間；深底在大太陽下一樣偏吃力（比模板 1 好一點）。
+  模板 3：靛藍檔案（Modern Card）
+  依 ui-ux-pro-max 重建。原本的紫青漸層被技能列為反模式（AI purple/pink gradients），
+  且漸層文字無法驗證對比，因此改為單一實色強調（靛藍），六大模組維持圖示磚。
+  優點：最像做好的產品，元件最好複用，實色好維護也好驗對比。
+  代價：深底在戶外仍不如淺色好讀。
 -->
 <style>
   :root {
-    --bg: #0b0a12;
-    --card: rgba(255,255,255,.045);
-    --card-line: rgba(255,255,255,.09);
-    --ink: #e8e6f2;
-    --dim: #8e89a8;
-    --violet: #8b5cf6;
-    --cyan: #22d3ee;
-    --red: #fb7185;
-    --sans: system-ui, "PingFang TC", "Noto Sans TC", sans-serif;
+    --bg:#0d1117; --card:#171e27; --line:#2c3742; --fg:#e6edf3; --dim:#9fb0c0;
+    --accent:#58b7ff; --on-accent:#04121f; --ring:#58b7ff; --danger:#ff9aa2; --ok:#5fd39a;
+    --pad:20px 16px 28px; --r-sm:10px;
+    --input-bg:#0b1016; --input-bd:1px solid #2c3742; --placeholder:#6d7f8f;
+    --font-body: system-ui, "PingFang TC", "Noto Sans TC", sans-serif;
   }
-  * { box-sizing: border-box; }
+  .head { margin-bottom:18px; }
+  .eyebrow { display:block; font-size:13px; letter-spacing:.2em; color:var(--accent); margin-bottom:7px; }
+  h1 { margin:0 0 12px; font-size:26px; font-weight:800; letter-spacing:-.01em; color:var(--fg); }
+  .who { display:inline-flex; align-items:center; gap:9px; margin:0;
+         padding:6px 14px 6px 6px; border-radius:999px;
+         background:var(--card); border:1px solid var(--line); font-size:15px; color:var(--dim); }
+  .who .dot { display:grid; place-items:center; width:26px; height:26px; border-radius:50%;
+              background:var(--accent); color:var(--on-accent); font-size:13px; font-weight:800; }
+  .who b { color:var(--fg); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px;
+          padding:16px; margin-bottom:14px; }
+  h2 { margin:0 0 14px; font-size:15px; font-weight:600; color:var(--dim); }
+  .tiles { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .tile { display:block; padding:14px 13px; border-radius:13px;
+          background:#1e2732; border:1px solid var(--line);
+          color:var(--fg); text-decoration:none; }
+  .tile:hover, .tile:active { border-color:var(--accent); background:#243040; }
+  .tile .ic { color:var(--accent); margin-bottom:9px; }
+  .tile .t { display:block; font-size:16px; font-weight:700; }
+  .tile .d { display:block; font-size:13px; color:var(--dim); }
+  button { display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
+           padding:13px; border:none; border-radius:11px;
+           background:var(--accent); color:var(--on-accent);
+           font-family:inherit; font-size:16px; font-weight:700; }
+  button:hover { background:#3ea4f0; }
+  button.ghost { background:transparent; color:var(--dim); border:1px solid var(--line); font-weight:500; }
+  button.ghost:hover { background:#1e2732; }
+  table { width:100%; border-collapse:collapse; font-size:15px; }
+  th,td { text-align:left; padding:11px 4px; border-bottom:1px solid var(--line); }
+  tr:last-child td { border-bottom:0; }
+  th { color:var(--dim); font-size:13px; font-weight:500; }
+  .pill { display:inline-flex; align-items:center; gap:5px; font-size:13px;
+          padding:2px 10px; border-radius:999px; background:#123047; color:var(--accent); }
+  .foot { text-align:center; font-size:13px; color:var(--dim); letter-spacing:.12em; margin-top:22px; }
+
+  /* ====== 共用基礎層（六個模板一致，只有色票與外觀不同） ======
+     對應 ui-ux-pro-max：§1 無障礙 §2 觸控 §5 版面 §6 字體色彩 §7 動效 */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
-    margin: 0; padding: 20px 16px 28px;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: var(--sans);
-    font-size: 15px; line-height: 1.65;
-    max-width: 480px; margin-inline: auto;
-    min-height: 100vh;
+    margin: 0 auto; padding: var(--pad);
+    max-width: 480px; min-height: 100dvh;          /* viewport-units：不用 100vh */
+    background: var(--bg); color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 16px;                                /* readable-font-size：手機最小 16px */
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
   }
-  /* 背景光暈 */
-  body::before {
-    content: ""; position: fixed; inset: 0; z-index: -1;
-    background:
-      radial-gradient(60% 40% at 15% 0%, rgba(139,92,246,.28), transparent 70%),
-      radial-gradient(50% 35% at 95% 12%, rgba(34,211,238,.18), transparent 70%);
+  /* number-tabular：數據等寬，不會因為數字變動而跳位 */
+  .num, td.n, .clock, .code { font-variant-numeric: tabular-nums; }
+
+  /* touch-target-size：可點擊元素最小 44px；touch-spacing：間距 >= 8px */
+  button, input, .nav a, .tile, .btn { min-height: 44px; }
+  button, .nav a, .tile, .btn { cursor: pointer; touch-action: manipulation; }
+
+  /* focus-states：3px 可見焦點環，絕不移除 outline */
+  a:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 3px solid var(--ring); outline-offset: 2px;
   }
 
-  .head { margin-bottom: 20px; }
-  .eyebrow {
-    display: inline-block; font-size: 11px; letter-spacing: .24em;
-    color: var(--cyan); text-transform: uppercase; margin-bottom: 6px;
+  /* state-clarity + press-feedback：按壓有回饋，且不造成版面位移 */
+  button, .nav a, .tile {
+    transition: background-color .18s ease-out, border-color .18s ease-out, transform .12s ease-out;
   }
-  h1 {
-    margin: 0 0 10px; font-size: 24px; font-weight: 800; letter-spacing: -.01em;
-    background: linear-gradient(92deg, #fff 10%, var(--violet) 60%, var(--cyan) 100%);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .who {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 5px 12px 5px 6px; border-radius: 999px;
-    background: var(--card); border: 1px solid var(--card-line);
-    font-size: 13px; color: var(--dim); margin: 0;
-  }
-  .who .dot {
-    width: 22px; height: 22px; border-radius: 50%;
-    background: linear-gradient(135deg, var(--violet), var(--cyan));
-    display: grid; place-items: center; font-size: 11px; color: #0b0a12; font-weight: 800;
-  }
-  .who b { color: var(--ink); font-weight: 600; }
+  button:active, .nav a:active, .tile:active { transform: scale(.985); }
+  button[disabled] { opacity: .45; cursor: not-allowed; }
 
-  .card {
-    background: var(--card);
-    border: 1px solid var(--card-line);
-    border-radius: 16px;
-    padding: 16px; margin-bottom: 14px;
-    backdrop-filter: blur(10px);
-  }
-  .card h2 {
-    margin: 0 0 14px; font-size: 13px; font-weight: 600;
-    color: var(--dim); letter-spacing: .06em;
+  /* icon-style-consistent：單一圖示語言，stroke 1.75，尺寸 token 化 */
+  .ic { width: 24px; height: 24px; flex: none; stroke: currentColor; fill: none;
+        stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .ic-sm { width: 18px; height: 18px; }
+
+  /* reduced-motion：尊重系統設定 */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important; scroll-behavior: auto !important;
+    }
   }
 
-  /* 六大模組做成磚 */
-  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .tiles a {
-    display: block; padding: 14px 12px; border-radius: 13px;
-    background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
-    color: var(--ink); text-decoration: none;
-  }
-  .tiles a:active { border-color: var(--violet); background: rgba(139,92,246,.14); }
-  .tiles .ic {
-    display: grid; place-items: center;
-    width: 30px; height: 30px; border-radius: 9px; margin-bottom: 9px;
-    background: linear-gradient(135deg, rgba(139,92,246,.5), rgba(34,211,238,.5));
-    font-size: 15px;
-  }
-  .tiles .t { display: block; font-size: 14px; font-weight: 600; }
-  .tiles .d { display: block; font-size: 11px; color: var(--dim); }
-
-  label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 6px; }
+  /* input-labels：標籤永遠可見，不用 placeholder 當標籤 */
+  label { display: block; font-size: 14px; color: var(--dim); margin-bottom: 6px; }
   input {
-    display: block; width: 100%; padding: 12px 14px;
-    background: rgba(0,0,0,.3); border: 1px solid var(--card-line); border-radius: 11px;
-    color: var(--ink); font-family: var(--sans); font-size: 16px;
-    margin-bottom: 14px;
+    display: block; width: 100%; padding: 11px 13px;
+    font-family: inherit; font-size: 16px;          /* <16px 會觸發 iOS 自動放大 */
+    color: var(--fg); background: var(--input-bg);
+    border: var(--input-bd); border-radius: var(--r-sm);
   }
-  input:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px rgba(139,92,246,.2); }
-  input::placeholder { color: #5b5570; }
+  input::placeholder { color: var(--placeholder); }
 
-  button {
-    display: block; width: 100%; padding: 13px; border: none; border-radius: 11px;
-    background: linear-gradient(92deg, var(--violet), var(--cyan));
-    color: #0b0a12; font-family: var(--sans); font-size: 15px; font-weight: 700;
-    cursor: pointer; box-shadow: 0 6px 22px rgba(139,92,246,.35);
-  }
-  button:active { filter: brightness(.92); }
-  button.ghost {
-    background: transparent; color: var(--dim);
-    border: 1px solid var(--card-line); box-shadow: none; font-weight: 500;
-  }
-
-  .error {
-    color: var(--red); font-size: 13px; margin: 10px 0 0;
-    display: flex; gap: 6px; align-items: flex-start;
-  }
-
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: left; padding: 10px 4px; border-bottom: 1px solid var(--card-line); }
-  tr:last-child td { border-bottom: 0; }
-  th { color: var(--dim); font-size: 11px; font-weight: 500; letter-spacing: .1em; }
-  td .pill {
-    float: right; font-size: 11px; padding: 2px 9px; border-radius: 999px;
-    background: rgba(34,211,238,.14); color: var(--cyan);
-  }
-
-  .foot { text-align: center; font-size: 11px; color: var(--dim); letter-spacing: .14em; margin-top: 22px; }
+  /* error-placement + color-not-only：錯誤訊息貼著欄位，且有圖示不只靠顏色 */
+  .error { display: flex; gap: 7px; align-items: flex-start;
+           color: var(--danger); font-size: 14px; margin: 10px 0 0; }
+  .error .ic-sm { margin-top: 1px; }
 </style>
 </head>
 <body>
-
-<div class="head">
-  <span class="eyebrow">NCUMIS Camp</span>
+<header class="head">
+  <span class="eyebrow">NCUMIS CAMP</span>
   <h1>資管皇家學院<br>數位探查儀</h1>
-  <p class="who"><span class="dot">青</span>目前登入 <b>青鸞學派</b></p>
-</div>
+  <p class="who"><span class="dot" aria-hidden="true">青</span>目前登入 <b>青鸞學派</b></p>
+</header>
 
-<div class="card">
+<section class="card">
   <h2>六大模組</h2>
-  <div class="tiles">
-    <a href="#"><span class="ic">◈</span><span class="t">探索導覽</span><span class="d">地圖與點位</span></a>
-    <a href="#"><span class="ic">◎</span><span class="t">線索掃描</span><span class="d">掃 QR 取得</span></a>
-    <a href="#"><span class="ic">▤</span><span class="t">線索庫</span><span class="d">已收集 3</span></a>
-    <a href="#"><span class="ic">⌘</span><span class="t">權限碼兌換</span><span class="d">輸入代碼</span></a>
-    <a href="#"><span class="ic">⌗</span><span class="t">數位偵探</span><span class="d">科技樹</span></a>
-    <a href="#"><span class="ic">✦</span><span class="t">最終決策</span><span class="d">長老投票</span></a>
-  </div>
-</div>
+  <nav class="tiles">
+    <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6.5v13L9 17l6 3 6-2.5v-13L15 7 9 4Z"/><path d="M9 4v13M15 7v13"/></svg><span class="t">探索導覽</span><span class="d">地圖與點位</span></a>
+    <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M7 12h10"/></svg><span class="t">線索掃描</span><span class="d">掃 QR 取得</span></a>
+    <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v10.5A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5V8Z"/><path d="M3 4.5h18V8H3zM10 12h4"/></svg><span class="t">線索庫</span><span class="d">已收集 3</span></a>
+    <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="15.5" r="3.5"/><path d="M10 13 19 4M16.5 6.5l2 2M14 9l2 2"/></svg><span class="t">權限碼兌換</span><span class="d">輸入代碼</span></a>
+    <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M12 7v4M12 11H6v5M12 11h6v5"/></svg><span class="t">數位偵探</span><span class="d">科技樹</span></a>
+    <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M9 11.5l2 2 4-4"/></svg><span class="t">最終決策</span><span class="d">長老投票</span></a>
+  </nav>
+</section>
 
-<div class="card">
+<section class="card">
   <h2>權限碼兌換</h2>
-  <label>權限碼</label>
-  <input placeholder="輸入 6 碼權限碼">
-  <button>兌換</button>
-  <p class="error"><span>⚠</span><span>這組權限碼你們已經兌換過了</span></p>
-</div>
+  <label for="code3">權限碼</label>
+  <input id="code3" name="code" inputmode="numeric" autocomplete="off" class="code" placeholder="例如 483920">
+  <p class="error"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/></svg><span>這組權限碼你們已經兌換過了，換一組再試。</span></p>
+  <div style="height:12px"></div>
+  <button type="button"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="15.5" r="3.5"/><path d="M10 13 19 4M16.5 6.5l2 2M14 9l2 2"/></svg> 兌換</button>
+</section>
 
-<div class="card">
+<section class="card">
   <h2>線索庫</h2>
   <table>
-    <tr><th>編號</th><th>名稱</th></tr>
-    <tr><td>C-01</td><td>殘缺的門禁紀錄<span class="pill">掃描</span></td></tr>
-    <tr><td>C-04</td><td>被塗改的課表<span class="pill">權限碼</span></td></tr>
-    <tr><td>C-07</td><td>伺服器室監視畫面<span class="pill">關主</span></td></tr>
+    <thead><tr><th>編號</th><th>名稱</th><th>取得方式</th></tr></thead>
+    <tbody>
+      <tr><td class="n">C-01</td><td>殘缺的門禁紀錄</td><td><span class="pill">掃描</span></td></tr>
+      <tr><td class="n">C-04</td><td>被塗改的課表</td><td><span class="pill">權限碼</span></td></tr>
+      <tr><td class="n">C-07</td><td>伺服器室監視畫面</td><td><span class="pill">關主</span></td></tr>
+    </tbody>
   </table>
-</div>
+</section>
 
-<div class="card">
-  <button class="ghost">登出</button>
-</div>
+<section class="card">
+  <button type="button" class="ghost"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 20H5.5A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4H9"/><path d="M15 8l4 4-4 4M19 12H9"/></svg> 登出</button>
+</section>
 
-<p class="foot">RPG SYSTEM · 模板 3 霓虹檔案</p>
-
+<p class="foot">RPG SYSTEM · 模板 3 靛藍檔案</p>
 </body>
 </html>
