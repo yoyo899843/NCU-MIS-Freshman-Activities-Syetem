@@ -13,7 +13,16 @@ const DISCONNECT_FORFEIT_MS = 20 * 1000; // 斷線超過這麼久還沒重連，
 // （見 playerEntered 的 connected.size === 2）。只有一方到齊的話，原本沒有任何計時器
 // 會推進這場對戰——host 那邊會永遠停在房號畫面、guest 永遠停在「等待對戰開始」。
 // 這裡補一個保底：時間到還沒開賽就直接取消，不留卡死的 session 跟 active 的 DB 列。
-const MATCH_START_TIMEOUT_MS = Number(process.env.PK_MATCH_START_TIMEOUT_MS) || 60 * 1000;
+// PK 全程的關鍵節點都留一行 log。這條路徑的問題（誰沒進場、第一題有沒有送出、
+// 為什麼被取消）從 DB 事後看不出來，沒有 log 就只能用猜的。
+// duelId 是 UUID，只取前 8 碼夠辨識又不會把整行擠爆。
+function pkLog(duelId, msg, extra) {
+  const short = String(duelId).slice(0, 8);
+  const tail = extra ? ' ' + JSON.stringify(extra) : '';
+  console.log(`[pk ${short}] ${msg}${tail}`);
+}
+
+const { MATCH_START_TIMEOUT_MS } = require('./timeouts');
 
 const sessions = new Map(); // duelId -> session
 
@@ -45,6 +54,11 @@ async function createSession(duelId, hostPlayerId, guestPlayerId) {
     finished: false
   });
 
+  pkLog(duelId, 'session 建立', {
+    host: hostPlayerId, guest: guestPlayerId,
+    questions: questions.length, matchStartTimeoutMs: MATCH_START_TIMEOUT_MS
+  });
+
   const matchStartTimer = setTimeout(() => {
     cancelUnstartedDuel(duelId).catch(err => console.error('cancelUnstartedDuel error:', err));
   }, MATCH_START_TIMEOUT_MS);
@@ -59,6 +73,14 @@ async function createSession(duelId, hostPlayerId, guestPlayerId) {
 async function cancelUnstartedDuel(duelId) {
   const session = sessions.get(duelId);
   if (!session || session.finished || session.currentIndex >= 0) return;
+
+  // 這行是這次事故最關鍵的線索：到底是誰沒進場
+  const connected = [...session.connected];
+  const missing = [session.hostPlayerId, session.guestPlayerId].filter(id => !session.connected.has(id));
+  pkLog(duelId, '開賽逾時，取消對戰', {
+    connected, missing,
+    host: session.hostPlayerId, guest: session.guestPlayerId
+  });
 
   session.finished = true;
   clearMatchStartTimer(session);
@@ -97,8 +119,15 @@ function getSession(duelId) {
 // 用來只回補給「這個剛連上/剛重連的玩家」目前的進度，不打擾對手、也不用整個房間重播。
 function playerEntered(io, socket, duelId, playerId) {
   const session = sessions.get(duelId);
-  if (!session) return { ok: false, error: 'duel session not found' };
+  if (!session) {
+    // 房主開房之後、對手還沒加入的這段期間，房主每次重試都會走到這裡，屬於預期內。
+    pkLog(duelId, 'pk:enter 被拒：session 尚未建立', { playerId });
+    return { ok: false, error: 'duel session not found' };
+  }
   if (playerId !== session.hostPlayerId && playerId !== session.guestPlayerId) {
+    pkLog(duelId, 'pk:enter 被拒：不是這場的玩家', {
+      playerId, host: session.hostPlayerId, guest: session.guestPlayerId
+    });
     return { ok: false, error: 'player not part of this duel' };
   }
 
@@ -115,6 +144,12 @@ function playerEntered(io, socket, duelId, playerId) {
   }
 
   session.connected.add(playerId);
+  pkLog(duelId, 'pk:enter 成功', {
+    playerId,
+    connectedSize: session.connected.size,
+    connected: [...session.connected],
+    currentIndex: session.currentIndex
+  });
 
   if (session.connected.size === 2 && session.currentIndex === -1) {
     // 雙方第一次都到齊：走原本的房間廣播送出第一題。
@@ -155,7 +190,9 @@ function playerDisconnected(io, duelId, playerId) {
     clearTimeout(session.disconnectTimers[playerId]);
   }
 
+  pkLog(duelId, `玩家斷線，${DISCONNECT_FORFEIT_MS / 1000} 秒後判負`, { playerId });
   session.disconnectTimers[playerId] = setTimeout(() => {
+    pkLog(duelId, '斷線逾時未重連，判對手獲勝', { playerId });
     forfeitDuel(io, duelId, playerId).catch(err => console.error('forfeitDuel error:', err));
   }, DISCONNECT_FORFEIT_MS);
 }
@@ -181,6 +218,10 @@ function startNextQuestion(io, duelId) {
   }
 
   clearMatchStartTimer(session);   // 已經開賽，開賽逾時不用再守著
+
+  pkLog(duelId, `送出第 ${session.currentIndex + 1}/${session.questions.length} 題`, {
+    connected: [...session.connected]
+  });
 
   const q = session.questions[session.currentIndex];
   session.questionStartedAt = Date.now();
@@ -356,6 +397,12 @@ async function persistResult(io, duelId, session, winnerId, loserId, { hostSumma
     );
 
     await client.query('COMMIT');
+
+    pkLog(duelId, '對戰結算', {
+      winner: winnerId, loser: loserId, reason: reason || 'answers',
+      host: `${hostSummary.correctCount}對/${hostSummary.totalTimeMs}ms`,
+      guest: `${guestSummary.correctCount}對/${guestSummary.totalTimeMs}ms`
+    });
 
     io.to(`duel:${duelId}`).emit('pk:result', {
       winnerPlayerId: winnerId,

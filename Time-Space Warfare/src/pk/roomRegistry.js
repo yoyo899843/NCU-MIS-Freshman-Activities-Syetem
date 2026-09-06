@@ -6,10 +6,8 @@
 // （不看這張表、直接查 DB）還是找得到那場廢棄的對戰。
 const db = require('../db');
 
-// 預設 30 秒沒人加入就自動取消。房號是當面唸給對手輸入的，正常幾秒內就會加入；
-// 留著沒收掉的房間只會讓玩家搞不清楚自己現在到底在不在對戰中。
-// 現場覺得太趕的話用 PK_ROOM_TIMEOUT_MS 調整（毫秒）。
-const ROOM_TIMEOUT_MS = Number(process.env.PK_ROOM_TIMEOUT_MS) || 30 * 1000;
+// 逾時長度與它跟開賽逾時的先後關係，統一定義在 ./timeouts.js
+const { ROOM_TIMEOUT_MS } = require('./timeouts');
 
 const rooms = new Map(); // roomCode -> { duelId, timeout }
 
@@ -28,6 +26,7 @@ async function cancelDuel(duelId) {
 
 function register(roomCode, duelId) {
   const timeout = setTimeout(() => {
+    console.log(`[pk ${String(duelId).slice(0, 8)}] 房間逾時，沒有人加入 roomCode=${roomCode}`);
     rooms.delete(roomCode);
     cancelDuel(duelId);
   }, ROOM_TIMEOUT_MS);

@@ -51,6 +51,7 @@ router.post('/create', requireGameInProgress, asyncHandler(async (req, res) => {
   const duelId = rows[0].id;
 
   roomRegistry.register(roomCode, duelId);
+  console.log(`[pk ${duelId.slice(0, 8)}] 開房 roomCode=${roomCode} host=${hostPlayerId} 房間逾時=${roomRegistry.ROOM_TIMEOUT_MS}ms`);
 
   // 一併回傳房間有效秒數，前端顯示倒數用（見 public/pk.html）
   res.json({ duelId, roomCode, qrToken, expiresInMs: roomRegistry.ROOM_TIMEOUT_MS });
@@ -141,6 +142,7 @@ router.post('/join', requireGameInProgress, asyncHandler(async (req, res) => {
     return res.status(503).json({ error: 'no PK questions available yet, try again later' });
   }
 
+  console.log(`[pk ${String(duelId).slice(0, 8)}] /join 成功 guest=${guestPlayerId} host=${duel.host_player_id} 題數=${questionCount}`);
   res.json({ duelId, questionCount });
 }));
 

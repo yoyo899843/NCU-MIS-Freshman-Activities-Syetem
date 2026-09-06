@@ -72,6 +72,7 @@ function initPk() {
   // 第一題永遠不會送出，兩邊一起卡死（也收不到 pk:result）。
   // 對手一 join、session 一建立，下一次重試就會成功，雙方到齊、第一題送出。
   let enterRetryTimer = null;
+  let enteredDuel = false;      // pk:enter 是否已經成功（成功＝對手已加入、session 已建立）
   function stopEnterRetry() {
     if (enterRetryTimer) { clearTimeout(enterRetryTimer); enterRetryTimer = null; }
   }
@@ -80,6 +81,7 @@ function initPk() {
     const attempt = () => {
       socket.emit('pk:enter', { duelId, token }, ack => {
         if (ack && ack.ok) {
+          enteredDuel = true;
           stopEnterRetry();
           return;
         }
@@ -140,16 +142,25 @@ function initPk() {
   function backToLobby(message) {
     stopRoomCountdown();
     stopEnterRetry();
+    enteredDuel = false;
     currentDuelId = null;
     hideAll();
     document.getElementById('lobby').style.display = '';
     document.getElementById('createResult').textContent = message || '';
   }
   function startRoomCountdown(expiresInMs) {
-    const endAt = Date.now() + (expiresInMs || 30000);
+    const endAt = Date.now() + (expiresInMs || 150000);
     const el = document.getElementById('roomCountdown');
     stopRoomCountdown();
     const paint = () => {
+      // 已經進場成功＝對手其實已經加入了，只是還沒連上 socket。這時候房間倒數
+      // 已經沒有意義，絕對不能自己把畫面收掉、也不能停掉重試或清掉 currentDuelId
+      // ——那樣會把一場其實還活著的對戰從前端這邊硬生生斷掉。
+      // 這場到底作不作廢由伺服器的開賽逾時決定，前端等 pk:cancelled 就好。
+      if (enteredDuel) {
+        el.textContent = '對手已加入，還在等對手連線進場…';
+        return;
+      }
       const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
       el.textContent = `${left} 秒內沒有人加入的話，這個房間會自動取消。`;
       if (left <= 0) backToLobby('房間已逾時自動取消，請重新開房。');
