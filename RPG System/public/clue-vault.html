@@ -46,7 +46,7 @@ if (!token) {
         item.innerHTML = `
           <strong>${clue.name}</strong>
           <p>${clue.description || ''}</p>
-          <p style="font-size:0.85rem;color:#666">取得方式：${viaLabel[clue.acquired_via] || clue.acquired_via} ／ ${time}</p>
+          <p style="font-size:0.85rem;color:var(--dim)">取得方式：${viaLabel[clue.acquired_via] || clue.acquired_via} ／ ${time}</p>
         `;
         listEl.appendChild(item);
       });

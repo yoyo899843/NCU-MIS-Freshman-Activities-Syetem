@@ -10,32 +10,32 @@
   .tt-layout { display: flex; gap: 16px; align-items: flex-start; }
   .vault-panel { width: 200px; flex-shrink: 0; max-height: 75vh; overflow-y: auto; }
   .vault-card {
-    background: #fff; border: 1px solid #ddd; border-radius: 6px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
     padding: 8px; margin-bottom: 8px; cursor: grab; touch-action: none; user-select: none;
   }
   .vault-card strong { display: block; font-size: 0.85rem; }
-  .vault-card p { font-size: 0.75rem; color: #666; margin: 4px 0 0; }
+  .vault-card p { font-size: 0.75rem; color: var(--dim); margin: 4px 0 0; }
   .tree-panel { flex: 1; min-width: 0; }
   .branch-title { display: flex; justify-content: space-between; align-items: center; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
-  .badge-locked { background: #999; }
+  .badge-locked { background: #626b75; }
   .badge-unlocked { background: #2a7d2a; }
   .branch-row { display: flex; align-items: center; gap: 4px; margin: 40px 0 8px; overflow-x: auto; padding: 4px; }
-  .slot-arrow { flex-shrink: 0; color: #999; font-size: 1.1rem; }
+  .slot-arrow { flex-shrink: 0; color: var(--dim); font-size: 1.1rem; }
   .slot-box {
     position: relative; width: 92px; height: 56px; flex-shrink: 0;
-    border: 2px solid #ccc; border-radius: 6px; background: #fff;
+    border: 2px solid var(--line); border-radius: 6px; background: var(--card);
     display: flex; align-items: center; justify-content: center;
     text-align: center; padding: 4px; box-sizing: border-box;
   }
-  .slot-box-text { font-size: 0.75rem; word-break: break-all; color: #666; }
-  .slot-box.staged { border-color: #06c; background: #e9f2ff; }
-  .slot-box.staged .slot-box-text { color: #06c; font-weight: bold; }
-  .slot-box.locked { border-color: #2a7d2a; background: #eaffea; }
-  .slot-box.locked .slot-box-text { color: #2a7d2a; font-weight: bold; }
-  .slot-box.unreachable { border-color: #ddd; background: #f0f0f0; }
-  .slot-box.unreachable .slot-box-text { color: #bbb; }
-  .slot-box.dragover { outline: 3px dashed #06c; outline-offset: 2px; }
+  .slot-box-text { font-size: 0.75rem; word-break: break-all; color: var(--dim); }
+  .slot-box.staged { border-color: var(--amber); background: #0f2436; }
+  .slot-box.staged .slot-box-text { color: var(--amber); font-weight: bold; }
+  .slot-box.locked { border-color: var(--accent); background: #12351f; }
+  .slot-box.locked .slot-box-text { color: var(--accent); font-weight: bold; }
+  .slot-box.unreachable { border-color: var(--line); background: var(--card-2); }
+  .slot-box.unreachable .slot-box-text { color: var(--dim); }
+  .slot-box.dragover { outline: 3px dashed var(--amber); outline-offset: 2px; }
   .slot-clear {
     position: absolute; top: -8px; right: -8px; width: 18px; height: 18px;
     border-radius: 50%; background: #c00; color: #fff; font-size: 0.7rem;
@@ -43,23 +43,23 @@
   }
   .slot-bubble {
     position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
-    margin-bottom: 10px; background: #fff; border: 1px solid #333; border-radius: 6px;
+    margin-bottom: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 6px;
     padding: 6px 8px; font-size: 0.7rem; width: 150px; text-align: left; z-index: 5;
   }
   .slot-bubble::after {
     content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-    border: 6px solid transparent; border-top-color: #333;
+    border: 6px solid transparent; border-top-color: var(--line);
   }
   .slot-bubble strong { display: block; margin-bottom: 2px; }
-  .story-box { white-space: pre-wrap; background: #fafafa; border: 1px solid #ddd; border-radius: 6px; padding: 12px; margin-top: 8px; }
-  .check-bar { position: sticky; bottom: 0; background: #fff; padding: 8px 0; border-top: 1px solid #ddd; text-align: right; }
+  .story-box { white-space: pre-wrap; background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin-top: 8px; }
+  .check-bar { position: sticky; bottom: 0; background: var(--card); padding: 8px 0; border-top: 1px solid var(--line); text-align: right; }
   .check-bar button {
     width: auto; display: inline-block; padding: 10px 24px; border-radius: 999px;
-    background: #e8c343; color: #333; font-weight: bold; border: none;
+    background: var(--amber); color: #1f1400; font-weight: bold; border: none;
   }
   .drag-ghost {
     position: fixed; pointer-events: none; z-index: 2000; opacity: 0.9;
-    background: #fff; border: 2px solid #06c; border-radius: 6px;
+    background: var(--card); border: 2px solid var(--amber); border-radius: 6px;
     padding: 6px 10px; font-size: 0.8rem; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     max-width: 140px;
   }
@@ -96,7 +96,7 @@
 </div>
 
 <div id="storyModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; padding:16px; overflow-y:auto">
-  <div class="card" style="max-width:600px; margin:40px auto; background:#fff">
+  <div class="card" style="max-width:600px; margin:40px auto; background:var(--card)">
     <h3 id="storyTitle"></h3>
     <div id="storyContent" class="story-box"></div>
     <button id="closeStoryBtn">關閉</button>
@@ -180,7 +180,7 @@ function renderVault() {
       <strong>${escapeHtml(c.name)}</strong>
       <p>${escapeHtml(c.description || '')}</p>
     </div>
-  `).join('') || '<p style="font-size:0.8rem;color:#666">線索庫是空的。</p>';
+  `).join('') || '<p style="font-size:0.8rem;color:var(--dim)">線索庫是空的。</p>';
 
   listEl.querySelectorAll('.vault-card').forEach(cardEl => {
     const clueId = parseInt(cardEl.dataset.clueId, 10);

@@ -13,7 +13,7 @@
     font-weight: bold;
     color: #fff;
   }
-  .status-not_started { background: #999; }
+  .status-not_started { background: #626b75; }
   .status-in_progress { background: #2a7d2a; }
   .status-ended { background: #c00; }
 </style>
@@ -30,13 +30,13 @@
     <a href="admins.html" class="admin-only" style="display:none">帳號管理</a>
   </p>
   <p>交摺點管理、一般積分戰況覆寫等功能留待下一輪開發。</p>
-  <p id="gatekeeperNote" style="display:none;font-size:0.85rem;color:#c60">你目前是「關主」，只能查看資料，不能修改（題庫、遊戲進程、PIN 重設等都會被擋下）。</p>
+  <p id="gatekeeperNote" style="display:none;font-size:0.85rem;color:var(--accent)">你目前是「關主」，只能查看資料，不能修改（題庫、遊戲進程、PIN 重設等都會被擋下）。</p>
 </div>
 
 <div class="card admin-only" style="display:none">
   <h3>遊戲進程控制</h3>
   <p>目前狀態：<span id="statusBadge" class="status-badge">載入中...</span></p>
-  <p id="timestamps" style="font-size:0.85rem;color:#666"></p>
+  <p id="timestamps" style="font-size:0.85rem;color:var(--dim)"></p>
   <button id="startBtn">開始遊戲</button>
   <button id="endBtn">強制結束遊戲</button>
   <p id="controlResult" class="error"></p>

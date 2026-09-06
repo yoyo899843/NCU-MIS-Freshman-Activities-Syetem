@@ -1,36 +1,140 @@
+/* ============================================================================
+   資管皇家學院數位探查儀 — 探查儀終端（Terminal）
+   來源模板：Mods/RPG System/base_1.html
+   深色機殼 + 磷光綠 + 等寬字，整個介面就是「那台探查儀」本身。
+
+   色票全部走 CSS 變數，頁面自己的 <style> 請用 var(--...) 而不要再寫死顏色，
+   之後要調色只改這一段就好。所有前景/背景組合都驗過 WCAG AA（>= 4.5:1）。
+   ========================================================================== */
+:root {
+  --bg: #070b10;          /* 頁面底 */
+  --card: #0e151d;        /* 卡片/面板 */
+  --card-2: #0b1219;      /* 卡片裡再一層（例如清單項目） */
+  --card-3: #141f29;      /* hover/按下的狀態 */
+  --line: #26333f;        /* 分隔線、外框 */
+  --fg: #dbe7f2;          /* 主要文字 */
+  --dim: #93a8bb;         /* 次要文字（對 --card 是 4.5:1） */
+  --accent: #4ade80;      /* 主色：磷光綠 */
+  --on-accent: #052e16;   /* 疊在主色上的文字 */
+  --ring: #4ade80;        /* 焦點環 */
+  --danger: #ff9aa2;      /* 錯誤 */
+  --amber: #fbbf24;       /* 強調數值、次要標記 */
+  --input-bg: #050a0e;
+
+  --font: ui-monospace, "SF Mono", Menlo, Consolas, "Noto Sans TC", "PingFang TC", monospace;
+  --r: 2px;               /* 這個主題刻意方正，圓角很小 */
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+
 body {
-  font-family: system-ui, sans-serif;
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 16px;
-  background: #f5f5f5;
+  margin: 0 auto; padding: 16px;
+  max-width: 480px; min-height: 100dvh;
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font);
+  font-size: 16px;            /* 手機最小 16px：小於這個 iOS 會自動放大整頁 */
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1 { font-size: 1.4rem; }
+/* 數據欄位等寬對齊，數字變動時不會左右跳 */
+.num, td.n, .clock, .code, .token { font-variant-numeric: tabular-nums; }
 
-input, button {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px;
-  margin-bottom: 8px;
-  font-size: 1rem;
+h1 {
+  margin: 0 0 14px; font-size: 20px; font-weight: 700;
+  color: var(--accent); letter-spacing: .03em;
+}
+h2 { font-size: 17px; margin: 0 0 12px; }
+h3 {
+  margin: 0 0 13px; font-size: 14px; font-weight: 700;
+  letter-spacing: .12em; color: var(--dim);
+  border-bottom: 1px solid var(--line); padding-bottom: 9px;
 }
 
-button {
-  background: #333;
-  color: #fff;
-  border: none;
-  cursor: pointer;
-}
+a { color: var(--accent); }
+a:hover { color: #7cf0a8; }
 
 .card {
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  background: var(--card);
+  padding: 15px; margin-bottom: 14px;
 }
 
-.error { color: #c00; }
-.nav a { margin-right: 12px; }
+/* 導覽列：一行一個，整塊都可以點（手指目標夠大） */
+.nav { display: grid; gap: 9px; margin: 0; }
+.nav a {
+  display: block; padding: 12px 13px; min-height: 44px;
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  background: var(--card-2); color: var(--fg); text-decoration: none;
+}
+.nav a:hover, .nav a:active { background: var(--card-3); color: var(--fg); }
+
+label { display: block; font-size: 14px; color: var(--dim); margin-bottom: 6px; }
+
+input, select, textarea {
+  display: block; width: 100%; padding: 11px 12px; margin-bottom: 12px;
+  min-height: 44px;
+  background: var(--input-bg); border: 1px solid var(--line); border-radius: var(--r);
+  color: var(--fg); font-family: inherit; font-size: 16px;
+}
+textarea { min-height: 90px; resize: vertical; }
+input::placeholder, textarea::placeholder { color: #64798c; }
+
+button {
+  display: block; width: 100%; padding: 12px; margin-bottom: 8px;
+  min-height: 44px;
+  background: var(--accent); color: var(--on-accent);
+  border: none; border-radius: var(--r);
+  font-family: inherit; font-size: 16px; font-weight: 700; letter-spacing: .08em;
+  cursor: pointer; touch-action: manipulation;
+  transition: background-color .18s ease-out, transform .12s ease-out;
+}
+button:hover { background: #38c46b; }
+button:active { transform: scale(.985); }
+button[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* 次要按鈕：管理頁的「刪除/取消」這類 */
+button.ghost, button.secondary {
+  background: transparent; color: var(--dim);
+  border: 1px solid var(--line); font-weight: 400;
+}
+button.ghost:hover, button.secondary:hover { background: var(--card-3); color: var(--fg); }
+
+/* 焦點環絕不移除 */
+a:focus-visible, button:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 3px solid var(--ring); outline-offset: 2px;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+
+.error { color: var(--danger); font-size: 14px; margin: 8px 0 0; }
+/* :not(button) 很重要——後台有 <button class="small"> 這種用法，
+   不排除的話會把按鈕的文字色蓋成 --dim，變成淺字疊在主色按鈕上看不見。 */
+.hint:not(button), .small:not(button) { font-size: 14px; color: var(--dim); }
+button.small, button.hint { font-size: 14px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 9px 6px; border-bottom: 1px solid var(--line); }
+th { color: var(--dim); font-size: 14px; font-weight: 400; letter-spacing: .08em; }
+td.n { text-align: right; color: var(--amber); }
+
+/* 表格裡的操作按鈕不要撐滿整格 */
+.row-actions button, .row-actions a {
+  width: auto; display: inline-block; margin: 0 5px 5px 0;
+  padding: 6px 10px; min-height: 32px; font-size: 14px; letter-spacing: 0;
+}
+
+/* 小標籤（狀態、取得方式之類） */
+.tag, .pill, .status-badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 13px; background: #12351f; color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; scroll-behavior: auto !important;
+  }
+}

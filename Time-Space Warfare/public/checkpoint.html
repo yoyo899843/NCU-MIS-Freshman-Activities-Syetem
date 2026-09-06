@@ -6,35 +6,35 @@
 <title>交摺點挑戰 - 時空戰爭</title>
 <link rel="stylesheet" href="style.css">
 <style>
-  .hint { font-size: 0.85rem; color: #666; }
+  .hint { font-size: 0.85rem; color: var(--dim); }
   #reader { width: 100%; margin-bottom: 8px; }
 
   .qhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
-  .qhead .idx { font-size: 0.85rem; color: #666; }
+  .qhead .idx { font-size: 0.85rem; color: var(--dim); }
   .timer { font-size: 1.6rem; font-weight: bold; font-variant-numeric: tabular-nums; }
-  .timer.warn { color: #c0392b; }
-  .bar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; margin-bottom: 12px; }
+  .timer.warn { color: var(--disrupt); }
+  .bar { height: 6px; background: var(--card-2); border-radius: 3px; overflow: hidden; margin-bottom: 12px; }
   .bar i { display: block; height: 100%; background: #2a7d2a; transition: width .2s linear; }
   .bar i.warn { background: #c0392b; }
 
   .qtext { font-size: 1.15rem; font-weight: bold; margin: 4px 0 14px; }
   .opt {
     display: block; width: 100%; text-align: left; padding: 14px;
-    margin-bottom: 8px; font-size: 1rem; background: #fff; color: #222;
-    border: 2px solid #ccc; border-radius: 8px; cursor: pointer;
+    margin-bottom: 8px; font-size: 1rem; background: var(--card); color: var(--fg);
+    border: 2px solid var(--line); border-radius: 8px; cursor: pointer;
   }
   .opt:disabled { cursor: default; }
   .opt .lab { font-weight: bold; margin-right: 8px; }
-  .opt.correct { border-color: #2a7d2a; background: #eaf7ee; }
-  .opt.wrong { border-color: #c0392b; background: #fdecea; }
+  .opt.correct { border-color: var(--repair); background: #123322; }
+  .opt.wrong { border-color: var(--disrupt); background: #3a1418; }
 
   .feedback { font-weight: bold; margin-top: 10px; }
-  .feedback.ok { color: #2a7d2a; }
-  .feedback.no { color: #c0392b; }
+  .feedback.ok { color: var(--repair); }
+  .feedback.no { color: var(--disrupt); }
 
   .result-score { font-size: 2.2rem; font-weight: bold; font-variant-numeric: tabular-nums; }
-  .faction-repair { color: #0f8a5f; }
-  .faction-disrupt { color: #c0392b; }
+  .faction-repair { color: var(--repair); }
+  .faction-disrupt { color: var(--disrupt); }
 </style>
 </head>
 <body>

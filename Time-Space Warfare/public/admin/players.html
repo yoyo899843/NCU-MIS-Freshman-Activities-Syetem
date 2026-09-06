@@ -8,24 +8,24 @@
 <style>
   body { max-width: 900px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 0.85rem; }
-  th { background: #eee; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; font-size: 0.85rem; }
+  th { background: var(--card-2); }
   .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
   .tag-repair { background: #2a6dd1; }
   .tag-disrupt { background: #c0392b; }
-  .tag-captain { background: #999; margin-left: 4px; }
+  .tag-captain { background: #626b75; margin-left: 4px; }
   .pin-form { display: flex; gap: 4px; align-items: center; }
   .pin-form input { width: 70px; padding: 4px; margin: 0; }
   .pin-form button { width: auto; padding: 4px 8px; }
   .pin-msg { font-size: 0.75rem; }
-  .pin-msg.ok { color: #2a7d2a; }
-  .pin-msg.error { color: #c00; }
+  .pin-msg.ok { color: var(--repair); }
+  .pin-msg.error { color: var(--disrupt); }
   .faction-form { display: flex; gap: 4px; align-items: center; }
   .faction-form select { padding: 4px; margin: 0; }
   .faction-form button { width: auto; padding: 4px 8px; }
   .faction-msg { font-size: 0.75rem; }
-  .faction-msg.ok { color: #2a7d2a; }
-  .faction-msg.error { color: #c00; }
+  .faction-msg.ok { color: var(--repair); }
+  .faction-msg.error { color: var(--disrupt); }
 </style>
 </head>
 <body>

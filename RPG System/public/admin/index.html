@@ -13,12 +13,12 @@
     font-weight: bold;
     color: #fff;
   }
-  .status-not_started { background: #999; }
+  .status-not_started { background: #626b75; }
   .status-in_progress { background: #2a7d2a; }
   .status-ended { background: #c00; }
-  .voting-badge { background: #999; }
+  .voting-badge { background: #626b75; }
   .voting-badge.open { background: #2a7d2a; }
-  .voting-badge.closed { background: #c60; }
+  .voting-badge.closed { background: #a85400; }
 </style>
 </head>
 <body>
@@ -36,13 +36,13 @@
     <a href="scoreboard.html">戰況板</a>
     <a href="gatekeeper.html">關主現場操作</a>
   </p>
-  <p id="gatekeeperNote" style="display:none;font-size:0.85rem;color:#c60">你目前是「關主」，可以用「關主現場操作」幫隊伍標記關卡、發線索，以及查看戰況板；設定類的功能（學派、關卡、線索、權限碼、科技樹、長老、遊戲進程）只有管理員能改。</p>
+  <p id="gatekeeperNote" style="display:none;font-size:0.85rem;color:var(--amber)">你目前是「關主」，可以用「關主現場操作」幫隊伍標記關卡、發線索，以及查看戰況板；設定類的功能（學派、關卡、線索、權限碼、科技樹、長老、遊戲進程）只有管理員能改。</p>
 </div>
 
 <div class="card admin-only" style="display:none">
   <h3>遊戲進程控制</h3>
   <p>目前狀態：<span id="statusBadge" class="status-badge">載入中...</span></p>
-  <p id="timestamps" style="font-size:0.85rem;color:#666"></p>
+  <p id="timestamps" style="font-size:0.85rem;color:var(--dim)"></p>
   <button id="startBtn">開始遊戲</button>
   <button id="endBtn">強制結束遊戲</button>
   <p id="controlResult" class="error"></p>
@@ -51,7 +51,7 @@
 <div class="card admin-only" style="display:none">
   <h3>最終決策投票控制</h3>
   <p>投票狀態：<span id="votingBadge" class="status-badge voting-badge">載入中...</span></p>
-  <p id="votingCounts" style="font-size:0.85rem;color:#666"></p>
+  <p id="votingCounts" style="font-size:0.85rem;color:var(--dim)"></p>
   <button id="openVotingBtn">開放投票</button>
   <button id="closeVotingBtn">關閉投票</button>
   <p id="votingResult" class="error"></p>

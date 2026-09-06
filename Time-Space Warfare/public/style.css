@@ -1,36 +1,150 @@
+/* ============================================================================
+   時空戰爭 — 作戰儀表（HUD）
+   來源模板：Mods/Time-Space Warfare/base_2.html
+   石板灰底 + 琥珀數據 + 網格與角標。同一套視覺放大就能直接當大會投影 Dashboard。
+
+   色票全部走 CSS 變數，頁面自己的 <style> 請用 var(--...) 而不要再寫死顏色。
+   所有前景/背景組合都驗過 WCAG AA（>= 4.5:1）。
+   陣營色：修復者 --repair（綠）、破壞者 --disrupt（紅），兩邊都夠亮可以疊在深底上。
+   ========================================================================== */
+:root {
+  --bg: #0c1116;          /* 頁面底 */
+  --card: #151d25;        /* 卡片/面板 */
+  --card-2: #0f161c;      /* 卡片裡再一層 */
+  --card-3: #1a242e;      /* hover/按下 */
+  --line: #2b3742;        /* 分隔線、外框 */
+  --fg: #dae5ee;          /* 主要文字 */
+  --dim: #9aadbe;         /* 次要文字（對 --card 是 4.5:1） */
+  --accent: #fcc040;      /* 主色：琥珀 */
+  --on-accent: #1a1000;   /* 疊在主色上的文字 */
+  --ring: #fcc040;
+  --danger: #ff9aa2;
+  --repair: #5fd39a;      /* 時空修復者 */
+  --disrupt: #ff8593;     /* 時空破壞者 */
+  --input-bg: #080d11;
+  --grid: rgba(252, 192, 64, .05);
+
+  --font: system-ui, "PingFang TC", "Noto Sans TC", sans-serif;
+  --font-num: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r: 2px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+
 body {
-  font-family: system-ui, sans-serif;
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 16px;
-  background: #f5f5f5;
+  margin: 0 auto; padding: 16px;
+  max-width: 480px; min-height: 100dvh;
+  background-color: var(--bg);
+  /* 作戰面板的網格底 */
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1 { font-size: 1.4rem; }
+.num, td.n, .clock, .code, .token { font-variant-numeric: tabular-nums; font-family: var(--font-num); }
 
-input, button {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px;
-  margin-bottom: 8px;
-  font-size: 1rem;
+h1 {
+  margin: 0 0 14px; font-size: 21px; font-weight: 800;
+  letter-spacing: .12em; color: var(--accent);
 }
+h2 { font-size: 17px; margin: 0 0 12px; }
+h3 {
+  margin: 0 0 13px; font-family: var(--font-num);
+  font-size: 14px; font-weight: 700; letter-spacing: .14em; color: var(--accent);
+}
+h3::before { content: "// "; color: var(--dim); }
+
+a { color: var(--accent); }
+a:hover { color: #ffd473; }
+
+/* 面板：四角的括號角標是這個主題的招牌 */
+.card {
+  position: relative;
+  border: 1px solid var(--line); background: var(--card);
+  padding: 15px; margin-bottom: 14px;
+}
+.card::before, .card::after {
+  content: ""; position: absolute; width: 10px; height: 10px; border: solid var(--accent);
+}
+.card::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.card::after  { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+
+.nav { display: grid; gap: 8px; margin: 0; }
+.nav a {
+  display: block; padding: 12px 13px; min-height: 44px;
+  background: var(--card-2); border: 1px solid var(--line);
+  color: var(--fg); text-decoration: none;
+}
+.nav a:hover, .nav a:active { border-color: var(--accent); background: var(--card-3); color: var(--fg); }
+
+label { display: block; font-size: 14px; color: var(--dim); margin-bottom: 6px; }
+
+input, select, textarea {
+  display: block; width: 100%; padding: 11px 12px; margin-bottom: 12px;
+  min-height: 44px;
+  background: var(--input-bg); border: 1px solid var(--line); border-radius: var(--r);
+  color: var(--fg); font-family: inherit; font-size: 16px;
+}
+textarea { min-height: 90px; resize: vertical; }
+input::placeholder, textarea::placeholder { color: #657988; }
 
 button {
-  background: #333;
-  color: #fff;
-  border: none;
-  cursor: pointer;
+  display: block; width: 100%; padding: 12px; margin-bottom: 8px;
+  min-height: 44px;
+  background: var(--accent); color: var(--on-accent);
+  border: 1px solid var(--accent); border-radius: var(--r);
+  font-family: inherit; font-size: 16px; font-weight: 800; letter-spacing: .08em;
+  cursor: pointer; touch-action: manipulation;
+  transition: background-color .18s ease-out, transform .12s ease-out;
+}
+button:hover { background: #e8ab24; }
+button:active { transform: scale(.985); }
+button[disabled] { opacity: .45; cursor: not-allowed; }
+
+button.ghost, button.secondary {
+  background: transparent; color: var(--dim); border-color: var(--line); font-weight: 500;
+}
+button.ghost:hover, button.secondary:hover { background: var(--card-3); color: var(--fg); }
+
+a:focus-visible, button:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 3px solid var(--ring); outline-offset: 2px;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+
+.error { color: var(--danger); font-size: 14px; margin: 8px 0 0; }
+/* :not(button) 很重要——後台有 <button class="small"> 這種用法，
+   不排除的話會把按鈕的文字色蓋成 --dim，變成淺字疊在主色按鈕上看不見。 */
+.hint:not(button), .small:not(button) { font-size: 14px; color: var(--dim); }
+button.small, button.hint { font-size: 14px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 9px 6px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-num); color: var(--dim); font-size: 13px; font-weight: 400; letter-spacing: .1em; }
+td.n { text-align: right; }
+td.n.r, .v-repair { color: var(--repair); }
+td.n.d, .v-disrupt { color: var(--disrupt); }
+
+.row-actions button, .row-actions a {
+  width: auto; display: inline-block; margin: 0 5px 5px 0;
+  padding: 6px 10px; min-height: 32px; font-size: 14px; letter-spacing: 0;
 }
 
-.card {
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 12px;
+.tag, .pill, .status-badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 13px; border: 1px solid var(--line); color: var(--dim);
 }
 
-.error { color: #c00; }
-.nav a { margin-right: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; scroll-behavior: auto !important;
+  }
+}

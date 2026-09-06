@@ -8,22 +8,22 @@
 <style>
   body { max-width: 900px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
-  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
-  th { background: #eee; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--card-2); }
   td.n { text-align: right; font-variant-numeric: tabular-nums; }
-  .v-repair { color: #0f8a5f; font-weight: bold; }
-  .v-disrupt { color: #c0392b; font-weight: bold; }
+  .v-repair { color: var(--repair); font-weight: bold; }
+  .v-disrupt { color: var(--disrupt); font-weight: bold; }
   .lead { font-size: 0.75rem; padding: 1px 7px; border-radius: 999px; color: #fff; }
-  .lead.repair { background: #0f8a5f; }
+  .lead.repair { background: #0d7550; }
   .lead.disrupt { background: #c0392b; }
-  .lead.tie { background: #8a8f96; }
+  .lead.tie { background: #646c75; }
   .row-actions button, .row-actions a {
     width: auto; display: inline-block; padding: 3px 8px; margin: 0 4px 4px 0; font-size: 0.85rem;
   }
-  .token { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; color: #666; }
+  .token { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; color: var(--dim); }
   .form-row { display: flex; gap: 8px; flex-wrap: wrap; }
-  .form-row input { flex: 1; min-width: 130px; }
-  .hint { font-size: 0.85rem; color: #666; }
+  .form-row input, .form-row select { flex: 1; min-width: 130px; width: auto; }
+  .hint { font-size: 0.85rem; color: var(--dim); }
 </style>
 </head>
 <body>

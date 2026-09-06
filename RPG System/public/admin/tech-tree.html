@@ -9,8 +9,8 @@
   body { max-width: 760px; }
   textarea { width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; font: inherit; min-height: 80px; }
   table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 0.85rem; }
-  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
-  th { background: #eee; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+  th { background: var(--card-2); }
   .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 4px 0; }
   .branch-card { margin-bottom: 16px; }
   .inline-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
@@ -21,7 +21,7 @@
 <body>
 <h1>科技樹管理</h1>
 <p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
-<p style="font-size:0.85rem;color:#666">槽位的「正確答案」只有這裡看得到——玩家端的數位偵探頁面不會顯示，玩家只能靠自己手上的線索去試。</p>
+<p style="font-size:0.85rem;color:var(--dim)">槽位的「正確答案」只有這裡看得到——玩家端的數位偵探頁面不會顯示，玩家只能靠自己手上的線索去試。</p>
 
 <div class="card">
   <h3 id="branchFormTitle">新增分支</h3>
@@ -86,7 +86,7 @@ function render() {
           <button onclick="deleteBranch(${b.id})">刪除分支</button>
         </span>
       </div>
-      <p style="font-size:0.8rem;color:#666">顯示順序：${b.display_order}${b.story_content ? '　劇情內容：' + escapeHtml(b.story_content.slice(0, 40)) + (b.story_content.length > 40 ? '...' : '') : '（尚未填寫劇情內容）'}</p>
+      <p style="font-size:0.8rem;color:var(--dim)">顯示順序：${b.display_order}${b.story_content ? '　劇情內容：' + escapeHtml(b.story_content.slice(0, 40)) + (b.story_content.length > 40 ? '...' : '') : '（尚未填寫劇情內容）'}</p>
 
       <table>
         <thead><tr><th>順序</th><th>正確答案線索</th><th></th></tr></thead>

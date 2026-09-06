@@ -9,35 +9,35 @@
 <style>
   body { max-width: none; padding: 0; }
   #map { height: 100vh; width: 100%; }
-  .legend { margin-top: 6px; font-size: 0.78rem; color: #555; }
+  .legend { margin-top: 6px; font-size: 0.78rem; color: var(--dim); }
   .legend span { margin-right: 10px; white-space: nowrap; }
   .legend .sw {
     display: inline-block; width: 10px; height: 10px; border-radius: 2px;
     margin-right: 4px; vertical-align: -1px;
   }
-  .legend .sw.repair { background: #0f8a5f; }
+  .legend .sw.repair { background: #0d7550; }
   .legend .sw.disrupt { background: #c0392b; }
-  .legend .sw.tie { background: #8a8f96; }
+  .legend .sw.tie { background: #646c75; }
 
   /* 交摺點標記：刻意做成方形資訊牌，跟玩家的圓點一眼就分得出來 */
   .cp-marker {
-    background: #fff; border: 2px solid #8a8f96; border-radius: 6px;
+    background: var(--card); border: 2px solid var(--line); border-radius: 6px;
     padding: 3px 6px; white-space: nowrap; text-align: center;
     box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 11px; line-height: 1.35;
   }
-  .cp-marker.repair { border-color: #0f8a5f; }
-  .cp-marker.disrupt { border-color: #c0392b; }
-  .cp-marker .cp-name { font-weight: 700; color: #12161c; }
+  .cp-marker.repair { border-color: var(--repair); }
+  .cp-marker.disrupt { border-color: var(--disrupt); }
+  .cp-marker .cp-name { font-weight: 700; color: var(--fg); }
   .cp-marker .cp-vals { font-variant-numeric: tabular-nums; }
-  .cp-marker .cp-r { color: #0f8a5f; font-weight: 700; }
-  .cp-marker .cp-d { color: #c0392b; font-weight: 700; }
+  .cp-marker .cp-r { color: var(--repair); font-weight: 700; }
+  .cp-marker .cp-d { color: var(--disrupt); font-weight: 700; }
   .cp-marker .cp-lead {
     display: block; margin-top: 1px; font-size: 10px; font-weight: 700; color: #fff;
     border-radius: 3px; padding: 0 3px;
   }
-  .cp-marker.repair .cp-lead { background: #0f8a5f; }
+  .cp-marker.repair .cp-lead { background: #0d7550; }
   .cp-marker.disrupt .cp-lead { background: #c0392b; }
-  .cp-marker.tie .cp-lead { background: #8a8f96; }
+  .cp-marker.tie .cp-lead { background: #646c75; }
 
   .top-bar {
     position: absolute;
@@ -45,8 +45,8 @@
     left: 8px;
     right: 8px;
     z-index: 1000;
-    background: #fff;
-    border: 1px solid #ddd;
+    background: var(--card);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 0.9rem;

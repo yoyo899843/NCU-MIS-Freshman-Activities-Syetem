@@ -8,16 +8,16 @@
 <style>
   body { max-width: 720px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.85rem; }
-  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
-  th { background: #eee; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+  th { background: var(--card-2); }
   td.score { font-weight: bold; }
-  tr:first-child td.score { color: #2a7d2a; }
+  tr:first-child td.score { color: var(--accent); }
 </style>
 </head>
 <body>
 <h1>戰況板</h1>
 <p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
-<p style="font-size:0.85rem;color:#666">計分方式：科技樹每答對一格 +10 分，檢查邏輯答錯一次 -2 分（分數可能是負的）。即時計算，不是累計存好的固定值。</p>
+<p style="font-size:0.85rem;color:var(--dim)">計分方式：科技樹每答對一格 +10 分，檢查邏輯答錯一次 -2 分（分數可能是負的）。即時計算，不是累計存好的固定值。</p>
 
 <div class="card">
   <button id="refreshBtn">重新整理</button>
