@@ -5,7 +5,27 @@ const db = require('../db');
 const { shuffleOptions } = require('../quiz/shuffle');
 const { getIO } = require('../io');
 
-const QUESTIONS_PER_DUEL = 5;
+// 題數與每題秒數改成從 game_state 讀（後台可調，見 migrations/008_pk_settings.sql）。
+// 這裡留一組後備值，只有在設定讀不到的時候才會用到（例如 migration 還沒跑）。
+const FALLBACK_QUESTIONS_PER_DUEL = 5;
+const FALLBACK_ANSWER_SECONDS = 10;
+
+async function loadPkSettings() {
+  try {
+    const { rows } = await db.query(
+      'SELECT pk_questions_per_duel, pk_answer_seconds FROM game_state WHERE id = 1'
+    );
+    if (rows.length > 0) {
+      return {
+        questionsPerDuel: rows[0].pk_questions_per_duel,
+        answerSeconds: rows[0].pk_answer_seconds
+      };
+    }
+  } catch (err) {
+    console.error('讀取 PK 設定失敗，改用預設值:', err.message);
+  }
+  return { questionsPerDuel: FALLBACK_QUESTIONS_PER_DUEL, answerSeconds: FALLBACK_ANSWER_SECONDS };
+}
 const ANSWER_GRACE_MS = 1000; // 題目時限到了之後，多留一點緩衝時間才強制進下一題
 const DISCONNECT_FORFEIT_MS = 20 * 1000; // 斷線超過這麼久還沒重連，直接判對手獲勝、結束對戰
 
@@ -27,17 +47,27 @@ const { MATCH_START_TIMEOUT_MS } = require('./timeouts');
 const sessions = new Map(); // duelId -> session
 
 async function createSession(duelId, hostPlayerId, guestPlayerId) {
+  const settings = await loadPkSettings();
+
   const { rows: rawQuestions } = await db.query(
     `SELECT id, content, option_a, option_b, option_c, option_d, correct_option, time_limit_seconds
      FROM questions WHERE scope_type = 'pk' ORDER BY random() LIMIT $1`,
-    [QUESTIONS_PER_DUEL]
+    [settings.questionsPerDuel]
   );
 
   if (rawQuestions.length === 0) {
     throw new Error('no PK questions available');
   }
 
-  const questions = rawQuestions.map(q => ({ ...q, ...shuffleOptions(q) }));
+  // 每題的作答時間一律用後台設定的值蓋過題目自己的 time_limit_seconds。
+  // PK 是兩個人同步比快慢，每題長度必須一致才公平——如果照各題自己的秒數跑，
+  // 抽到哪幾題會直接影響總時長，對兩邊也不對等（他們答的是同一批題，但整場
+  // 長度會因為抽題而浮動）。交摺點那邊是單人挑戰，就維持各題自己的秒數。
+  const questions = rawQuestions.map(q => ({
+    ...q,
+    time_limit_seconds: settings.answerSeconds,
+    ...shuffleOptions(q)
+  }));
 
   sessions.set(duelId, {
     duelId,
@@ -56,7 +86,8 @@ async function createSession(duelId, hostPlayerId, guestPlayerId) {
 
   pkLog(duelId, 'session 建立', {
     host: hostPlayerId, guest: guestPlayerId,
-    questions: questions.length, matchStartTimeoutMs: MATCH_START_TIMEOUT_MS
+    questions: questions.length, answerSeconds: settings.answerSeconds,
+    matchStartTimeoutMs: MATCH_START_TIMEOUT_MS
   });
 
   const matchStartTimer = setTimeout(() => {
@@ -160,6 +191,15 @@ function playerEntered(io, socket, duelId, playerId) {
   if (session.currentIndex >= 0 && !session.finished) {
     // 對戰已經在進行中了：這是重連（或稍晚才連上的一方），不會等到下一次自然推題，
     // 直接補送「目前這一題＋剩餘時間」給這個 socket，讓畫面跟對戰進度對齊。
+    //
+    // 比分也一起補送，否則重連的人要等到這一題結束（最多十幾秒）才看得到分數。
+    socket.emit('pk:score', {
+      questionIndex: session.currentIndex - 1,
+      totalQuestions: session.questions.length,
+      host: { playerId: session.hostPlayerId, ...summarize(session, session.hostPlayerId) },
+      guest: { playerId: session.guestPlayerId, ...summarize(session, session.guestPlayerId) }
+    });
+
     const q = session.questions[session.currentIndex];
     const alreadyAnswered = session.answers[playerId].some(a => a.questionIndex === session.currentIndex);
 
@@ -207,9 +247,35 @@ function publicQuestion(q, index, total, timeLimitSeconds) {
   };
 }
 
+// 每一題結束（雙方都答完，或時間到強制帶過）就把雙方目前的累計比分播給兩邊。
+// 帶 playerId 而不是 host/guest 這種角色名，前端拿自己的 playerInfo.player.id 比對
+// 就知道哪一邊是「你」——這樣即使玩家中途重新整理（myRole 這種前端狀態會不見）
+// 也還是分得出來。
+function emitScore(io, duelId, session, finishedIndex) {
+  const host = summarize(session, session.hostPlayerId);
+  const guest = summarize(session, session.guestPlayerId);
+
+  pkLog(duelId, `第 ${finishedIndex + 1} 題結束，目前比分`, {
+    host: `${host.correctCount}對`, guest: `${guest.correctCount}對`
+  });
+
+  io.to(`duel:${duelId}`).emit('pk:score', {
+    questionIndex: finishedIndex,
+    totalQuestions: session.questions.length,
+    host: { playerId: session.hostPlayerId, ...host },
+    guest: { playerId: session.guestPlayerId, ...guest }
+  });
+}
+
 function startNextQuestion(io, duelId) {
   const session = sessions.get(duelId);
   if (!session || session.finished) return;
+
+  // 進到下一題之前，currentIndex 還指著剛結束的那一題（-1 代表還沒開賽，
+  // 那是第一題要送出的情況，沒有「剛結束的題目」可以結算）。
+  if (session.currentIndex >= 0) {
+    emitScore(io, duelId, session, session.currentIndex);
+  }
 
   session.currentIndex += 1;
   if (session.currentIndex >= session.questions.length) {
@@ -231,7 +297,6 @@ function startNextQuestion(io, duelId) {
     publicQuestion(q, session.currentIndex, session.questions.length, q.time_limit_seconds)
   );
 
-  clearMatchStartTimer(session);
   if (session.timer) clearTimeout(session.timer);
   session.timer = setTimeout(() => {
     forceAnswerTimeouts(session);
@@ -278,7 +343,9 @@ function submitAnswer(io, duelId, playerId, questionIndex, selectedOption) {
     startNextQuestion(io, duelId);
   }
 
-  return { ok: true };
+  // 帶回這一題對不對，玩家端才有東西可以顯示——原本這裡只回 {ok:true}，
+  // 玩家從頭到尾都不知道自己有沒有答對任何一題，只有最後贏/輸兩個字。
+  return { ok: true, correct };
 }
 
 function summarize(session, playerId) {

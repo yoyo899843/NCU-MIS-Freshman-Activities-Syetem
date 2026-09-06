@@ -29,7 +29,7 @@
     <a href="players.html">玩家帳號管理</a>
     <a href="admins.html" class="admin-only" style="display:none">帳號管理</a>
   </p>
-  <p>交摺點管理、一般積分戰況覆寫等功能留待下一輪開發。</p>
+  <p class="hint">一般積分戰況覆寫留待下一輪開發。</p>
   <p id="gatekeeperNote" style="display:none;font-size:0.85rem;color:var(--accent)">你目前是「關主」，只能查看資料，不能修改（題庫、遊戲進程、PIN 重設等都會被擋下）。</p>
 </div>
 
@@ -42,10 +42,22 @@
   <p id="controlResult" class="error"></p>
 </div>
 
+<div class="card admin-only" style="display:none">
+  <h3>PK 對戰設定</h3>
+  <label for="pkQuestions">一場抽幾題（1～20）</label>
+  <input id="pkQuestions" type="number" min="1" max="20" inputmode="numeric">
+  <label for="pkSeconds">每題作答時間（秒，3～120）</label>
+  <input id="pkSeconds" type="number" min="3" max="120" inputmode="numeric">
+  <button id="pkSettingsBtn">儲存設定</button>
+  <p class="hint">只影響之後才開始的對戰，正在進行中的那場不會被中途換掉。</p>
+  <p id="pkSettingsResult" class="error"></p>
+</div>
+
 <div class="card">
   <button id="logoutBtn">登出</button>
 </div>
 
+<script src="../authFetch.js"></script>
 <script>
 const token = localStorage.getItem('adminToken');
 if (!token) location.href = 'login.html';
@@ -77,7 +89,35 @@ function renderState(state) {
 
   document.getElementById('startBtn').disabled = state.status === 'in_progress';
   document.getElementById('endBtn').disabled = state.status !== 'in_progress';
+
+  // PK 設定跟遊戲狀態同一支 API 回傳，順便把輸入框帶成目前的值
+  if (state.pk_questions_per_duel != null) {
+    document.getElementById('pkQuestions').value = state.pk_questions_per_duel;
+  }
+  if (state.pk_answer_seconds != null) {
+    document.getElementById('pkSeconds').value = state.pk_answer_seconds;
+  }
 }
+
+document.getElementById('pkSettingsBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('pkSettingsResult');
+  resultEl.textContent = '';
+  const res = await api('/game/pk-settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      questionsPerDuel: Number(document.getElementById('pkQuestions').value),
+      answerSeconds: Number(document.getElementById('pkSeconds').value)
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  renderState(data);
+  resultEl.textContent = '已儲存。';
+});
 
 async function loadState() {
   const res = await api('/game/state');

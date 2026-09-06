@@ -513,7 +513,47 @@ router.post('/questions/import', upload.single('file'), asyncHandler(async (req,
 }));
 
 router.get('/game/state', asyncHandler(async (req, res) => {
-  const { rows } = await db.query('SELECT status, started_at, ended_at FROM game_state WHERE id = 1');
+  const { rows } = await db.query(
+    `SELECT status, started_at, ended_at, pk_questions_per_duel, pk_answer_seconds
+     FROM game_state WHERE id = 1`
+  );
+  res.json(rows[0]);
+}));
+
+// PK 對戰設定：一場抽幾題、每題幾秒。
+// 只影響「之後才開始」的對戰——已經在進行中的 session 是開場時就把題目與秒數
+// 決定好放在記憶體裡的（見 src/pk/session.js 的 createSession），改設定不會、
+// 也不該把正在打的那場中途換掉。
+router.patch('/game/pk-settings', asyncHandler(async (req, res) => {
+  const { questionsPerDuel, answerSeconds } = req.body || {};
+
+  const qpd = Number(questionsPerDuel);
+  const secs = Number(answerSeconds);
+  if (!Number.isInteger(qpd) || qpd < 1 || qpd > 20) {
+    return res.status(400).json({ error: '題目數量必須是 1 到 20 之間的整數' });
+  }
+  if (!Number.isInteger(secs) || secs < 3 || secs > 120) {
+    return res.status(400).json({ error: '每題作答時間必須是 3 到 120 秒之間的整數' });
+  }
+
+  const { rows: beforeRows } = await db.query(
+    'SELECT pk_questions_per_duel, pk_answer_seconds FROM game_state WHERE id = 1'
+  );
+
+  const { rows } = await db.query(
+    `UPDATE game_state SET pk_questions_per_duel = $1, pk_answer_seconds = $2
+     WHERE id = 1
+     RETURNING status, started_at, ended_at, pk_questions_per_duel, pk_answer_seconds`,
+    [qpd, secs]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'update_pk_settings', 'game_state', '1', $2, $3)`,
+    [req.admin.sub, JSON.stringify(beforeRows[0] || {}),
+     JSON.stringify({ pk_questions_per_duel: qpd, pk_answer_seconds: secs })]
+  );
+
   res.json(rows[0]);
 }));
 

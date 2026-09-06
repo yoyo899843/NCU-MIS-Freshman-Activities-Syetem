@@ -5,6 +5,7 @@ const playerAuth = require('../middleware/playerAuth');
 const asyncHandler = require('../middleware/asyncHandler');
 const roomRegistry = require('../pk/roomRegistry');
 const session = require('../pk/session');
+const { MATCH_START_TIMEOUT_MS } = require('../pk/timeouts');
 
 const router = express.Router();
 
@@ -143,7 +144,10 @@ router.post('/join', requireGameInProgress, asyncHandler(async (req, res) => {
   }
 
   console.log(`[pk ${String(duelId).slice(0, 8)}] /join 成功 guest=${guestPlayerId} host=${duel.host_player_id} 題數=${questionCount}`);
-  res.json({ duelId, questionCount });
+  // session 是這一刻才建立的，開賽逾時的時鐘也是這一刻開始算，所以這裡回傳的就是
+  // 完整的逾時秒數——前端（無論房主重連進來看到的，還是對手剛加入看到的）可以拿
+  // 這個數字畫一個「還要等多久」的倒數，而不是傻等一個不知道多長的「等待中」。
+  res.json({ duelId, questionCount, matchStartTimeoutMs: MATCH_START_TIMEOUT_MS });
 }));
 
 module.exports = router;

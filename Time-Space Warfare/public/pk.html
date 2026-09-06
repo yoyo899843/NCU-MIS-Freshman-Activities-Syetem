@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PK 對戰 - 時空戰爭</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  /* 倒數計時的樣式跟交摺點挑戰頁（checkpoint.html）一致，兩邊都是限時答題，
+     視覺上沒理由差那麼多——原本 PK 這邊只是一行小小的純文字，很容易沒注意到
+     時間快到了。 */
+  .qhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .qhead .idx { font-size: 0.85rem; color: var(--dim); }
+  .timer { font-size: 1.6rem; font-weight: bold; font-variant-numeric: tabular-nums; }
+  .timer.warn { color: var(--disrupt); }
+  .bar { height: 6px; background: var(--card-2); border-radius: 3px; overflow: hidden; margin-bottom: 12px; }
+  .bar i { display: block; height: 100%; background: var(--repair); transition: width .2s linear; }
+  .bar i.warn { background: var(--disrupt); }
+</style>
 </head>
 <body>
 <h1>PK 對戰</h1>
@@ -30,17 +42,25 @@
 </div>
 
 <div id="quiz" class="card" style="display:none">
-  <p id="questionMeta"></p>
-  <p id="timer"></p>
+  <p id="matchWaitCountdown" class="hint"></p>
+  <p id="scoreLine" class="hint"></p>
+  <div class="qhead">
+    <span class="idx" id="questionMeta"></span>
+    <span class="timer" id="timer"></span>
+  </div>
+  <div class="bar"><i id="bar"></i></div>
   <p id="questionContent" style="font-weight:bold"></p>
   <div id="options"></div>
+  <p id="answerFeedback" style="font-weight:bold"></p>
 </div>
 
 <div id="resultCard" class="card" style="display:none">
   <p id="resultMessage" style="font-weight:bold"></p>
+  <p id="resultScore" class="hint"></p>
   <a href="pk.html">再來一場</a>
 </div>
 
+<script src="authFetch.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script>
 const token = localStorage.getItem('playerToken');
@@ -57,6 +77,7 @@ function initPk() {
   const socket = io();
   let currentDuelId = null;
   let questionTimer = null;
+  let myRole = null;        // 'host' | 'guest'，開房時是 host、加入時是 guest
 
   function hideAll() {
     ['lobby', 'waiting', 'quiz', 'resultCard'].forEach(id => {
@@ -107,6 +128,18 @@ function initPk() {
     enterDuel(currentDuelId, document.getElementById('createResult'));
   });
 
+  // 每一題結束伺服器就會播一次目前比分（見 src/pk/session.js 的 emitScore）。
+  // 用 playerId 比對出哪一邊是自己，不靠 myRole——重新整理過的話 myRole 會不見，
+  // 但 playerInfo 是存在 localStorage 的，比對得出來。
+  socket.on('pk:score', s => {
+    const myId = playerInfo.player.id;
+    const me = s.host.playerId === myId ? s.host : s.guest;
+    const opp = s.host.playerId === myId ? s.guest : s.host;
+    const done = s.questionIndex + 1;
+    document.getElementById('scoreLine').textContent =
+      `目前比分（已完成 ${done}/${s.totalQuestions} 題）：你 ${me.correctCount} 對　對手 ${opp.correctCount} 對`;
+  });
+
   // 開賽逾時：雙方沒到齊，伺服器取消這場（不判輸、不扣分、沒有保護期）
   socket.on('pk:cancelled', data => {
     stopEnterRetry();
@@ -125,6 +158,7 @@ function initPk() {
       return;
     }
     currentDuelId = data.duelId;
+    myRole = 'host';
     enterDuel(currentDuelId, el);
     hideAll();
     document.getElementById('waiting').style.display = '';
@@ -141,9 +175,11 @@ function initPk() {
   }
   function backToLobby(message) {
     stopRoomCountdown();
+    stopMatchWaitCountdown();
     stopEnterRetry();
     enteredDuel = false;
     currentDuelId = null;
+    myRole = null;
     hideAll();
     document.getElementById('lobby').style.display = '';
     document.getElementById('createResult').textContent = message || '';
@@ -173,6 +209,31 @@ function initPk() {
     backToLobby('已取消房間。');
   });
 
+  // 加入之後、第一題送出之前的這段等待——跟房主開房後的 startRoomCountdown 是
+  // 同一種心態：不知道還要等多久，玩家會覺得畫面卡住了。這裡改成有秒數的倒數，
+  // 依據就是 /join 回傳的 matchStartTimeoutMs（session 是 join 這一刻才建立的，
+  // 開賽逾時的時鐘也是這一刻開始算）。時間到只顯示提示，不自己收掉畫面——跟
+  // startRoomCountdown 一樣的原則：這場作不作廢由伺服器的 pk:cancelled 決定。
+  let matchWaitTimer = null;
+  function stopMatchWaitCountdown() {
+    if (matchWaitTimer) { clearInterval(matchWaitTimer); matchWaitTimer = null; }
+    document.getElementById('matchWaitCountdown').textContent = '';
+  }
+  function startMatchWaitCountdown(timeoutMs) {
+    const endAt = Date.now() + (timeoutMs || 210000);
+    const el = document.getElementById('matchWaitCountdown');
+    stopMatchWaitCountdown();
+    const paint = () => {
+      const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+      el.textContent = left > 0
+        ? `等待對戰開始…（最長還要等 ${left} 秒，對方沒連上的話這場會自動取消）`
+        : '已經等超過預期時間，可能對方連線有問題，請稍候…';
+      if (left <= 0) clearInterval(matchWaitTimer);
+    };
+    paint();
+    matchWaitTimer = setInterval(paint, 1000);
+  }
+
   document.getElementById('joinBtn').addEventListener('click', async () => {
     const roomCode = document.getElementById('roomCodeInput').value.trim();
     const el = document.getElementById('joinResult');
@@ -189,22 +250,27 @@ function initPk() {
       return;
     }
     currentDuelId = data.duelId;
+    myRole = 'guest';
     enterDuel(currentDuelId, el);
     hideAll();
     document.getElementById('quiz').style.display = '';
+    document.getElementById('scoreLine').textContent = '';
     document.getElementById('questionContent').textContent = '等待對戰開始...';
     document.getElementById('options').innerHTML = '';
+    startMatchWaitCountdown(data.matchStartTimeoutMs);
   });
 
   socket.on('pk:question', q => {
-    stopRoomCountdown();   // 對戰真的開始了，房間倒數就不用再跑
+    stopRoomCountdown();       // 對戰真的開始了，房間倒數就不用再跑
+    stopMatchWaitCountdown();  // 開賽等待的倒數也是
     stopEnterRetry();
-    hideAll();
-    document.getElementById('quiz').style.display = '';
     hideAll();
     document.getElementById('quiz').style.display = '';
     document.getElementById('questionMeta').textContent = `第 ${q.questionIndex + 1} / ${q.totalQuestions} 題`;
     document.getElementById('questionContent').textContent = q.content;
+    document.getElementById('answerFeedback').textContent = '';
+    // scoreLine 不在這裡覆寫——它的內容由 pk:score 維護（每題結束才更新），
+    // 這裡動到的話第一題還沒結算就會被清成空的。
 
     const optionsEl = document.getElementById('options');
     optionsEl.innerHTML = '';
@@ -217,19 +283,41 @@ function initPk() {
           duelId: currentDuelId,
           questionIndex: q.questionIndex,
           selectedOption: key
+        }, ack => {
+          // 這裡只做「你這一題對不對」的即時回饋（你一按下去就知道）。
+          // 累計比分不在這裡算——那是伺服器的事，等雙方都答完會由 pk:score 播過來，
+          // 前端自己再累加一份就變成兩個真相來源，遲早對不起來。
+          if (!ack || !ack.ok) return;
+          const fb = document.getElementById('answerFeedback');
+          // .v-repair/.v-disrupt 是既有的陣營色工具類（綠/紅），借來當「答對/答錯」
+          // 的顏色用，不用另外定義新樣式。
+          fb.textContent = ack.correct ? '✓ 這題答對了！' : '✗ 這題答錯了。';
+          fb.className = ack.correct ? 'v-repair' : 'v-disrupt';
         });
       });
       optionsEl.appendChild(btn);
     });
 
-    let remaining = q.timeLimitSeconds;
-    document.getElementById('timer').textContent = `剩餘 ${remaining} 秒`;
+    // 用「結束時間點」算剩餘秒數，而不是每秒 -1：分頁切到背景時瀏覽器會把
+    // setInterval 降頻，用累減的話回來就會跟伺服器對不上。真正的逾時判定本來
+    // 就在伺服器（見 session.js 的 startNextQuestion timer），這裡只是顯示。
+    const totalMs = q.timeLimitSeconds * 1000;
+    const endAt = Date.now() + totalMs;
+    const timerEl = document.getElementById('timer');
+    const barEl = document.getElementById('bar');
     if (questionTimer) clearInterval(questionTimer);
-    questionTimer = setInterval(() => {
-      remaining -= 1;
-      document.getElementById('timer').textContent = `剩餘 ${Math.max(remaining, 0)} 秒`;
-      if (remaining <= 0) clearInterval(questionTimer);
-    }, 1000);
+    const paintTimer = () => {
+      const leftMs = Math.max(0, endAt - Date.now());
+      const leftSec = Math.ceil(leftMs / 1000);
+      const warn = leftSec <= 3;
+      timerEl.textContent = leftSec + ' 秒';
+      timerEl.className = 'timer' + (warn ? ' warn' : '');
+      barEl.style.width = (leftMs / totalMs * 100) + '%';
+      barEl.className = warn ? 'warn' : '';
+      if (leftMs <= 0) clearInterval(questionTimer);
+    };
+    paintTimer();
+    questionTimer = setInterval(paintTimer, 100);
   });
 
   // 重連後發現自己這一題其實已經作答過了，顯示等待對手，而不是讓玩家誤以為能重新選。
@@ -239,12 +327,14 @@ function initPk() {
     document.getElementById('quiz').style.display = '';
     document.getElementById('questionMeta').textContent = `第 ${questionIndex + 1} 題`;
     document.getElementById('timer').textContent = '';
+    document.getElementById('bar').style.width = '0%';
     document.getElementById('questionContent').textContent = '你已經作答過這一題，等待對手...';
     document.getElementById('options').innerHTML = '';
   });
 
   socket.on('pk:result', result => {
     if (questionTimer) clearInterval(questionTimer);
+    stopMatchWaitCountdown();
     hideAll();
     document.getElementById('resultCard').style.display = '';
 
@@ -259,6 +349,21 @@ function initPk() {
         : ' 你的小隊尚未有交摺點積分，不扣分。';
     }
     document.getElementById('resultMessage').textContent = text;
+
+    // 最終比分：伺服器結算時已經算好雙方的答對題數/總作答時間（見 pk:result
+    // 的 hostSummary/guestSummary），原本完全沒有顯示，只回傳贏/輸兩個字。
+    // myRole 是自己開房(host)還是加入(guest)決定要挑哪一份當「你」。
+    const mySummary = myRole === 'host' ? result.hostSummary : result.guestSummary;
+    const oppSummary = myRole === 'host' ? result.guestSummary : result.hostSummary;
+    if (mySummary && oppSummary) {
+      document.getElementById('resultScore').textContent =
+        `比分：你 ${mySummary.correctCount} 題正確（用時 ${(mySummary.totalTimeMs / 1000).toFixed(1)} 秒）` +
+        `　對手 ${oppSummary.correctCount} 題正確（用時 ${(oppSummary.totalTimeMs / 1000).toFixed(1)} 秒）`;
+    } else {
+      // 斷線判負（forfeitDuel）的話沒有人真的答完題，兩邊 summary 可能是空的答題紀錄，
+      // 這時候顯示比分沒有意義，就不顯示。
+      document.getElementById('resultScore').textContent = '';
+    }
   });
 }
 </script>

@@ -26,6 +26,7 @@
   <button id="logoutBtn">登出</button>
 </div>
 
+<script src="authFetch.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
 const schoolInfo = JSON.parse(localStorage.getItem('schoolInfo') || 'null');
@@ -33,8 +34,24 @@ const schoolInfo = JSON.parse(localStorage.getItem('schoolInfo') || 'null');
 if (!token || !schoolInfo) {
   document.getElementById('notLoggedIn').style.display = '';
 } else {
-  document.getElementById('dashboard').style.display = '';
-  document.getElementById('who').textContent = `目前登入學派：${schoolInfo.displayName}`;
+  // 這一頁本來完全不會打任何 API，只看 localStorage 裡還留著什麼就決定要不要
+  // 顯示「已登入」。但 token 過期不會讓 localStorage 自動清空，結果是 token
+  // 早就失效了，這頁還是一直顯示「目前登入學派：X」，要等玩家點進某個功能
+  // 才會被 authFetch.js 攔下 401 踢出去。這裡主動打一次 /me 確認 token 還有效，
+  // 401 的話 authFetch.js 會處理清除與導頁，不用在這裡重複處理。
+  fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + token } })
+    .then(res => {
+      if (window.__authRedirecting) return; // authFetch.js 已經在導頁了，不用再做事
+      if (!res.ok) return; // 非 401 的錯誤先不擋顯示，避免偶發的伺服器錯誤就把人踢出去
+      document.getElementById('dashboard').style.display = '';
+      document.getElementById('who').textContent = `目前登入學派：${schoolInfo.displayName}`;
+    })
+    .catch(() => {
+      if (window.__authRedirecting) return;
+      // 網路暫時連不上：還是先用本機存的資訊顯示，不要因為偶發的網路問題就把人擋在外面
+      document.getElementById('dashboard').style.display = '';
+      document.getElementById('who').textContent = `目前登入學派：${schoolInfo.displayName}`;
+    });
 }
 
 document.getElementById('logoutBtn')?.addEventListener('click', () => {

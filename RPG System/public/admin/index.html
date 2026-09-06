@@ -62,6 +62,7 @@
   <button id="logoutBtn">登出</button>
 </div>
 
+<script src="../authFetch.js"></script>
 <script>
 const token = localStorage.getItem('adminToken');
 if (!token) location.href = 'login.html';
