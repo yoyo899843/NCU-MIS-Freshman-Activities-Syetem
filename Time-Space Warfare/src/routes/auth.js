@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../db');
 const playerAuth = require('../middleware/playerAuth');
 const asyncHandler = require('../middleware/asyncHandler');
+const { createLoginThrottle } = require('../loginThrottle');
 
 const router = express.Router();
 
@@ -10,10 +11,8 @@ const router = express.Router();
 // 「找一個還沒滿的隊伍塞進去」這件事——每次登入都是新隊伍，直到達到隊伍上限。
 const MAX_TEAMS = 20;
 
-// PIN 錯誤次數限制（記憶體內，process 重啟會重置，這裡只是防暴力破解的基本防線）。
-const PIN_MAX_ATTEMPTS = 5;
-const PIN_LOCKOUT_MS = 15 * 60 * 1000;
-const pinFailedAttempts = new Map(); // displayName -> { count, lockedUntil }
+// PIN 錯誤次數限制（見 src/loginThrottle.js：記憶體內、會定期清掉過期項目）。
+const pinThrottle = createLoginThrottle();
 
 // 玩家登入：代號 + PIN 碼。
 //   - 代號是新的 → 視為新隊伍加入（要檢查隊伍是否已達上限），把這組 PIN 記下來。
@@ -27,9 +26,17 @@ router.post('/join', asyncHandler(async (req, res) => {
   if (!pin || typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
     return res.status(400).json({ error: 'pin must be exactly 4 digits' });
   }
-  // 限制 10 個字，不論中英——用 Array.from 而不是直接 slice()，
-  // 避免萬一遇到 emoji 之類的字元被從中間切斷（中英文本身不會有這問題，但這樣寫比較保險）。
-  const name = Array.from(displayName.trim()).slice(0, 10).join('');
+  // 限制 10 個字，不論中英。用 Array.from 而不是 .length，避免 emoji 之類的
+  // 字元被算成兩個字（中英文本身不會有這問題，但這樣寫比較保險）。
+  //
+  // 超過就直接擋下來，不默默截斷——截斷會讓「中央大學資訊管理學系第一隊」和
+  // 「…第二隊」變成同一個代號，兩支隊伍會撞在一起（PIN 剛好相同的話還會直接
+  // 接管到對方的帳號）。網頁上的輸入框有 maxlength="10" 擋著，這裡是給直接
+  // 打 API 的情況一個明確的錯誤，而不是回一個跟送出去不一樣的名字。
+  const name = displayName.trim();
+  if (Array.from(name).length > 10) {
+    return res.status(400).json({ error: '代號最多 10 個字' });
+  }
 
   const { rows: existingRows } = await db.query(
     `SELECT p.id, p.pin, p.is_captain, p.team_id, t.faction
@@ -41,8 +48,7 @@ router.post('/join', asyncHandler(async (req, res) => {
   if (existingRows.length > 0) {
     const existing = existingRows[0];
 
-    const record = pinFailedAttempts.get(name);
-    if (record && record.lockedUntil && record.lockedUntil > Date.now()) {
+    if (pinThrottle.isLocked(name)) {
       return res.status(429).json({ error: 'too many failed attempts, try again later' });
     }
 
@@ -50,15 +56,11 @@ router.post('/join', asyncHandler(async (req, res) => {
     // 這是活動現場的實際需求，見 PLAN.md。
     const valid = existing.pin && existing.pin === pin;
     if (!valid) {
-      const count = (record?.count || 0) + 1;
-      pinFailedAttempts.set(name, {
-        count,
-        lockedUntil: count >= PIN_MAX_ATTEMPTS ? Date.now() + PIN_LOCKOUT_MS : null
-      });
+      pinThrottle.recordFailure(name);
       return res.status(401).json({ error: 'this name is taken, or the PIN is incorrect' });
     }
 
-    pinFailedAttempts.delete(name);
+    pinThrottle.clear(name);
 
     const token = jwt.sign(
       { sub: existing.id, teamId: existing.team_id, faction: existing.faction, displayName: name, role: 'player' },

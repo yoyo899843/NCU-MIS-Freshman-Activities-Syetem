@@ -9,6 +9,36 @@
 <style>
   body { max-width: none; padding: 0; }
   #map { height: 100vh; width: 100%; }
+  .legend { margin-top: 6px; font-size: 0.78rem; color: #555; }
+  .legend span { margin-right: 10px; white-space: nowrap; }
+  .legend .sw {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 4px; vertical-align: -1px;
+  }
+  .legend .sw.repair { background: #0f8a5f; }
+  .legend .sw.disrupt { background: #c0392b; }
+  .legend .sw.tie { background: #8a8f96; }
+
+  /* 交摺點標記：刻意做成方形資訊牌，跟玩家的圓點一眼就分得出來 */
+  .cp-marker {
+    background: #fff; border: 2px solid #8a8f96; border-radius: 6px;
+    padding: 3px 6px; white-space: nowrap; text-align: center;
+    box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 11px; line-height: 1.35;
+  }
+  .cp-marker.repair { border-color: #0f8a5f; }
+  .cp-marker.disrupt { border-color: #c0392b; }
+  .cp-marker .cp-name { font-weight: 700; color: #12161c; }
+  .cp-marker .cp-vals { font-variant-numeric: tabular-nums; }
+  .cp-marker .cp-r { color: #0f8a5f; font-weight: 700; }
+  .cp-marker .cp-d { color: #c0392b; font-weight: 700; }
+  .cp-marker .cp-lead {
+    display: block; margin-top: 1px; font-size: 10px; font-weight: 700; color: #fff;
+    border-radius: 3px; padding: 0 3px;
+  }
+  .cp-marker.repair .cp-lead { background: #0f8a5f; }
+  .cp-marker.disrupt .cp-lead { background: #c0392b; }
+  .cp-marker.tie .cp-lead { background: #8a8f96; }
+
   .top-bar {
     position: absolute;
     top: 8px;
@@ -25,9 +55,14 @@
 </head>
 <body>
 <div class="top-bar">
-  <strong>大地圖</strong> — 骨架階段：交摺點狀態待下一輪串接。
+  <strong>大地圖</strong>
   <span id="checkpointStatus"></span>
   <span id="locationStatus"></span>
+  <div class="legend">
+    <span><i class="sw repair"></i>修復者領先</span>
+    <span><i class="sw disrupt"></i>破壞者領先</span>
+    <span><i class="sw tie"></i>平手／未得分</span>
+  </div>
 </div>
 <div id="map"></div>
 
@@ -64,18 +99,65 @@ L.tileLayer('/tiles/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
 }).addTo(map);
 
-// 交摺點標記：等 /api/map/checkpoints 接上真實資料後，這裡改成畫 9 個交摺點
-// 的位置 + 修復值/破壞值進度條。目前先呼叫 stub API 確認串接得起來。
-fetch('/api/map/checkpoints')
-  .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
-  .then(({ ok, status, data }) => {
-    document.getElementById('checkpointStatus').textContent = ok
-      ? `（${data.length || 0} 個交摺點）`
-      : `（交摺點資料尚未實作，${status}）`;
-  })
-  .catch(() => {
-    document.getElementById('checkpointStatus').textContent = '（連線失敗）';
+// 交摺點：畫出位置，並用外框顏色 + 標籤直接標示目前是哪一邊領先。
+// 這支 API 不需要登入（交摺點戰況是公開資訊，大會投影 Dashboard 也用同一支）。
+const CHECKPOINT_INTERVAL_MS = 5000;
+const checkpointMarkers = new Map(); // checkpointId -> L.Marker
+
+const LEAD_LABEL = { repair: '修復者領先', disrupt: '破壞者領先', tie: '平手' };
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, ch =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+function checkpointIcon(cp) {
+  const lead = cp.leading || 'tie';
+  // 顏色只是輔助，領先方另外用文字寫出來——色盲/大太陽下看不出顏色也能判讀。
+  const html =
+    `<div class="cp-marker ${lead}">` +
+      `<span class="cp-name">${escapeHtml(cp.name)}</span><br>` +
+      `<span class="cp-vals"><span class="cp-r">修復 ${cp.repairValue}</span>` +
+      ` / <span class="cp-d">破壞 ${cp.disruptValue}</span></span>` +
+      `<span class="cp-lead">${LEAD_LABEL[lead]}</span>` +
+    `</div>`;
+  return L.divIcon({ html, className: '', iconSize: null, iconAnchor: [0, 0] });
+}
+
+function renderCheckpoints(list) {
+  const withCoords = list.filter(cp => cp.lat != null && cp.lng != null);
+  const missing = list.length - withCoords.length;
+  document.getElementById('checkpointStatus').textContent =
+    `（${list.length} 個交摺點${missing ? `，${missing} 個尚未設定座標` : ''}）`;
+
+  withCoords.forEach(cp => {
+    const existing = checkpointMarkers.get(cp.id);
+    if (existing) {
+      existing.setLatLng([cp.lat, cp.lng]);
+      existing.setIcon(checkpointIcon(cp));
+    } else {
+      // 交摺點壓在玩家標記底下（zIndexOffset 負值），才不會擋住走動中的隊伍
+      const marker = L.marker([cp.lat, cp.lng], {
+        icon: checkpointIcon(cp),
+        zIndexOffset: -500,
+        interactive: false
+      }).addTo(map);
+      checkpointMarkers.set(cp.id, marker);
+    }
   });
+}
+
+function loadCheckpoints() {
+  fetch('/api/map/checkpoints')
+    .then(res => (res.ok ? res.json() : Promise.reject(res.status)))
+    .then(renderCheckpoints)
+    .catch(() => {
+      document.getElementById('checkpointStatus').textContent = '（交摺點載入失敗）';
+    });
+}
+
+loadCheckpoints();
+setInterval(loadCheckpoints, CHECKPOINT_INTERVAL_MS);
 
 // 自己的位置：不用等伺服器回應，收到 GPS 更新的當下直接畫在地圖上，
 // 用跟其他人不同的樣式（藍色圓點）分辨。

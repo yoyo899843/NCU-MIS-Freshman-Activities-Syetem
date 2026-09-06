@@ -3,19 +3,19 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { parse } = require('csv-parse');
+const crypto = require('crypto');
 const db = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const { gatekeeperGuard, requireFullAdmin } = require('../middleware/gatekeeperGuard');
 const asyncHandler = require('../middleware/asyncHandler');
+const { createLoginThrottle } = require('../loginThrottle');
 const { getIO } = require('../io');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
-// --- 簡單的登入失敗鎖定（記憶體內，process 重啟會重置，這裡只是防暴力破解的基本防線） ---
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;
-const failedAttempts = new Map(); // email -> { count, lockedUntil }
+// --- 簡單的登入失敗鎖定（見 src/loginThrottle.js：記憶體內、會定期清掉過期項目） ---
+const loginThrottle = createLoginThrottle();
 
 router.post('/login', asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
@@ -23,8 +23,7 @@ router.post('/login', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'email and password are required' });
   }
 
-  const record = failedAttempts.get(email);
-  if (record && record.lockedUntil && record.lockedUntil > Date.now()) {
+  if (loginThrottle.isLocked(email)) {
     return res.status(429).json({ error: 'too many failed attempts, try again later' });
   }
 
@@ -33,11 +32,7 @@ router.post('/login', asyncHandler(async (req, res) => {
 
   // 不透露「帳號不存在」或「密碼錯誤」的差異，一律回同樣的訊息。
   const genericError = () => {
-    const count = (record?.count || 0) + 1;
-    failedAttempts.set(email, {
-      count,
-      lockedUntil: count >= MAX_ATTEMPTS ? Date.now() + LOCKOUT_MS : null
-    });
+    loginThrottle.recordFailure(email);
     return res.status(401).json({ error: 'invalid email or password' });
   };
 
@@ -46,7 +41,7 @@ router.post('/login', asyncHandler(async (req, res) => {
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) return genericError();
 
-  failedAttempts.delete(email);
+  loginThrottle.clear(email);
 
   // role: 'admin' 是「這是一張管理端的 token」（跟玩家端的 role: 'player' 區分），
   // adminRole 才是權限層級（管理員/關主），兩個是不同意思、不要混在同一個欄位。
@@ -182,17 +177,143 @@ router.get('/me', (req, res) => {
   });
 });
 
-// 交摺點 CRUD 本身還沒做（見 PLAN.md），這裡先開一個唯讀清單，給題目管理畫面的
-// 「這題屬於哪個交摺點」下拉選單用。
+// --- 交摺點 CRUD ---
+// 清單同時給交摺點管理頁、以及題目管理畫面的「這題屬於哪個交摺點」下拉選單用。
 router.get('/checkpoints', asyncHandler(async (req, res) => {
-  const { rows } = await db.query('SELECT id, name FROM checkpoints ORDER BY id');
-  res.json(rows);
+  const { rows } = await db.query(
+    `SELECT id, name, map_lat, map_lng, qr_token, repair_value, disrupt_value, updated_at
+     FROM checkpoints ORDER BY id`
+  );
+  res.json(rows.map(numericCheckpoint));
 }));
 
-router.post('/checkpoints', (req, res) => res.status(501).json({ error: 'not implemented' }));
-router.patch('/checkpoints/:id', (req, res) => res.status(501).json({ error: 'not implemented' }));
-router.post('/checkpoints/:id/reset', (req, res) => res.status(501).json({ error: 'not implemented' }));
-router.get('/checkpoints/:id/qrcode', (req, res) => res.status(501).json({ error: 'not implemented' }));
+// pg 的 NUMERIC 型別回來是字串，前端要拿來比大小/畫進度條，統一轉成數字再回。
+function numericCheckpoint(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    repair_value: Number(row.repair_value),
+    disrupt_value: Number(row.disrupt_value)
+  };
+}
+
+// qr_token 是印在現場實體 QR Code 上的字串，玩家掃了就能開始挑戰，
+// 所以一定要不可猜——用亂數產生，不讓主辦自己填。
+function generateQrToken() {
+  return 'CP-' + crypto.randomBytes(12).toString('hex').toUpperCase();
+}
+
+// 回傳 { ok, value } 或 { ok: false, error }——刻意不用 throw，因為目前的
+// 錯誤處理中介層一律把例外回成 500（見 problem.md B1），驗證錯誤要自己回 400。
+function parseCoord(value, min, max, label) {
+  if (value === undefined || value === null || value === '') return { ok: true, value: null };
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) {
+    return { ok: false, error: `${label} must be a number between ${min} and ${max}` };
+  }
+  return { ok: true, value: n };
+}
+
+router.post('/checkpoints', asyncHandler(async (req, res) => {
+  const { name, mapLat, mapLng } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name is required' });
+  }
+  const lat = parseCoord(mapLat, -90, 90, 'mapLat');
+  if (!lat.ok) return res.status(400).json({ error: lat.error });
+  const lng = parseCoord(mapLng, -180, 180, 'mapLng');
+  if (!lng.ok) return res.status(400).json({ error: lng.error });
+
+  const { rows } = await db.query(
+    `INSERT INTO checkpoints (name, map_lat, map_lng, qr_token)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, name, map_lat, map_lng, qr_token, repair_value, disrupt_value`,
+    [name.trim(), lat.value, lng.value, generateQrToken()]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'create_checkpoint', 'checkpoint', $2, NULL, $3)`,
+    [req.admin.sub, String(rows[0].id), JSON.stringify({ name: rows[0].name })]
+  );
+
+  res.status(201).json(numericCheckpoint(rows[0]));
+}));
+
+router.patch('/checkpoints/:id', asyncHandler(async (req, res) => {
+  const { name, mapLat, mapLng } = req.body || {};
+  const lat = parseCoord(mapLat, -90, 90, 'mapLat');
+  if (!lat.ok) return res.status(400).json({ error: lat.error });
+  const lng = parseCoord(mapLng, -180, 180, 'mapLng');
+  if (!lng.ok) return res.status(400).json({ error: lng.error });
+
+  const { rows } = await db.query(
+    `UPDATE checkpoints
+       SET name = COALESCE($1, name),
+           map_lat = COALESCE($2, map_lat),
+           map_lng = COALESCE($3, map_lng),
+           updated_at = now()
+     WHERE id = $4
+     RETURNING id, name, map_lat, map_lng, qr_token, repair_value, disrupt_value`,
+    [name?.trim() || null, lat.value, lng.value, req.params.id]
+  );
+  if (rows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
+  res.json(numericCheckpoint(rows[0]));
+}));
+
+router.delete('/checkpoints/:id', asyncHandler(async (req, res) => {
+  try {
+    const { rowCount } = await db.query('DELETE FROM checkpoints WHERE id = $1', [req.params.id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'checkpoint not found' });
+  } catch (err) {
+    // 已經有人挑戰過、或有題目掛在這個交摺點底下，刪掉會讓紀錄斷掉。
+    if (err.code === '23503') {
+      return res.status(409).json({
+        error: '這個交摺點已經有挑戰紀錄或題目，不能刪除（可以改用「歸零重置」）'
+      });
+    }
+    throw err;
+  }
+  res.status(204).end();
+}));
+
+// 手動歸零：把某個交摺點的修復值/破壞值打回 0。
+// 挑戰紀錄（checkpoint_attempts）刻意保留不動，稽核才追得回來。
+router.post('/checkpoints/:id/reset', asyncHandler(async (req, res) => {
+  const { rows: beforeRows } = await db.query(
+    'SELECT repair_value, disrupt_value FROM checkpoints WHERE id = $1', [req.params.id]
+  );
+  if (beforeRows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
+
+  const { rows } = await db.query(
+    `UPDATE checkpoints SET repair_value = 0, disrupt_value = 0, updated_at = now()
+     WHERE id = $1
+     RETURNING id, name, repair_value, disrupt_value`,
+    [req.params.id]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'reset_checkpoint', 'checkpoint', $2, $3, $4)`,
+    [req.admin.sub, String(req.params.id),
+     JSON.stringify({
+       repair_value: Number(beforeRows[0].repair_value),
+       disrupt_value: Number(beforeRows[0].disrupt_value)
+     }),
+     JSON.stringify({ repair_value: 0, disrupt_value: 0 })]
+  );
+
+  res.json(numericCheckpoint(rows[0]));
+}));
+
+// 交摺點的 QR 內容。回傳 qr_token 本身，QR 圖形由前端畫（不用多裝後端套件）。
+router.get('/checkpoints/:id/qrcode', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, name, qr_token FROM checkpoints WHERE id = $1', [req.params.id]
+  );
+  if (rows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
+  res.json(rows[0]);
+}));
 
 const QUESTION_COLUMNS = `
   id, scope_type, checkpoint_id, content,
@@ -523,7 +644,42 @@ router.patch('/players/:id/faction', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
-router.post('/overrides/score', (req, res) => res.status(501).json({ error: 'not implemented' }));
+// 手動增減某個交摺點的修復值/破壞值。掃碼答題以外的補救手段
+// （例如現場判定爭議、或關主代為記分）。delta 可正可負，扣到負數會夾在 0。
+router.post('/overrides/score', asyncHandler(async (req, res) => {
+  const { checkpointId, faction, delta, note } = req.body || {};
+  if (!checkpointId) return res.status(400).json({ error: 'checkpointId is required' });
+  if (!['repair', 'disrupt'].includes(faction)) {
+    return res.status(400).json({ error: "faction must be 'repair' or 'disrupt'" });
+  }
+  const amount = Number(delta);
+  if (!Number.isFinite(amount) || amount === 0) {
+    return res.status(400).json({ error: 'delta must be a non-zero number' });
+  }
+
+  const column = faction === 'repair' ? 'repair_value' : 'disrupt_value';
+  const { rows: beforeRows } = await db.query(
+    `SELECT ${column} AS value FROM checkpoints WHERE id = $1`, [checkpointId]
+  );
+  if (beforeRows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
+
+  const { rows } = await db.query(
+    `UPDATE checkpoints SET ${column} = GREATEST(0, ${column} + $1), updated_at = now()
+     WHERE id = $2
+     RETURNING id, name, repair_value, disrupt_value`,
+    [amount, checkpointId]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'override_checkpoint_score', 'checkpoint', $2, $3, $4)`,
+    [req.admin.sub, String(checkpointId),
+     JSON.stringify({ [column]: Number(beforeRows[0].value) }),
+     JSON.stringify({ [column]: Number(rows[0][column]), delta: amount, note: note || null })]
+  );
+
+  res.json(numericCheckpoint(rows[0]));
+}));
 
 // 取消某一場 PK 對戰的扣分懲罰：把當初扣掉的分數加回對應交摺點，並留下稽核紀錄。
 // penalty_amount 本身不會被清掉（留著當「當初扣了多少」的歷史紀錄），

@@ -17,9 +17,11 @@ router.post('/scan', asyncHandler(async (req, res) => {
   }
   const schoolId = req.school.sub;
 
+  // 掃碼掃到的一定原樣正確，但這一頁也支援手動輸入（相機不能用時的備援），
+  // 所以跟權限碼一樣不分大小寫——存進去時已經統一成大寫。
   const { rows: clueRows } = await db.query(
     'SELECT id, name, description, image_url, checkpoint_id FROM clues WHERE qr_token = $1',
-    [qrToken.trim()]
+    [qrToken.trim().toUpperCase()]
   );
   if (clueRows.length === 0) {
     return res.status(404).json({ error: 'invalid QR code' });

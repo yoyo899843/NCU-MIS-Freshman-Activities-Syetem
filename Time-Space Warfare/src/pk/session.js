@@ -2,36 +2,13 @@
 // 逐題進度/計時全部只存在這裡（process 重啟會遺失進行中的對戰，屬於已知取捨，見 PLAN.md）。
 
 const db = require('../db');
+const { shuffleOptions } = require('../quiz/shuffle');
 
 const QUESTIONS_PER_DUEL = 5;
 const ANSWER_GRACE_MS = 1000; // 題目時限到了之後，多留一點緩衝時間才強制進下一題
 const DISCONNECT_FORFEIT_MS = 20 * 1000; // 斷線超過這麼久還沒重連，直接判對手獲勝、結束對戰
 
 const sessions = new Map(); // duelId -> session
-
-// 資料庫裡 A/B/C/D 只是儲存用的固定欄位，不代表玩家畫面上看到的順序。
-// 每次抽到一題，當場重新洗牌決定這一次要顯示的順序，並記住「洗牌後真正正確的按鈕是哪一個」，
-// 之後這一題不管送幾次（含斷線重連補送）都用同一份洗牌結果，順序不會變來變去。
-function shuffleOptions(q) {
-  const originalLabels = ['A', 'B', 'C', 'D'];
-  const optionTextByLabel = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
-
-  for (let i = originalLabels.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [originalLabels[i], originalLabels[j]] = [originalLabels[j], originalLabels[i]];
-  }
-
-  const displayLabels = ['A', 'B', 'C', 'D'];
-  const displayOptions = {};
-  let correctDisplayLabel = null;
-  originalLabels.forEach((origLabel, i) => {
-    const displayLabel = displayLabels[i];
-    displayOptions[displayLabel] = optionTextByLabel[origLabel];
-    if (origLabel === q.correct_option) correctDisplayLabel = displayLabel;
-  });
-
-  return { displayOptions, correctDisplayLabel };
-}
 
 async function createSession(duelId, hostPlayerId, guestPlayerId) {
   const { rows: rawQuestions } = await db.query(

@@ -51,9 +51,29 @@ app.use('/api/votes', voteRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/admin/api', adminRoutes);
 
+// API 路徑打錯時回 JSON，不要讓 Express 回它預設的 HTML 錯誤頁——
+// 前端一律用 res.json() 解析回應，收到 HTML 只會拋出看不懂的 parse error。
+app.use(['/api', '/admin/api'], (req, res) => {
+  res.status(404).json({ error: 'not found', path: req.originalUrl });
+});
+
 app.use((err, req, res, next) => {
-  console.error(err);
   if (res.headersSent) return next(err);
+
+  // express.json() 之類的中介層會丟出自帶狀態碼的錯誤（JSON 壞掉是 400、
+  // body 太大是 413）。這些是「請求本身有問題」，不該一律當成伺服器爆掉回 500，
+  // 不然前端分不出是自己送錯還是伺服器出事，log 也會被一堆假的 500 淹沒。
+  const status = err.status || err.statusCode;
+  if (status && status >= 400 && status < 500) {
+    // 4xx 是預期內的用戶端錯誤，記一行就好，不用印整個 stack
+    console.warn(`${status} ${req.method} ${req.originalUrl}: ${err.message}`);
+    const message = err.type === 'entity.too.large' ? 'request body is too large'
+      : err.type === 'entity.parse.failed' ? 'invalid JSON in request body'
+      : err.message || 'bad request';
+    return res.status(status).json({ error: message });
+  }
+
+  console.error(err);
   res.status(500).json({ error: 'internal server error' });
 });
 

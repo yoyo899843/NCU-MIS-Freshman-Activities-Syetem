@@ -33,7 +33,7 @@ router.get('/', asyncHandler(async (req, res) => {
      FROM tech_tree_slots s
      LEFT JOIN school_slot_placements ssp ON ssp.slot_id = s.id AND ssp.school_id = $1
      LEFT JOIN clues c ON c.id = ssp.placed_clue_id
-     ORDER BY s.branch_id, s.slot_order`,
+     ORDER BY s.branch_id, s.slot_order, s.id`,
     [schoolId]
   );
 

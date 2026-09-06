@@ -19,7 +19,9 @@ router.post('/redeem', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'code is required' });
   }
   const schoolId = req.school.sub;
-  const normalized = code.trim();
+  // 大小寫不敏感：存進去時已經統一成大寫（見 admin.js 的 normalizeCode），
+  // 這裡把輸入也轉大寫就能直接吃 access_codes.code 的 UNIQUE 索引。
+  const normalized = code.trim().toUpperCase();
 
   const client = await db.connect();
   try {

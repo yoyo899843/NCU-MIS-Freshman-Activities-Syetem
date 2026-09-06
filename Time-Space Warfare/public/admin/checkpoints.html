@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>交摺點管理 - 時空戰爭</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 900px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #eee; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .v-repair { color: #0f8a5f; font-weight: bold; }
+  .v-disrupt { color: #c0392b; font-weight: bold; }
+  .lead { font-size: 0.75rem; padding: 1px 7px; border-radius: 999px; color: #fff; }
+  .lead.repair { background: #0f8a5f; }
+  .lead.disrupt { background: #c0392b; }
+  .lead.tie { background: #8a8f96; }
+  .row-actions button, .row-actions a {
+    width: auto; display: inline-block; padding: 3px 8px; margin: 0 4px 4px 0; font-size: 0.85rem;
+  }
+  .token { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; color: #666; }
+  .form-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .form-row input { flex: 1; min-width: 130px; }
+  .hint { font-size: 0.85rem; color: #666; }
+</style>
+</head>
+<body>
+<h1>交摺點管理</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <h3>新增交摺點</h3>
+  <div class="form-row">
+    <input id="newName" placeholder="名稱（例如 資訊圖書館）">
+    <input id="newLat" placeholder="緯度 lat（例如 24.968）" inputmode="decimal">
+    <input id="newLng" placeholder="經度 lng（例如 121.191）" inputmode="decimal">
+  </div>
+  <button id="createBtn">新增</button>
+  <p class="hint">QR 代碼由系統自動產生（不可猜的亂數），新增後可以直接列印。</p>
+  <p id="createResult" class="error"></p>
+</div>
+
+<div class="card">
+  <h3>交摺點清單</h3>
+  <table>
+    <thead>
+      <tr><th>名稱</th><th>座標</th><th>QR 代碼</th><th>修復 / 破壞</th><th>操作</th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <p id="result" class="error"></p>
+</div>
+
+<div class="card">
+  <h3>手動增減分數</h3>
+  <p class="hint">掃碼答題以外的補救手段（現場判定爭議、關主代為記分）。負數就是扣分，扣到 0 為止。</p>
+  <div class="form-row">
+    <select id="ovCheckpoint"></select>
+    <select id="ovFaction">
+      <option value="repair">修復值</option>
+      <option value="disrupt">破壞值</option>
+    </select>
+    <input id="ovDelta" placeholder="增減分數（可負）" inputmode="numeric">
+    <input id="ovNote" placeholder="備註（選填，會記進稽核）">
+  </div>
+  <button id="ovBtn">送出</button>
+  <p id="ovResult" class="error"></p>
+</div>
+
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+const $ = id => document.getElementById(id);
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function leadOf(cp) {
+  if (cp.repair_value > cp.disrupt_value) return { cls: 'repair', text: '修復者領先' };
+  if (cp.disrupt_value > cp.repair_value) return { cls: 'disrupt', text: '破壞者領先' };
+  return { cls: 'tie', text: '平手' };
+}
+
+async function load() {
+  const res = await api('/checkpoints');
+  if (res.status === 403) {
+    $('tbody').innerHTML = '<tr><td colspan="5">你目前是關主，沒有權限管理交摺點。</td></tr>';
+    return;
+  }
+  const list = await res.json();
+
+  $('tbody').innerHTML = list.map(cp => {
+    const lead = leadOf(cp);
+    const coords = (cp.map_lat == null || cp.map_lng == null)
+      ? '<span class="error">尚未設定</span>'
+      : `${cp.map_lat}, ${cp.map_lng}`;
+    return `
+    <tr>
+      <td>${escapeHtml(cp.name)}</td>
+      <td>${coords}</td>
+      <td class="token">${escapeHtml(cp.qr_token)}</td>
+      <td class="n">
+        <span class="v-repair">${cp.repair_value}</span> /
+        <span class="v-disrupt">${cp.disrupt_value}</span><br>
+        <span class="lead ${lead.cls}">${lead.text}</span>
+      </td>
+      <td class="row-actions">
+        <a href="qrcode-print.html?token=${encodeURIComponent(cp.qr_token)}&name=${encodeURIComponent(cp.name)}"
+           target="_blank">列印 QR</a>
+        <button onclick="editCp(${cp.id})">編輯</button>
+        <button onclick="resetCp(${cp.id})">歸零</button>
+        <button onclick="deleteCp(${cp.id})">刪除</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5">目前沒有交摺點，先在上面新增。</td></tr>';
+
+  $('ovCheckpoint').innerHTML = list.map(cp =>
+    `<option value="${cp.id}">${escapeHtml(cp.name)}</option>`).join('');
+
+  window.__checkpoints = list;
+}
+
+$('createBtn').addEventListener('click', async () => {
+  $('createResult').textContent = '';
+  const res = await api('/checkpoints', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: $('newName').value.trim(),
+      mapLat: $('newLat').value.trim(),
+      mapLng: $('newLng').value.trim()
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) { $('createResult').textContent = data.error || `失敗 (${res.status})`; return; }
+  $('newName').value = ''; $('newLat').value = ''; $('newLng').value = '';
+  await load();
+});
+
+window.editCp = async function (id) {
+  const cp = (window.__checkpoints || []).find(c => c.id === id);
+  if (!cp) return;
+  const name = prompt('名稱：', cp.name);
+  if (name === null) return;
+  const lat = prompt('緯度 lat：', cp.map_lat ?? '');
+  if (lat === null) return;
+  const lng = prompt('經度 lng：', cp.map_lng ?? '');
+  if (lng === null) return;
+
+  const res = await api(`/checkpoints/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim(), mapLat: lat.trim(), mapLng: lng.trim() })
+  });
+  const data = await res.json();
+  if (!res.ok) { $('result').textContent = data.error || `失敗 (${res.status})`; return; }
+  $('result').textContent = '';
+  await load();
+};
+
+window.resetCp = async function (id) {
+  if (!confirm('確定要把這個交摺點的修復值/破壞值歸零嗎？\n（挑戰紀錄會保留，只是分數歸零）')) return;
+  const res = await api(`/checkpoints/${id}/reset`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { $('result').textContent = data.error || `失敗 (${res.status})`; return; }
+  $('result').textContent = '';
+  await load();
+};
+
+window.deleteCp = async function (id) {
+  if (!confirm('確定要刪除這個交摺點嗎？')) return;
+  const res = await api(`/checkpoints/${id}`, { method: 'DELETE' });
+  if (res.status === 204) { $('result').textContent = ''; await load(); return; }
+  const data = await res.json().catch(() => ({}));
+  $('result').textContent = data.error || `失敗 (${res.status})`;
+};
+
+$('ovBtn').addEventListener('click', async () => {
+  $('ovResult').textContent = '';
+  const res = await api('/overrides/score', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      checkpointId: Number($('ovCheckpoint').value),
+      faction: $('ovFaction').value,
+      delta: Number($('ovDelta').value),
+      note: $('ovNote').value.trim() || null
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) { $('ovResult').textContent = data.error || `失敗 (${res.status})`; return; }
+  $('ovDelta').value = ''; $('ovNote').value = '';
+  await load();
+});
+
+load();
+</script>
+</body>
+</html>

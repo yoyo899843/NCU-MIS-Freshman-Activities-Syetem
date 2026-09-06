@@ -8,14 +8,13 @@ const db = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const { gatekeeperGuard, requireFullAdmin } = require('../middleware/gatekeeperGuard');
 const asyncHandler = require('../middleware/asyncHandler');
+const { createLoginThrottle } = require('../loginThrottle');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
-// --- 簡單的登入失敗鎖定（記憶體內，process 重啟會重置，這裡只是防暴力破解的基本防線） ---
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;
-const failedAttempts = new Map(); // email -> { count, lockedUntil }
+// --- 簡單的登入失敗鎖定（見 src/loginThrottle.js：記憶體內、會定期清掉過期項目） ---
+const loginThrottle = createLoginThrottle();
 
 router.post('/login', asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
@@ -23,8 +22,7 @@ router.post('/login', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'email and password are required' });
   }
 
-  const record = failedAttempts.get(email);
-  if (record && record.lockedUntil && record.lockedUntil > Date.now()) {
+  if (loginThrottle.isLocked(email)) {
     return res.status(429).json({ error: 'too many failed attempts, try again later' });
   }
 
@@ -33,11 +31,7 @@ router.post('/login', asyncHandler(async (req, res) => {
 
   // 不透露「帳號不存在」或「密碼錯誤」的差異，一律回同樣的訊息。
   const genericError = () => {
-    const count = (record?.count || 0) + 1;
-    failedAttempts.set(email, {
-      count,
-      lockedUntil: count >= MAX_ATTEMPTS ? Date.now() + LOCKOUT_MS : null
-    });
+    loginThrottle.recordFailure(email);
     return res.status(401).json({ error: 'invalid email or password' });
   };
 
@@ -46,7 +40,7 @@ router.post('/login', asyncHandler(async (req, res) => {
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) return genericError();
 
-  failedAttempts.delete(email);
+  loginThrottle.clear(email);
 
   // role: 'admin' 是「這是一張管理端的 token」（跟學派端的 role: 'school' 區分），
   // adminRole 才是權限層級（管理員/關主），兩個是不同意思、不要混在同一個欄位。
@@ -473,6 +467,17 @@ router.delete('/checkpoints/:id', asyncHandler(async (req, res) => {
   }
 }));
 
+// 權限碼與線索 QR 代碼一律正規化成「去頭尾空白＋全大寫」再存。
+//
+// 為什麼要全大寫：活動當天玩家是在手機上打字，自動大寫、注音切換、或直接打小寫
+// 都很常見，分大小寫的話會得到「查無此碼」這種看不出原因的錯誤。存進去就先統一，
+// 查詢時同樣把輸入轉大寫，就能直接吃現有的 UNIQUE 索引，不用做全表掃描。
+//
+// 自動產生的代碼是十六進位（0-9a-f），轉大寫是一對一對應、不會減少隨機性。
+function normalizeCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
 const CLUE_COLUMNS = 'id, checkpoint_id, name, description, image_url, qr_token, created_at';
 
 router.get('/clues', asyncHandler(async (req, res) => {
@@ -502,7 +507,7 @@ function validateClueBody(body, checkpointIds) {
 
   const description = (body.description || '').trim() || null;
   const imageUrl = (body.imageUrl || '').trim() || null;
-  const qrToken = (body.qrToken || '').trim() || `CLUE-${crypto.randomBytes(6).toString('hex')}`;
+  const qrToken = normalizeCode(body.qrToken) || `CLUE-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
 
   return { data: { checkpointId, name, description, imageUrl, qrToken } };
 }
@@ -542,7 +547,7 @@ router.patch('/clues/:id', asyncHandler(async (req, res) => {
     name: req.body.name ?? existing.name,
     description: req.body.description ?? existing.description,
     imageUrl: req.body.imageUrl ?? existing.image_url,
-    qrToken: req.body.qrToken || existing.qr_token
+    qrToken: req.body.qrToken !== undefined ? normalizeCode(req.body.qrToken) : existing.qr_token
   };
 
   const validated = validateClueBody(merged, checkpointIds);
@@ -597,7 +602,7 @@ function validateCsvRow(record, rowNumber, checkpointIds) {
 
   const description = (record['描述'] || '').trim() || null;
   const imageUrl = (record['圖片網址'] || '').trim() || null;
-  const qrToken = (record['QR代碼'] || '').trim() || `CLUE-${crypto.randomBytes(6).toString('hex')}`;
+  const qrToken = normalizeCode(record['QR代碼']) || `CLUE-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
 
   return { data: { checkpointId, name, description, imageUrl, qrToken } };
 }
@@ -700,7 +705,7 @@ router.post('/access-codes', asyncHandler(async (req, res) => {
       `INSERT INTO access_codes (code, type, target_checkpoint_id, target_clue_id)
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [
-        code.trim(),
+        normalizeCode(code),
         type,
         type === 'checkpoint_unlock' ? targetCheckpointId : null,
         type === 'hidden_clue' ? targetClueId : null
@@ -743,7 +748,7 @@ const ACCESS_CODE_TYPE_ALIASES = {
 };
 
 function validateAccessCodeCsvRow(record, rowNumber, checkpointIds, clueIds) {
-  const code = (record['代碼'] || '').trim();
+  const code = normalizeCode(record['代碼']);
   if (!code) return { error: `第 ${rowNumber} 列：代碼為空` };
 
   // toLowerCase() 對中文字元是無害的 no-op，所以中英文兩種鍵值可以共用同一次查表。
@@ -829,7 +834,7 @@ router.get('/tech-tree/branches', asyncHandler(async (req, res) => {
     `SELECT s.id, s.branch_id, s.slot_order, s.correct_clue_id, c.name AS correct_clue_name
      FROM tech_tree_slots s
      JOIN clues c ON c.id = s.correct_clue_id
-     ORDER BY s.branch_id, s.slot_order`
+     ORDER BY s.branch_id, s.slot_order, s.id`
   );
   res.json(branches.map(b => ({ ...b, slots: slots.filter(s => s.branch_id === b.id) })));
 }));
@@ -923,12 +928,21 @@ router.post('/tech-tree/slots', asyncHandler(async (req, res) => {
   if (validated.error) return res.status(400).json({ error: validated.error });
 
   const d = validated.data;
-  const { rows } = await db.query(
-    `INSERT INTO tech_tree_slots (branch_id, slot_order, correct_clue_id)
-     VALUES ($1,$2,$3) RETURNING id, branch_id, slot_order, correct_clue_id`,
-    [d.branchId, d.slotOrder, d.correctClueId]
-  );
-  res.status(201).json(rows[0]);
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO tech_tree_slots (branch_id, slot_order, correct_clue_id)
+       VALUES ($1,$2,$3) RETURNING id, branch_id, slot_order, correct_clue_id`,
+      [d.branchId, d.slotOrder, d.correctClueId]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    // 同一個分支裡順序不能重複——重複的話玩家端「排得到/排不到」的判定會沒有
+    // 確定的順序（見 migrations/008_tech_tree_slot_order_unique.sql）。
+    if (err.code === '23505') {
+      return res.status(409).json({ error: '這個分支底下已經有相同順序的槽位了，請換一個順序' });
+    }
+    throw err;
+  }
 }));
 
 router.patch('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
@@ -951,12 +965,19 @@ router.patch('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
   if (validated.error) return res.status(400).json({ error: validated.error });
 
   const d = validated.data;
-  const { rows } = await db.query(
-    `UPDATE tech_tree_slots SET branch_id=$1, slot_order=$2, correct_clue_id=$3
-     WHERE id = $4 RETURNING id, branch_id, slot_order, correct_clue_id`,
-    [d.branchId, d.slotOrder, d.correctClueId, req.params.id]
-  );
-  res.json(rows[0]);
+  try {
+    const { rows } = await db.query(
+      `UPDATE tech_tree_slots SET branch_id=$1, slot_order=$2, correct_clue_id=$3
+       WHERE id = $4 RETURNING id, branch_id, slot_order, correct_clue_id`,
+      [d.branchId, d.slotOrder, d.correctClueId, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: '這個分支底下已經有相同順序的槽位了，請換一個順序' });
+    }
+    throw err;
+  }
 }));
 
 router.delete('/tech-tree/slots/:id', asyncHandler(async (req, res) => {

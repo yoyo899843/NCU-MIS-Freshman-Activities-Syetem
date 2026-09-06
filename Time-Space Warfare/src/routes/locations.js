@@ -1,6 +1,7 @@
 const express = require('express');
 const playerAuth = require('../middleware/playerAuth');
 const { setLocation, getAllLocations } = require('../playerLocations');
+const { isPlausibleCampusCoord } = require('../campusBounds');
 
 const router = express.Router();
 router.use(playerAuth);
@@ -11,6 +12,12 @@ router.post('/', (req, res) => {
   const { lat, lng } = req.body || {};
   if (typeof lat !== 'number' || typeof lng !== 'number') {
     return res.status(400).json({ error: 'lat and lng must be numbers' });
+  }
+  // 伺服器端只做合理性檢查，不重複前端的精確圍籬（見 src/campusBounds.js 的說明）：
+  // 邊界附近的 GPS 飄移一律照收，但整個縣市等級的離譜座標不收，
+  // 免得地圖上出現「隊伍在 75 公里外」這種明顯錯誤的標記。
+  if (!isPlausibleCampusCoord(lat, lng)) {
+    return res.status(400).json({ error: '座標超出活動區域範圍太多，已忽略這次上傳' });
   }
   setLocation(req.player.sub, {
     displayName: req.player.displayName,
