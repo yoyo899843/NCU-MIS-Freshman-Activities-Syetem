@@ -33,13 +33,12 @@ function attachSockets(io) {
         return callback?.({ ok: false, error: 'invalid token' });
       }
 
+      // 加入房間的動作移到 playerEntered 裡面做（驗證通過之後、送出第一題之前），
+      // 否則第二個進場的人會漏掉第一題——見 pk/session.js 裡的說明。
       const result = pkSession.playerEntered(io, socket, duelId, player.sub);
       if (result.ok) {
-        // 只有真的驗證通過、屬於這場對戰的玩家才加入房間，避免驗證失敗的連線
-        // 還是被塞進房間、收到不屬於他的對戰廣播。
         socket.data.playerId = player.sub;
         socket.data.duelId = duelId;
-        socket.join(`duel:${duelId}`);
       }
       callback?.(result);
     });

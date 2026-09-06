@@ -3,10 +3,17 @@
 
 const db = require('../db');
 const { shuffleOptions } = require('../quiz/shuffle');
+const { getIO } = require('../io');
 
 const QUESTIONS_PER_DUEL = 5;
 const ANSWER_GRACE_MS = 1000; // 題目時限到了之後，多留一點緩衝時間才強制進下一題
 const DISCONNECT_FORFEIT_MS = 20 * 1000; // 斷線超過這麼久還沒重連，直接判對手獲勝、結束對戰
+
+// 開賽逾時：session 建立之後，雙方都得透過 socket 的 pk:enter 到齊，第一題才會送出
+// （見 playerEntered 的 connected.size === 2）。只有一方到齊的話，原本沒有任何計時器
+// 會推進這場對戰——host 那邊會永遠停在房號畫面、guest 永遠停在「等待對戰開始」。
+// 這裡補一個保底：時間到還沒開賽就直接取消，不留卡死的 session 跟 active 的 DB 列。
+const MATCH_START_TIMEOUT_MS = Number(process.env.PK_MATCH_START_TIMEOUT_MS) || 60 * 1000;
 
 const sessions = new Map(); // duelId -> session
 
@@ -33,11 +40,53 @@ async function createSession(duelId, hostPlayerId, guestPlayerId) {
     connected: new Set(),
     questionStartedAt: null,
     timer: null,
+    matchStartTimer: null,
     disconnectTimers: {}, // playerId -> setTimeout handle
     finished: false
   });
 
+  const matchStartTimer = setTimeout(() => {
+    cancelUnstartedDuel(duelId).catch(err => console.error('cancelUnstartedDuel error:', err));
+  }, MATCH_START_TIMEOUT_MS);
+  if (typeof matchStartTimer.unref === 'function') matchStartTimer.unref();
+  sessions.get(duelId).matchStartTimer = matchStartTimer;
+
   return questions.length;
+}
+
+// 開賽逾時還沒有雙方到齊：取消這場對戰。
+// 刻意不判任何一方輸——沒有人真的答過題，判誰輸都不合理，也不該給保護期或扣分。
+async function cancelUnstartedDuel(duelId) {
+  const session = sessions.get(duelId);
+  if (!session || session.finished || session.currentIndex >= 0) return;
+
+  session.finished = true;
+  clearMatchStartTimer(session);
+  Object.values(session.disconnectTimers).forEach(clearTimeout);
+  sessions.delete(duelId);
+
+  // createSession 是從 REST 路由呼叫的，手上沒有 io，改用共用的 getIO()
+  getIO().to(`duel:${duelId}`).emit('pk:cancelled', {
+    reason: 'match_start_timeout',
+    message: '對手一直沒有進入對戰，這場已取消（沒有計分也沒有扣分）'
+  });
+
+  try {
+    await db.query(
+      `UPDATE pk_duels SET status = 'cancelled', completed_at = now()
+       WHERE id = $1 AND status = 'active'`,
+      [duelId]
+    );
+  } catch (err) {
+    console.error('mark duel cancelled failed:', err);
+  }
+}
+
+function clearMatchStartTimer(session) {
+  if (session?.matchStartTimer) {
+    clearTimeout(session.matchStartTimer);
+    session.matchStartTimer = null;
+  }
 }
 
 function getSession(duelId) {
@@ -52,6 +101,12 @@ function playerEntered(io, socket, duelId, playerId) {
   if (playerId !== session.hostPlayerId && playerId !== session.guestPlayerId) {
     return { ok: false, error: 'player not part of this duel' };
   }
+
+  // 一定要在下面觸發 startNextQuestion 之前就加入房間。
+  // 第二個人進場的當下就會送出第一題（io.to(room).emit），這時候他自己如果還沒在
+  // 房間裡就會漏掉第一題——原本 socket.join 寫在呼叫端、playerEntered 回傳之後才執行，
+  // 剛好就是漏掉的順序。
+  socket.join(`duel:${duelId}`);
 
   // 不管是第一次連上還是斷線後重連，只要人回來了，取消原本排定的斷線判負倒數。
   if (session.disconnectTimers[playerId]) {
@@ -125,6 +180,8 @@ function startNextQuestion(io, duelId) {
     return;
   }
 
+  clearMatchStartTimer(session);   // 已經開賽，開賽逾時不用再守著
+
   const q = session.questions[session.currentIndex];
   session.questionStartedAt = Date.now();
 
@@ -133,6 +190,7 @@ function startNextQuestion(io, duelId) {
     publicQuestion(q, session.currentIndex, session.questions.length, q.time_limit_seconds)
   );
 
+  clearMatchStartTimer(session);
   if (session.timer) clearTimeout(session.timer);
   session.timer = setTimeout(() => {
     forceAnswerTimeouts(session);

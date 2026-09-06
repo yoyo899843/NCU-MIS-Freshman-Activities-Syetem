@@ -23,8 +23,10 @@
 </div>
 
 <div id="waiting" class="card" style="display:none">
-  <p>房號：<strong id="roomCodeDisplay" style="font-size:1.5rem"></strong></p>
+  <p>房號：<strong id="roomCodeDisplay" class="num" style="font-size:1.8rem"></strong></p>
   <p>把這組房號告訴對手，等待對方輸入加入...</p>
+  <p id="roomCountdown" class="hint"></p>
+  <button id="cancelRoomBtn" class="ghost">取消這個房間</button>
 </div>
 
 <div id="quiz" class="card" style="display:none">
@@ -62,14 +64,51 @@ function initPk() {
     });
   }
 
+  // ---- 進場（pk:enter） ----
+  // 房主開房的當下，伺服器只寫了 DB，還沒有 in-memory session（session 是對手
+  // 呼叫 /api/pk/join 時才建立的）。所以房主第一次 pk:enter 一定會拿到
+  // 'duel session not found'——這時候**必須重試**，不能放棄：
+  // 進場失敗的話伺服器不會把這個 socket 加進 duel room，房主就永遠不算「已到齊」，
+  // 第一題永遠不會送出，兩邊一起卡死（也收不到 pk:result）。
+  // 對手一 join、session 一建立，下一次重試就會成功，雙方到齊、第一題送出。
+  let enterRetryTimer = null;
+  function stopEnterRetry() {
+    if (enterRetryTimer) { clearTimeout(enterRetryTimer); enterRetryTimer = null; }
+  }
+  function enterDuel(duelId, statusEl) {
+    stopEnterRetry();
+    const attempt = () => {
+      socket.emit('pk:enter', { duelId, token }, ack => {
+        if (ack && ack.ok) {
+          stopEnterRetry();
+          return;
+        }
+        const err = (ack && ack.error) || '未知錯誤';
+        if (err === 'duel session not found') {
+          // 正常狀況：對手還沒加入，session 還沒生出來。安靜重試。
+          enterRetryTimer = setTimeout(attempt, 1500);
+          return;
+        }
+        // 其他錯誤（token 失效、不是這場的玩家）重試也沒用，直接顯示
+        stopEnterRetry();
+        if (statusEl) statusEl.textContent = '進入對戰失敗：' + err;
+      });
+    };
+    attempt();
+  }
+
   // 每次「連上」都會執行(包含第一次連線，以及斷線後 Socket.IO 自動重連的那次)。
   // 只要頁面還記得自己正在哪場對戰(currentDuelId 沒被清掉)，就自動重新 pk:enter 歸隊，
   // 不用玩家自己重新操作。伺服器那邊如果對戰已經在進行中，會直接補送目前題目的進度。
   socket.on('connect', () => {
     if (!currentDuelId) return;
-    socket.emit('pk:enter', { duelId: currentDuelId, token }, ack => {
-      if (!ack.ok) alert('重新加入對戰失敗：' + ack.error);
-    });
+    enterDuel(currentDuelId, document.getElementById('createResult'));
+  });
+
+  // 開賽逾時：雙方沒到齊，伺服器取消這場（不判輸、不扣分、沒有保護期）
+  socket.on('pk:cancelled', data => {
+    stopEnterRetry();
+    backToLobby((data && data.message) || '這場對戰已取消。');
   });
 
   document.getElementById('createBtn').addEventListener('click', async () => {
@@ -84,12 +123,43 @@ function initPk() {
       return;
     }
     currentDuelId = data.duelId;
-    socket.emit('pk:enter', { duelId: currentDuelId, token }, ack => {
-      if (!ack.ok) alert('加入對戰失敗：' + ack.error);
-    });
+    enterDuel(currentDuelId, el);
     hideAll();
     document.getElementById('waiting').style.display = '';
     document.getElementById('roomCodeDisplay').textContent = data.roomCode;
+    startRoomCountdown(data.expiresInMs);
+  });
+
+  // 沒人加入的房間伺服器會自動取消（見 src/pk/roomRegistry.js）。這裡跑一份同步
+  // 的倒數，時間到就把畫面收回大廳——不然玩家會一直盯著一組其實已經失效的房號。
+  let roomTimer = null;
+  function stopRoomCountdown() {
+    if (roomTimer) { clearInterval(roomTimer); roomTimer = null; }
+    document.getElementById('roomCountdown').textContent = '';
+  }
+  function backToLobby(message) {
+    stopRoomCountdown();
+    stopEnterRetry();
+    currentDuelId = null;
+    hideAll();
+    document.getElementById('lobby').style.display = '';
+    document.getElementById('createResult').textContent = message || '';
+  }
+  function startRoomCountdown(expiresInMs) {
+    const endAt = Date.now() + (expiresInMs || 30000);
+    const el = document.getElementById('roomCountdown');
+    stopRoomCountdown();
+    const paint = () => {
+      const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+      el.textContent = `${left} 秒內沒有人加入的話，這個房間會自動取消。`;
+      if (left <= 0) backToLobby('房間已逾時自動取消，請重新開房。');
+    };
+    paint();
+    roomTimer = setInterval(paint, 1000);
+  }
+
+  document.getElementById('cancelRoomBtn').addEventListener('click', () => {
+    backToLobby('已取消房間。');
   });
 
   document.getElementById('joinBtn').addEventListener('click', async () => {
@@ -108,9 +178,7 @@ function initPk() {
       return;
     }
     currentDuelId = data.duelId;
-    socket.emit('pk:enter', { duelId: currentDuelId, token }, ack => {
-      if (!ack.ok) alert('加入對戰失敗：' + ack.error);
-    });
+    enterDuel(currentDuelId, el);
     hideAll();
     document.getElementById('quiz').style.display = '';
     document.getElementById('questionContent').textContent = '等待對戰開始...';
@@ -118,6 +186,10 @@ function initPk() {
   });
 
   socket.on('pk:question', q => {
+    stopRoomCountdown();   // 對戰真的開始了，房間倒數就不用再跑
+    stopEnterRetry();
+    hideAll();
+    document.getElementById('quiz').style.display = '';
     hideAll();
     document.getElementById('quiz').style.display = '';
     document.getElementById('questionMeta').textContent = `第 ${q.questionIndex + 1} / ${q.totalQuestions} 題`;
