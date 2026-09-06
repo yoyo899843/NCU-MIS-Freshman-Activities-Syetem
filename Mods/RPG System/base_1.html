@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模板 1 探查儀終端 - 資管皇家學院數位探查儀</title>
+<!--
+  模板 1：探查儀終端（Terminal）
+  概念：整個介面就是「數位探查儀」這台機器本身——深色機殼、磷光綠字、掃描線。
+  優點：最有「手上拿著一台調查裝置」的沉浸感，夜間/室內好看，成本低（純 CSS）。
+  缺點：大太陽下手機螢幕看深色底最吃力，長文字閱讀比較累。
+-->
+<style>
+  :root {
+    --bg: #080b10;
+    --panel: #0f151d;
+    --panel-2: #131b25;
+    --line: #24313f;
+    --ink: #c8d6e5;
+    --dim: #6b7f94;
+    --green: #5ee79b;
+    --amber: #f0b849;
+    --red: #ff6b6b;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Noto Sans Mono CJK TC", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 15px; line-height: 1.7;
+    max-width: 480px; margin-inline: auto;
+    min-height: 100vh;
+  }
+  /* 掃描線：疊在最上層但不吃點擊 */
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 99;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,.18) 0 1px, transparent 1px 3px);
+  }
+
+  .device-head {
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    padding: 14px 14px 12px;
+    margin-bottom: 14px;
+  }
+  .device-head .tag {
+    font-size: 11px; letter-spacing: .22em; color: var(--dim);
+    text-transform: uppercase;
+  }
+  h1 {
+    margin: 6px 0 4px; font-size: 19px; font-weight: 700;
+    color: var(--green); letter-spacing: .04em;
+    text-shadow: 0 0 12px rgba(94,231,155,.35);
+  }
+  .who { font-size: 13px; color: var(--dim); margin: 0; }
+  .who b { color: var(--amber); font-weight: 700; }
+
+  .status {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 10px; padding: 3px 9px;
+    border: 1px solid var(--green); color: var(--green);
+    font-size: 11px; letter-spacing: .12em;
+  }
+  .status::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green); box-shadow: 0 0 8px var(--green);
+  }
+
+  .card {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    padding: 14px; margin-bottom: 14px;
+    position: relative;
+  }
+  /* 四角括號：機器面板的感覺 */
+  .card::before, .card::after {
+    content: ""; position: absolute; width: 9px; height: 9px;
+    border-color: var(--green); border-style: solid;
+  }
+  .card::before { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+  .card::after  { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+
+  .card h2 {
+    margin: 0 0 12px; font-size: 12px; font-weight: 700;
+    letter-spacing: .2em; color: var(--dim); text-transform: uppercase;
+    border-bottom: 1px dashed var(--line); padding-bottom: 8px;
+  }
+
+  .nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .nav a {
+    display: block; padding: 12px 10px;
+    border: 1px solid var(--line); background: var(--panel-2);
+    color: var(--ink); text-decoration: none; font-size: 13px;
+  }
+  .nav a::before { content: "▸ "; color: var(--green); }
+  .nav a:active { background: #1a2632; border-color: var(--green); }
+
+  label { display: block; font-size: 11px; letter-spacing: .16em; color: var(--dim); margin-bottom: 4px; }
+  input {
+    display: block; width: 100%; padding: 10px;
+    background: #060a0e; border: 1px solid var(--line);
+    color: var(--ink); font-family: var(--mono); font-size: 15px;
+    margin-bottom: 12px;
+  }
+  input:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+  input::placeholder { color: #3f5164; }
+
+  button {
+    display: block; width: 100%; padding: 11px;
+    background: var(--green); color: #04140b;
+    border: none; font-family: var(--mono); font-size: 14px; font-weight: 700;
+    letter-spacing: .12em; cursor: pointer;
+  }
+  button:active { background: #46c982; }
+  button.ghost { background: transparent; color: var(--dim); border: 1px solid var(--line); }
+
+  .error { color: var(--red); font-size: 13px; margin: 8px 0 0; }
+  .error::before { content: "! "; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-size: 11px; letter-spacing: .14em; font-weight: 400; }
+  td.n { color: var(--amber); text-align: right; }
+
+  .foot { color: var(--dim); font-size: 11px; text-align: center; letter-spacing: .1em; }
+</style>
+</head>
+<body>
+
+<div class="device-head">
+  <div class="tag">NCUMIS / FIELD UNIT</div>
+  <h1>資管皇家學院數位探查儀</h1>
+  <p class="who">目前登入學派：<b>青鸞學派</b></p>
+  <div class="status">連線正常</div>
+</div>
+
+<div class="card">
+  <h2>探查模組</h2>
+  <div class="nav">
+    <a href="#">探索導覽</a>
+    <a href="#">線索掃描</a>
+    <a href="#">線索庫</a>
+    <a href="#">權限碼兌換</a>
+    <a href="#">數位偵探</a>
+    <a href="#">最終決策</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>權限碼兌換</h2>
+  <label>權限碼</label>
+  <input placeholder="輸入 6 碼權限碼">
+  <button>解除封鎖</button>
+  <p class="error">這組權限碼你們已經兌換過了</p>
+</div>
+
+<div class="card">
+  <h2>線索庫（3）</h2>
+  <table>
+    <tr><th>編號</th><th>名稱</th><th style="text-align:right">取得</th></tr>
+    <tr><td>C-01</td><td>殘缺的門禁紀錄</td><td class="n">掃描</td></tr>
+    <tr><td>C-04</td><td>被塗改的課表</td><td class="n">權限碼</td></tr>
+    <tr><td>C-07</td><td>伺服器室監視畫面</td><td class="n">關主</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <button class="ghost">登出</button>
+</div>
+
+<p class="foot">RPG SYSTEM · 模板 1 探查儀終端</p>
+
+</body>
+</html>

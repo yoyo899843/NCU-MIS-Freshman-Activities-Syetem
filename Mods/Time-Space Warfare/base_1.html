@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模板 1 陣營對峙 - 時空戰爭</title>
+<!--
+  模板 1：陣營對峙（Faction）
+  概念：整個 UI 換上你所屬陣營的顏色——修復者=青、破壞者=紅。玩家一開 App 就知道自己是哪邊。
+  優點：陣營感最強，對「雙陣營對抗」這個核心玩法最加分；同一套 CSS 只換一個 class。
+  缺點：要維護兩套配色（都得測），截圖/文宣時比較難用單一主色。
+  ↓ 下面同時展示兩種陣營，實際上玩家只會看到自己那一種。
+-->
+<style>
+  :root {
+    --bg: #0a0e13;
+    --panel: #121820;
+    --line: #22303d;
+    --ink: #dbe6f0;
+    --dim: #7d90a3;
+    --sans: system-ui, "PingFang TC", "Noto Sans TC", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  /* 陣營主色：整個容器換 class 就換色 */
+  .repair  { --f: #2ee6c2; --f-dim: rgba(46,230,194,.14); --f-ink: #04211c; }
+  .destroy { --f: #ff4d6d; --f-dim: rgba(255,77,109,.14); --f-ink: #2a0410; }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 16px 28px;
+    background: var(--bg); color: var(--ink);
+    font-family: var(--sans); font-size: 15px; line-height: 1.65;
+    max-width: 480px; margin-inline: auto;
+  }
+
+  .banner {
+    position: relative; overflow: hidden;
+    border: 1px solid var(--line); border-left: 4px solid var(--f);
+    background: linear-gradient(100deg, var(--f-dim), transparent 60%), var(--panel);
+    padding: 16px; margin-bottom: 14px;
+  }
+  .banner .side {
+    font-size: 11px; letter-spacing: .28em; color: var(--f); text-transform: uppercase;
+  }
+  .banner h1 { margin: 6px 0 3px; font-size: 22px; font-weight: 800; letter-spacing: .02em; }
+  .banner .who { margin: 0; font-size: 13px; color: var(--dim); }
+  .banner .who b { color: var(--ink); }
+  /* 斜切裝飾 */
+  .banner::after {
+    content: ""; position: absolute; top: -30%; right: -18px;
+    width: 70px; height: 160%; background: var(--f); opacity: .09;
+    transform: skewX(-18deg);
+  }
+
+  .vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center;
+        margin-bottom: 14px; }
+  .vs .bar { height: 8px; background: var(--line); position: relative; overflow: hidden; }
+  .vs .bar i { position: absolute; inset: 0 auto 0 0; display: block; }
+  .vs .r i { background: #2ee6c2; width: 62%; }
+  .vs .d i { background: #ff4d6d; width: 38%; right: 0; left: auto; }
+  .vs .mid { font-family: var(--mono); font-size: 11px; color: var(--dim); letter-spacing: .1em; }
+
+  .card { border: 1px solid var(--line); background: var(--panel); padding: 15px; margin-bottom: 14px; }
+  .card h2 {
+    margin: 0 0 13px; font-size: 12px; letter-spacing: .18em; color: var(--dim);
+    text-transform: uppercase; border-bottom: 1px solid var(--line); padding-bottom: 9px;
+  }
+
+  .nav { display: grid; gap: 8px; }
+  .nav a {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 13px 14px; background: #0d141b; border: 1px solid var(--line);
+    border-left: 3px solid var(--f);
+    color: var(--ink); text-decoration: none; font-size: 15px; font-weight: 600;
+  }
+  .nav a span { font-size: 11px; color: var(--dim); font-weight: 400; letter-spacing: .1em; }
+  .nav a:active { background: #151f29; }
+
+  label { display: block; font-size: 11px; letter-spacing: .14em; color: var(--dim); margin-bottom: 5px; }
+  input {
+    display: block; width: 100%; padding: 12px;
+    background: #070b0f; border: 1px solid var(--line);
+    color: var(--ink); font-family: var(--mono); font-size: 18px; letter-spacing: .3em;
+    text-align: center; margin-bottom: 13px;
+  }
+  input:focus { outline: none; border-color: var(--f); }
+  input::placeholder { color: #3d4d5c; letter-spacing: .1em; }
+
+  button {
+    display: block; width: 100%; padding: 13px; border: none;
+    background: var(--f); color: var(--f-ink);
+    font-family: var(--sans); font-size: 15px; font-weight: 800; letter-spacing: .12em;
+    cursor: pointer;
+  }
+  button:active { filter: brightness(.9); }
+  button.ghost { background: transparent; color: var(--dim); border: 1px solid var(--line); font-weight: 500; }
+
+  .error { color: #ff6b6b; font-size: 13px; margin: 9px 0 0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-size: 11px; font-weight: 400; letter-spacing: .12em; }
+  td.n { font-family: var(--mono); text-align: right; }
+  td.n.r { color: #2ee6c2; } td.n.d { color: #ff4d6d; }
+
+  .foot { text-align: center; font-size: 11px; color: var(--dim); letter-spacing: .14em; margin-top: 20px; }
+  .split-note { font-size: 11px; color: var(--dim); text-align: center; margin: 22px 0 10px; letter-spacing: .1em; }
+</style>
+</head>
+<body>
+
+<!-- ===== 修復者看到的樣子 ===== -->
+<div class="repair">
+  <div class="banner">
+    <div class="side">時空修復者</div>
+    <h1>時空戰爭</h1>
+    <p class="who">隊伍 <b>第 07 小隊</b>　代號 K3F9</p>
+  </div>
+
+  <div class="vs">
+    <div class="bar r"><i></i></div>
+    <div class="mid">62 : 38</div>
+    <div class="bar d"><i></i></div>
+  </div>
+
+  <div class="card">
+    <h2>行動</h2>
+    <div class="nav">
+      <a href="#">大地圖<span>9 個交摺點</span></a>
+      <a href="#">掃碼挑戰<span>知識問答</span></a>
+      <a href="#">PK 對戰<span>可發起</span></a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>加入 PK 房間</h2>
+    <label>六碼房號</label>
+    <input placeholder="000000">
+    <button>加入對戰</button>
+    <p class="error">房號不存在或對戰已結束</p>
+  </div>
+
+  <div class="card">
+    <h2>交摺點戰況</h2>
+    <table>
+      <tr><th>交摺點</th><th style="text-align:right">修復</th><th style="text-align:right">破壞</th></tr>
+      <tr><td>資訊圖書館</td><td class="n r">128</td><td class="n d">64</td></tr>
+      <tr><td>管理學院大樓</td><td class="n r">72</td><td class="n d">96</td></tr>
+      <tr><td>大本營</td><td class="n r">40</td><td class="n d">40</td></tr>
+    </table>
+  </div>
+
+  <div class="card"><button class="ghost">登出</button></div>
+</div>
+
+<p class="split-note">— 以下是同一套 CSS 換成破壞者陣營 —</p>
+
+<!-- ===== 破壞者看到的樣子 ===== -->
+<div class="destroy">
+  <div class="banner">
+    <div class="side">時空破壞者</div>
+    <h1>時空戰爭</h1>
+    <p class="who">隊伍 <b>第 12 小隊</b>　代號 W8T2</p>
+  </div>
+
+  <div class="card">
+    <h2>行動</h2>
+    <div class="nav">
+      <a href="#">大地圖<span>9 個交摺點</span></a>
+      <a href="#">掃碼挑戰<span>知識問答</span></a>
+      <a href="#">PK 對戰<span>保護期 2:41</span></a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>加入 PK 房間</h2>
+    <label>六碼房號</label>
+    <input placeholder="000000">
+    <button>加入對戰</button>
+  </div>
+</div>
+
+<p class="foot">TIME-SPACE WARFARE · 模板 1 陣營對峙</p>
+
+</body>
+</html>

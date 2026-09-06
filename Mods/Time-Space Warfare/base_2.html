@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模板 2 作戰儀表 - 時空戰爭</title>
+<!--
+  模板 2：作戰儀表（HUD）
+  概念：軍事作戰面板——石板灰底、琥珀色數據、網格線、括號角標、等寬數字。
+  優點：同一套視覺可以直接放大做「大會集合投影 Dashboard」，手機跟大螢幕不用做兩套。
+  缺點：陣營色被統一成琥珀，敵我區分要靠標籤而不是整體配色。
+-->
+<style>
+  :root {
+    --bg: #0c1116;
+    --panel: #141b22;
+    --grid: rgba(255,176,32,.055);
+    --line: #26313c;
+    --ink: #d6e0e8;
+    --dim: #75879a;
+    --amber: #ffb020;
+    --green: #4ade80;
+    --red: #f87171;
+    --sans: system-ui, "PingFang TC", "Noto Sans TC", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px;
+    background: var(--bg);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 32px 32px;
+    color: var(--ink);
+    font-family: var(--sans); font-size: 15px; line-height: 1.6;
+    max-width: 480px; margin-inline: auto; min-height: 100vh;
+  }
+
+  .hud-top {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .18em;
+    color: var(--dim); border-bottom: 1px solid var(--line);
+    padding-bottom: 7px; margin-bottom: 14px;
+  }
+  .hud-top .live { color: var(--green); }
+
+  h1 {
+    margin: 0 0 3px; font-size: 20px; font-weight: 800; letter-spacing: .16em;
+    color: var(--amber);
+  }
+  .sub { margin: 0 0 16px; font-family: var(--mono); font-size: 11px; color: var(--dim); letter-spacing: .14em; }
+
+  /* 大比數 */
+  .score {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    border: 1px solid var(--line); background: var(--panel);
+    padding: 14px 12px; margin-bottom: 14px; text-align: center;
+  }
+  .score .lab { font-size: 10px; letter-spacing: .2em; color: var(--dim); }
+  .score .num { font-family: var(--mono); font-size: 34px; font-weight: 700; line-height: 1.1; }
+  .score .r .num { color: var(--green); }
+  .score .d .num { color: var(--red); }
+  .score .vs { font-family: var(--mono); font-size: 12px; color: var(--dim); padding: 0 10px; }
+
+  /* 括號角標的面板 */
+  .card {
+    position: relative; border: 1px solid var(--line);
+    background: var(--panel); padding: 15px; margin-bottom: 14px;
+  }
+  .card::before, .card::after {
+    content: ""; position: absolute; width: 10px; height: 10px;
+    border: solid var(--amber); opacity: .8;
+  }
+  .card::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+  .card::after { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+  .card h2 {
+    margin: 0 0 13px; font-family: var(--mono);
+    font-size: 11px; letter-spacing: .2em; color: var(--amber); text-transform: uppercase;
+  }
+  .card h2::before { content: "// "; color: var(--dim); }
+
+  .nav { display: grid; gap: 7px; }
+  .nav a {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 13px; background: #0e141a; border: 1px solid var(--line);
+    color: var(--ink); text-decoration: none; font-size: 15px;
+  }
+  .nav a .k { font-family: var(--mono); font-size: 10px; color: var(--amber); letter-spacing: .12em; }
+  .nav a:active { border-color: var(--amber); }
+
+  label { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: .2em; color: var(--dim); margin-bottom: 6px; }
+  input {
+    display: block; width: 100%; padding: 12px;
+    background: #080c10; border: 1px solid var(--line);
+    color: var(--amber); font-family: var(--mono); font-size: 20px;
+    letter-spacing: .34em; text-align: center; margin-bottom: 13px;
+  }
+  input:focus { outline: none; border-color: var(--amber); }
+  input::placeholder { color: #3a4854; }
+
+  button {
+    display: block; width: 100%; padding: 12px; border: 1px solid var(--amber);
+    background: var(--amber); color: #1a1000;
+    font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: .2em;
+    cursor: pointer;
+  }
+  button:active { background: #d9930f; }
+  button.ghost { background: transparent; color: var(--dim); border-color: var(--line); }
+
+  .error { color: var(--red); font-family: var(--mono); font-size: 12px; margin: 9px 0 0; letter-spacing: .06em; }
+  .error::before { content: "[!] "; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 4px; border-bottom: 1px solid var(--line); }
+  th { font-family: var(--mono); color: var(--dim); font-size: 10px; font-weight: 400; letter-spacing: .16em; }
+  td.n { font-family: var(--mono); text-align: right; }
+  td.n.r { color: var(--green); } td.n.d { color: var(--red); }
+  td .lead { font-size: 10px; color: var(--amber); letter-spacing: .1em; }
+
+  .foot { text-align: center; font-family: var(--mono); font-size: 10px; color: var(--dim); letter-spacing: .18em; margin-top: 20px; }
+</style>
+</head>
+<body>
+
+<div class="hud-top">
+  <span>NCUMIS // TSW</span>
+  <span class="live">● 進行中　13:42</span>
+</div>
+
+<h1>時空戰爭</h1>
+<p class="sub">UNIT 07　/　時空修復者　/　CODE K3F9</p>
+
+<div class="score">
+  <div class="r"><div class="lab">修復</div><div class="num">1284</div></div>
+  <div class="vs">VS</div>
+  <div class="d"><div class="lab">破壞</div><div class="num">0976</div></div>
+</div>
+
+<div class="card">
+  <h2>作戰選項</h2>
+  <div class="nav">
+    <a href="#">大地圖<span class="k">9 NODES</span></a>
+    <a href="#">掃碼挑戰<span class="k">SCAN</span></a>
+    <a href="#">PK 對戰<span class="k">READY</span></a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>加入 PK 房間</h2>
+  <label>ROOM CODE</label>
+  <input placeholder="000000">
+  <button>加入對戰</button>
+  <p class="error">房號不存在或對戰已結束</p>
+</div>
+
+<div class="card">
+  <h2>交摺點戰況</h2>
+  <table>
+    <tr><th>NODE</th><th style="text-align:right">修復</th><th style="text-align:right">破壞</th></tr>
+    <tr><td>資訊圖書館 <span class="lead">領先</span></td><td class="n r">128</td><td class="n d">64</td></tr>
+    <tr><td>管理學院大樓</td><td class="n r">72</td><td class="n d">96</td></tr>
+    <tr><td>大本營</td><td class="n r">40</td><td class="n d">40</td></tr>
+  </table>
+</div>
+
+<div class="card"><button class="ghost">登出</button></div>
+
+<p class="foot">TIME-SPACE WARFARE · 模板 2 作戰儀表</p>
+
+</body>
+</html>

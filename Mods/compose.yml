@@ -1,0 +1,31 @@
+# UI 模板預覽站——純靜態、唯讀掛載，只是給大家開會看設計用的，
+# 跟正式的四個系統無關（沒有 DB、沒有後端、關掉也不影響活動）。
+#
+#   docker compose up -d      啟動後開 http://<主機>:9004
+#   docker compose down       看完就可以收掉
+#
+# port 9004：9000 Portal / 9001 Time-Space Warfare / 9002 PgAdmin / 9003 RPG System 已佔用。
+services:
+  mods:
+    image: nginx:alpine
+    container_name: ncumis-mods
+    restart: unless-stopped
+    ports:
+      - "9004:80"
+    # 掛整個 Mods 資料夾（含兩個系統的子目錄）；:ro 確保容器改不到你的檔案。
+    # 改完模板存檔重整瀏覽器就會看到，不用重啟容器。
+    volumes:
+      - .:/usr/share/nginx/html:ro
+    networks:
+      - ncumis-camp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  # 跟 Portal 一樣接共用網路，之後要掛到 Cloudflare Tunnel 才方便。
+  # 若是在自己電腦上單獨跑、還沒有這個網路：docker network create ncumis-camp
+  ncumis-camp:
+    external: true

@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模板 3 霓虹檔案 - 資管皇家學院數位探查儀</title>
+<!--
+  模板 3：霓虹檔案（Neon Dossier）
+  概念：現代深色 App——玻璃卡片、紫青漸層、大圓角，六大模組做成圖示磚。
+  優點：最像「一個做好的產品」，新生第一眼最有感，元件最好複用。
+  缺點：漸層/光暈多，做起來最花時間；深底在大太陽下一樣偏吃力（比模板 1 好一點）。
+-->
+<style>
+  :root {
+    --bg: #0b0a12;
+    --card: rgba(255,255,255,.045);
+    --card-line: rgba(255,255,255,.09);
+    --ink: #e8e6f2;
+    --dim: #8e89a8;
+    --violet: #8b5cf6;
+    --cyan: #22d3ee;
+    --red: #fb7185;
+    --sans: system-ui, "PingFang TC", "Noto Sans TC", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px 28px;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px; line-height: 1.65;
+    max-width: 480px; margin-inline: auto;
+    min-height: 100vh;
+  }
+  /* 背景光暈 */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1;
+    background:
+      radial-gradient(60% 40% at 15% 0%, rgba(139,92,246,.28), transparent 70%),
+      radial-gradient(50% 35% at 95% 12%, rgba(34,211,238,.18), transparent 70%);
+  }
+
+  .head { margin-bottom: 20px; }
+  .eyebrow {
+    display: inline-block; font-size: 11px; letter-spacing: .24em;
+    color: var(--cyan); text-transform: uppercase; margin-bottom: 6px;
+  }
+  h1 {
+    margin: 0 0 10px; font-size: 24px; font-weight: 800; letter-spacing: -.01em;
+    background: linear-gradient(92deg, #fff 10%, var(--violet) 60%, var(--cyan) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .who {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 12px 5px 6px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--card-line);
+    font-size: 13px; color: var(--dim); margin: 0;
+  }
+  .who .dot {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--violet), var(--cyan));
+    display: grid; place-items: center; font-size: 11px; color: #0b0a12; font-weight: 800;
+  }
+  .who b { color: var(--ink); font-weight: 600; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-line);
+    border-radius: 16px;
+    padding: 16px; margin-bottom: 14px;
+    backdrop-filter: blur(10px);
+  }
+  .card h2 {
+    margin: 0 0 14px; font-size: 13px; font-weight: 600;
+    color: var(--dim); letter-spacing: .06em;
+  }
+
+  /* 六大模組做成磚 */
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tiles a {
+    display: block; padding: 14px 12px; border-radius: 13px;
+    background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+    color: var(--ink); text-decoration: none;
+  }
+  .tiles a:active { border-color: var(--violet); background: rgba(139,92,246,.14); }
+  .tiles .ic {
+    display: grid; place-items: center;
+    width: 30px; height: 30px; border-radius: 9px; margin-bottom: 9px;
+    background: linear-gradient(135deg, rgba(139,92,246,.5), rgba(34,211,238,.5));
+    font-size: 15px;
+  }
+  .tiles .t { display: block; font-size: 14px; font-weight: 600; }
+  .tiles .d { display: block; font-size: 11px; color: var(--dim); }
+
+  label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 6px; }
+  input {
+    display: block; width: 100%; padding: 12px 14px;
+    background: rgba(0,0,0,.3); border: 1px solid var(--card-line); border-radius: 11px;
+    color: var(--ink); font-family: var(--sans); font-size: 16px;
+    margin-bottom: 14px;
+  }
+  input:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px rgba(139,92,246,.2); }
+  input::placeholder { color: #5b5570; }
+
+  button {
+    display: block; width: 100%; padding: 13px; border: none; border-radius: 11px;
+    background: linear-gradient(92deg, var(--violet), var(--cyan));
+    color: #0b0a12; font-family: var(--sans); font-size: 15px; font-weight: 700;
+    cursor: pointer; box-shadow: 0 6px 22px rgba(139,92,246,.35);
+  }
+  button:active { filter: brightness(.92); }
+  button.ghost {
+    background: transparent; color: var(--dim);
+    border: 1px solid var(--card-line); box-shadow: none; font-weight: 500;
+  }
+
+  .error {
+    color: var(--red); font-size: 13px; margin: 10px 0 0;
+    display: flex; gap: 6px; align-items: flex-start;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 4px; border-bottom: 1px solid var(--card-line); }
+  tr:last-child td { border-bottom: 0; }
+  th { color: var(--dim); font-size: 11px; font-weight: 500; letter-spacing: .1em; }
+  td .pill {
+    float: right; font-size: 11px; padding: 2px 9px; border-radius: 999px;
+    background: rgba(34,211,238,.14); color: var(--cyan);
+  }
+
+  .foot { text-align: center; font-size: 11px; color: var(--dim); letter-spacing: .14em; margin-top: 22px; }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <span class="eyebrow">NCUMIS Camp</span>
+  <h1>資管皇家學院<br>數位探查儀</h1>
+  <p class="who"><span class="dot">青</span>目前登入 <b>青鸞學派</b></p>
+</div>
+
+<div class="card">
+  <h2>六大模組</h2>
+  <div class="tiles">
+    <a href="#"><span class="ic">◈</span><span class="t">探索導覽</span><span class="d">地圖與點位</span></a>
+    <a href="#"><span class="ic">◎</span><span class="t">線索掃描</span><span class="d">掃 QR 取得</span></a>
+    <a href="#"><span class="ic">▤</span><span class="t">線索庫</span><span class="d">已收集 3</span></a>
+    <a href="#"><span class="ic">⌘</span><span class="t">權限碼兌換</span><span class="d">輸入代碼</span></a>
+    <a href="#"><span class="ic">⌗</span><span class="t">數位偵探</span><span class="d">科技樹</span></a>
+    <a href="#"><span class="ic">✦</span><span class="t">最終決策</span><span class="d">長老投票</span></a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>權限碼兌換</h2>
+  <label>權限碼</label>
+  <input placeholder="輸入 6 碼權限碼">
+  <button>兌換</button>
+  <p class="error"><span>⚠</span><span>這組權限碼你們已經兌換過了</span></p>
+</div>
+
+<div class="card">
+  <h2>線索庫</h2>
+  <table>
+    <tr><th>編號</th><th>名稱</th></tr>
+    <tr><td>C-01</td><td>殘缺的門禁紀錄<span class="pill">掃描</span></td></tr>
+    <tr><td>C-04</td><td>被塗改的課表<span class="pill">權限碼</span></td></tr>
+    <tr><td>C-07</td><td>伺服器室監視畫面<span class="pill">關主</span></td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <button class="ghost">登出</button>
+</div>
+
+<p class="foot">RPG SYSTEM · 模板 3 霓虹檔案</p>
+
+</body>
+</html>

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模板 3 烈日行動 - 時空戰爭</title>
+<!--
+  模板 3：烈日行動（Daylight）
+  概念：淺底高對比——白/冰藍底，電光藍與烈焰橘當陣營色，字重大、按鈕大。
+  優點：白天在戶外拿手機看最清楚（這是唯一一個為「大太陽」設計的），
+        點擊目標大、適合邊走邊玩；省電考量以外幾乎沒有缺點。
+  缺點：科幻感最弱，晚上或室內投影會偏刺眼（大螢幕 Dashboard 建議另配深色）。
+-->
+<style>
+  :root {
+    --bg: #eef2f7;
+    --card: #ffffff;
+    --line: #d7dfea;
+    --ink: #101828;
+    --dim: #667085;
+    --blue: #0b63f6;
+    --orange: #ff6b1a;
+    --green: #059669;
+    --red: #d92d20;
+    --sans: system-ui, "PingFang TC", "Noto Sans TC", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 14px 28px;
+    background: var(--bg); color: var(--ink);
+    font-family: var(--sans); font-size: 16px; line-height: 1.6;
+    max-width: 480px; margin-inline: auto; min-height: 100vh;
+  }
+
+  .top {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 14px;
+  }
+  .top .live {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; color: var(--green);
+    background: #d1fae5; padding: 4px 10px; border-radius: 999px;
+  }
+  .top .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+  .top .clock { font-family: var(--mono); font-size: 13px; color: var(--dim); }
+
+  h1 { margin: 0 0 4px; font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
+  .who { margin: 0 0 16px; font-size: 14px; color: var(--dim); }
+  .who .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    background: #dbeafe; color: var(--blue); font-weight: 700; font-size: 13px;
+    margin-right: 6px;
+  }
+
+  /* 大比數：白天一眼就要看懂誰領先 */
+  .score {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;
+  }
+  .score > div {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 14px; text-align: center;
+  }
+  .score .lab { font-size: 12px; font-weight: 600; color: var(--dim); }
+  .score .num { font-size: 34px; font-weight: 800; line-height: 1.15; letter-spacing: -.02em; }
+  .score .r { border-top: 4px solid var(--blue); }
+  .score .r .num { color: var(--blue); }
+  .score .d { border-top: 4px solid var(--orange); }
+  .score .d .num { color: var(--orange); }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; margin-bottom: 14px;
+  }
+  .card h2 { margin: 0 0 13px; font-size: 14px; font-weight: 700; color: var(--dim); }
+
+  .nav { display: grid; gap: 9px; }
+  .nav a {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px; border-radius: 12px; background: #f4f7fb;
+    border: 1px solid var(--line);
+    color: var(--ink); text-decoration: none; font-size: 17px; font-weight: 700;
+  }
+  .nav a .arw { color: var(--blue); font-weight: 800; }
+  .nav a:active { background: #e6eefc; border-color: var(--blue); }
+
+  label { display: block; font-size: 13px; font-weight: 600; color: var(--dim); margin-bottom: 6px; }
+  input {
+    display: block; width: 100%; padding: 14px;
+    background: #fff; border: 2px solid var(--line); border-radius: 12px;
+    color: var(--ink); font-family: var(--mono); font-size: 24px; font-weight: 700;
+    letter-spacing: .3em; text-align: center; margin-bottom: 14px;
+  }
+  input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 4px rgba(11,99,246,.14); }
+  input::placeholder { color: #b8c2d0; }
+
+  button {
+    display: block; width: 100%; padding: 15px; border: none; border-radius: 12px;
+    background: var(--blue); color: #fff;
+    font-family: var(--sans); font-size: 17px; font-weight: 700;
+    cursor: pointer;
+  }
+  button:active { background: #0850cc; }
+  button.ghost { background: #f4f7fb; color: var(--dim); border: 1px solid var(--line); font-weight: 600; }
+
+  .error {
+    color: var(--red); font-size: 14px; font-weight: 600; margin: 10px 0 0;
+    background: #fee4e2; border-radius: 9px; padding: 9px 12px;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 11px 4px; border-bottom: 1px solid var(--line); }
+  tr:last-child td { border-bottom: 0; }
+  th { color: var(--dim); font-size: 12px; font-weight: 600; }
+  td.n { font-family: var(--mono); font-weight: 700; text-align: right; }
+  td.n.r { color: var(--blue); } td.n.d { color: var(--orange); }
+  td .lead {
+    display: inline-block; font-size: 11px; font-weight: 700; color: var(--blue);
+    background: #dbeafe; border-radius: 999px; padding: 1px 8px; margin-left: 6px;
+  }
+
+  .foot { text-align: center; font-size: 12px; color: var(--dim); margin-top: 20px; }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <span class="live">進行中</span>
+  <span class="clock">13:42</span>
+</div>
+
+<h1>時空戰爭</h1>
+<p class="who"><span class="badge">時空修復者</span>第 07 小隊 · K3F9</p>
+
+<div class="score">
+  <div class="r"><div class="lab">修復值</div><div class="num">1284</div></div>
+  <div class="d"><div class="lab">破壞值</div><div class="num">976</div></div>
+</div>
+
+<div class="card">
+  <h2>行動</h2>
+  <div class="nav">
+    <a href="#">大地圖<span class="arw">›</span></a>
+    <a href="#">掃碼挑戰<span class="arw">›</span></a>
+    <a href="#">PK 對戰<span class="arw">›</span></a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>加入 PK 房間</h2>
+  <label>六碼房號</label>
+  <input placeholder="000000">
+  <button>加入對戰</button>
+  <p class="error">房號不存在或對戰已結束</p>
+</div>
+
+<div class="card">
+  <h2>交摺點戰況</h2>
+  <table>
+    <tr><th>交摺點</th><th style="text-align:right">修復</th><th style="text-align:right">破壞</th></tr>
+    <tr><td>資訊圖書館<span class="lead">領先</span></td><td class="n r">128</td><td class="n d">64</td></tr>
+    <tr><td>管理學院大樓</td><td class="n r">72</td><td class="n d">96</td></tr>
+    <tr><td>大本營</td><td class="n r">40</td><td class="n d">40</td></tr>
+  </table>
+</div>
+
+<div class="card"><button class="ghost">登出</button></div>
+
+<p class="foot">TIME-SPACE WARFARE · 模板 3 烈日行動</p>
+
+</body>
+</html>
