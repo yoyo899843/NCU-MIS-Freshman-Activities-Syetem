@@ -19,37 +19,33 @@
     display: inline-block; width: 10px; height: 10px; border-radius: 2px;
     margin-right: 4px; vertical-align: -1px;
   }
-  .legend .sw.repair { background: #0d7550; }
-  .legend .sw.disrupt { background: #c0392b; }
-  .legend .sw.tie { background: #646c75; }
+  .legend .sw.done { background: var(--repair); }
+  .legend .sw.part { background: #3f7d63; }
+  .legend .sw.zero { background: #646c75; }
 
-  /* 交摺點標記：刻意做成方形資訊牌，跟玩家的圓點一眼就分得出來 */
+  /* 據點標記：刻意做成方形資訊牌，跟玩家的圓點一眼就分得出來 */
   .cp-marker {
     background: var(--card); border: 2px solid var(--line); border-radius: 6px;
     padding: 3px 6px; white-space: nowrap; text-align: center;
     box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 11px; line-height: 1.35;
   }
-  .cp-marker.repair { border-color: var(--repair); }
-  .cp-marker.disrupt { border-color: var(--disrupt); }
+  /* 只有「已修復完成」才點亮外框——那是第一權重真正在數的東西，
+     中途進度用長度表示就好，不需要再多一種邊框顏色搶注意力。 */
+  .cp-marker.done { border-color: var(--repair); }
   .cp-marker .cp-name { font-weight: 700; color: var(--fg); }
-  .cp-marker .cp-vals { font-variant-numeric: tabular-nums; }
-  /* 修復/破壞的比例條。底色是破壞、上面疊修復的寬度，兩段加起來就是整條。
-     min-width 是為了名字很短的交摺點——條子太短看不出比例。 */
+  /* 修復進度條。整條就是 0~100%，沒有「另一邊」——破壞是把這條往回扣，
+     不是另一個陣營的長度（見 溫馨周企劃.pdf）。 */
   .cp-marker .cp-bar {
     display: block; min-width: 76px; height: 5px; margin: 3px 0 2px;
-    border-radius: 3px; overflow: hidden; background: var(--disrupt);
+    border-radius: 3px; overflow: hidden; background: var(--line);
   }
   .cp-marker .cp-bar > i { display: block; height: 100%; background: var(--repair); }
-  .cp-marker .cp-bar.empty { background: var(--line); }
-  .cp-marker .cp-r { color: var(--repair); font-weight: 700; }
-  .cp-marker .cp-d { color: var(--disrupt); font-weight: 700; }
-  .cp-marker .cp-lead {
-    display: block; margin-top: 1px; font-size: 10px; font-weight: 700; color: #fff;
-    border-radius: 3px; padding: 0 3px;
+  .cp-marker .cp-pct { font-variant-numeric: tabular-nums; color: var(--repair); font-weight: 700; }
+  .cp-marker .cp-pct.zero { color: var(--dim); }
+  .cp-marker .cp-done {
+    display: block; margin-top: 1px; font-size: 10px; font-weight: 700;
+    color: #05231a; background: var(--repair); border-radius: 3px; padding: 0 3px;
   }
-  .cp-marker.repair .cp-lead { background: #0d7550; }
-  .cp-marker.disrupt .cp-lead { background: #c0392b; }
-  .cp-marker.tie .cp-lead { background: #646c75; }
 
   .top-bar {
     flex: none;
@@ -74,9 +70,9 @@
   <span id="checkpointStatus"></span>
   <span id="locationStatus"></span>
   <div class="legend">
-    <span><i class="sw repair"></i>修復者領先</span>
-    <span><i class="sw disrupt"></i>破壞者領先</span>
-    <span><i class="sw tie"></i>平手／未得分</span>
+    <span><i class="sw done"></i>已修復完成</span>
+    <span><i class="sw part"></i>修復中</span>
+    <span><i class="sw zero"></i>尚未修復</span>
   </div>
 </div>
 <div id="map"></div>
@@ -159,37 +155,25 @@ L.tileLayer('/tiles/{z}/{x}/{y}.png', {
 const CHECKPOINT_INTERVAL_MS = 5000;
 const checkpointMarkers = new Map(); // checkpointId -> L.Marker
 
-const LEAD_LABEL = { repair: '修復者領先', disrupt: '破壞者領先', tie: '平手' };
-
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, ch =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
 
-// 一條把「修復 vs 破壞」畫成比例的橫條。數字要看清楚得停下來讀，走在路上抬頭
-// 掃一眼只想知道「這個點現在偏哪邊、差多少」，那是長度比文字快的事。
-function checkpointBar(cp) {
-  const repair = Number(cp.repairValue) || 0;
-  const disrupt = Number(cp.disruptValue) || 0;
-  const total = repair + disrupt;
-  // 兩邊都還是 0：畫一條中立的空條，不要畫成 50/50——那看起來像「兩邊平分」，
-  // 但實際狀況是「還沒有人碰過這個點」，意思完全不一樣。
-  if (total === 0) return '<span class="cp-bar empty"></span>';
-  const pct = Math.round((repair / total) * 1000) / 10;
-  return `<span class="cp-bar"><i style="width:${pct}%"></i></span>`;
-}
-
+// 每個據點只有一條修復進度（0~100%）。破壞不是「另一邊的長度」，而是把這條往回
+// 扣——所以這裡沒有兩色比例條，就是一條填到多少的進度條。
+//
+// 百分比數字仍然寫出來，不只靠長度：大太陽下的手機螢幕、色覺差異，長度不一定看
+// 得準，而「差一次修復就滿了」跟「還差兩次」對玩家的決策完全不同。
 function checkpointIcon(cp) {
-  const lead = cp.leading || 'tie';
-  // 顏色只是輔助，領先方另外用文字寫出來——色盲/大太陽下看不出顏色也能判讀。
-  // 比例條同理，是加在數字旁邊的輔助，不是拿來取代數字或「領先」那行字的。
+  const pct = Math.max(0, Math.min(100, Number(cp.progress) || 0));
+  const done = pct >= 100;
   const html =
-    `<div class="cp-marker ${lead}">` +
+    `<div class="cp-marker ${done ? 'done' : ''}">` +
       `<span class="cp-name">${escapeHtml(cp.name)}</span>` +
-      checkpointBar(cp) +
-      `<span class="cp-vals"><span class="cp-r">修復 ${cp.repairValue}</span>` +
-      ` / <span class="cp-d">破壞 ${cp.disruptValue}</span></span>` +
-      `<span class="cp-lead">${LEAD_LABEL[lead]}</span>` +
+      `<span class="cp-bar"><i style="width:${pct}%"></i></span>` +
+      `<span class="cp-pct ${pct === 0 ? 'zero' : ''}">修復 ${pct}%</span>` +
+      (done ? '<span class="cp-done">已修復完成</span>' : '') +
     `</div>`;
   return L.divIcon({ html, className: '', iconSize: null, iconAnchor: [0, 0] });
 }

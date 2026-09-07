@@ -10,6 +10,8 @@ const { gatekeeperGuard, requireFullAdmin } = require('../middleware/gatekeeperG
 const asyncHandler = require('../middleware/asyncHandler');
 const { createLoginThrottle } = require('../loginThrottle');
 const { getIO } = require('../io');
+const { applyAction } = require('../checkpoints/progress');
+const { computeScores } = require('../scoring');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -181,7 +183,7 @@ router.get('/me', (req, res) => {
 // 清單同時給交摺點管理頁、以及題目管理畫面的「這題屬於哪個交摺點」下拉選單用。
 router.get('/checkpoints', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT id, name, map_lat, map_lng, qr_token, progress, updated_at
+    `SELECT id, name, map_lat, map_lng, progress, updated_at
      FROM checkpoints ORDER BY id`
   );
   res.json(rows.map(numericCheckpoint));
@@ -191,12 +193,6 @@ router.get('/checkpoints', asyncHandler(async (req, res) => {
 // 之後如果又加了 NUMERIC 欄位才有地方接。
 function numericCheckpoint(row) {
   return row;
-}
-
-// qr_token 是印在現場實體 QR Code 上的字串，玩家掃了就能開始挑戰，
-// 所以一定要不可猜——用亂數產生，不讓主辦自己填。
-function generateQrToken() {
-  return 'CP-' + crypto.randomBytes(12).toString('hex').toUpperCase();
 }
 
 // 回傳 { ok, value } 或 { ok: false, error }——刻意不用 throw，因為目前的
@@ -221,10 +217,10 @@ router.post('/checkpoints', asyncHandler(async (req, res) => {
   if (!lng.ok) return res.status(400).json({ error: lng.error });
 
   const { rows } = await db.query(
-    `INSERT INTO checkpoints (name, map_lat, map_lng, qr_token)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, name, map_lat, map_lng, qr_token, progress`,
-    [name.trim(), lat.value, lng.value, generateQrToken()]
+    `INSERT INTO checkpoints (name, map_lat, map_lng)
+     VALUES ($1, $2, $3)
+     RETURNING id, name, map_lat, map_lng, progress`,
+    [name.trim(), lat.value, lng.value]
   );
 
   await db.query(
@@ -250,7 +246,7 @@ router.patch('/checkpoints/:id', asyncHandler(async (req, res) => {
            map_lng = COALESCE($3, map_lng),
            updated_at = now()
      WHERE id = $4
-     RETURNING id, name, map_lat, map_lng, qr_token, progress`,
+     RETURNING id, name, map_lat, map_lng, progress`,
     [name?.trim() || null, lat.value, lng.value, req.params.id]
   );
   if (rows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
@@ -284,7 +280,7 @@ router.post('/checkpoints/:id/reset', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `UPDATE checkpoints SET progress = 0, updated_at = now()
      WHERE id = $1
-     RETURNING id, name, map_lat, map_lng, qr_token, progress`,
+     RETURNING id, name, map_lat, map_lng, progress`,
     [req.params.id]
   );
 
@@ -300,13 +296,82 @@ router.post('/checkpoints/:id/reset', asyncHandler(async (req, res) => {
   res.json(numericCheckpoint(rows[0]));
 }));
 
-// 交摺點的 QR 內容。回傳 qr_token 本身，QR 圖形由前端畫（不用多裝後端套件）。
-router.get('/checkpoints/:id/qrcode', asyncHandler(async (req, res) => {
-  const { rows } = await db.query(
-    'SELECT id, name, qr_token FROM checkpoints WHERE id = $1', [req.params.id]
+// 關主現場操作：隊伍在據點通關之後，由駐守的關主在系統輸入結果。
+//
+// 企劃書寫的就是這個流程（「關卡關主…並在隊伍過關後於系統輸入結果，確認完成
+// 組別與選擇之修復或破壞的行動」）——關卡是現場實體活動，不是 app 裡的答題，
+// 所以沒有掃碼、沒有題目，只有「哪一隊、做了什麼」。
+//
+// 關主也能操作（不是只有管理員）：這本來就是關主的工作。
+router.post('/checkpoints/:id/action', asyncHandler(async (req, res) => {
+  const { teamId, action } = req.body || {};
+  if (!['repair', 'disrupt'].includes(action)) {
+    return res.status(400).json({ error: "action 必須是 'repair' 或 'disrupt'" });
+  }
+  const tid = Number(teamId);
+  if (!Number.isInteger(tid)) return res.status(400).json({ error: 'teamId is required' });
+
+  const { rows: stateRows } = await db.query('SELECT status FROM game_state WHERE id = 1');
+  if (stateRows[0]?.status !== 'in_progress') {
+    return res.status(403).json({ error: '遊戲不在進行中，現在不能記錄關卡結果', status: stateRows[0]?.status });
+  }
+
+  // 一支隊伍一支手機，取這支隊伍的那位玩家當紀錄上的操作者。
+  const { rows: teamRows } = await db.query(
+    `SELECT t.id, t.faction, t.team_number,
+            (SELECT p.id FROM players p WHERE p.team_id = t.id ORDER BY p.id LIMIT 1) AS player_id
+     FROM teams t WHERE t.id = $1`, [tid]
   );
-  if (rows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
-  res.json(rows[0]);
+  if (teamRows.length === 0) return res.status(404).json({ error: '找不到這支隊伍' });
+  const team = teamRows[0];
+  if (!team.player_id) return res.status(409).json({ error: '這支隊伍還沒有人登入' });
+
+  let result;
+  try {
+    result = await applyAction({
+      checkpointId: Number(req.params.id),
+      playerId: team.player_id,
+      teamId: team.id,
+      faction: team.faction,
+      action
+    });
+  } catch (err) {
+    if (err.code === 'CHECKPOINT_NOT_FOUND') return res.status(404).json({ error: '找不到這個據點' });
+    throw err;
+  }
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'checkpoint_action', 'checkpoint', $2, $3, $4)`,
+    [req.admin.sub, String(req.params.id),
+     JSON.stringify({ progress: result.progressBefore }),
+     JSON.stringify({ progress: result.progressAfter, teamId: team.id, action, aligned: result.aligned })]
+  );
+
+  res.json({
+    checkpoint: result.checkpoint,
+    team: { id: team.id, teamNumber: team.team_number },
+    action,
+    aligned: result.aligned,
+    progressBefore: result.progressBefore,
+    progressAfter: result.progressAfter
+  });
+}));
+
+// 目前所有隊伍（關主操作頁的下拉選單、以及積分板要用）。
+// 各隊積分（六級權重明細＋名次）。大螢幕與後台都用這一支。
+// 不需要登入的版本另外掛在 app.js 上（大螢幕沒有帳號）。
+router.get('/scores', asyncHandler(async (req, res) => {
+  res.json(await computeScores());
+}));
+
+router.get('/teams', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT t.id, t.faction, t.team_number, t.pk_points,
+            (SELECT p.display_name FROM players p WHERE p.team_id = t.id ORDER BY p.id LIMIT 1) AS name
+     FROM teams t ORDER BY t.id`
+  );
+  res.json(rows);
 }));
 
 const QUESTION_COLUMNS = `
@@ -771,7 +836,7 @@ router.post('/overrides/progress', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `UPDATE checkpoints SET progress = $1, updated_at = now()
      WHERE id = $2
-     RETURNING id, name, map_lat, map_lng, qr_token, progress`,
+     RETURNING id, name, map_lat, map_lng, progress`,
     [value, checkpointId]
   );
 

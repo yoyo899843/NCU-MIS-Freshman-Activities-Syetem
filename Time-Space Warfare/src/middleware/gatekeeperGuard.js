@@ -1,14 +1,14 @@
 // 管理端的第二層權限：adminAuth 只負責「這是不是一張管理端的 token」，
 // 這一層才負責「這個人是管理員還是關主、能不能做這個操作」。
 //
-// 這個系統的關主目前只有唯讀權限——交摺點掃碼答題那條主線（routes/checkpoints.js）
-// 還是 501 stub，schema 裡也沒有「某支隊伍在某個交摺點的進度」這種東西，
-// 所以還沒有「幫隊伍標記關卡完成」可以做；等交摺點玩法做出來之後，再比照
-// RPG System 的做法在下面開白名單。
-//
 // 政策刻意寫成「預設擋下、明確列出可以做的」：之後新增任何寫入型 API，
 // 關主預設就是不能碰，要開放得回來這裡加一筆（fail-closed）。
-const GATEKEEPER_ALLOWED_WRITES = [];
+const GATEKEEPER_ALLOWED_WRITES = [
+  // 關主駐守據點、在隊伍過關後輸入結果（哪一隊、修復還是破壞）。這就是關主
+  // 在現場的本職工作，見 溫馨周企劃.pdf「人員編制與角色」。
+  // 只開這一條：據點的新增/刪除/改座標、手動覆寫進度都仍然只有管理員能做。
+  /^\/checkpoints\/\d+\/action$/
+];
 
 function gatekeeperGuard(req, res, next) {
   // adminRole 沒帶＝這張 token 是加上權限分級之前簽出來的，當成管理員處理，

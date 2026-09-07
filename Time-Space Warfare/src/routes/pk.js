@@ -1,5 +1,4 @@
 const express = require('express');
-const crypto = require('crypto');
 const db = require('../db');
 const playerAuth = require('../middleware/playerAuth');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -21,7 +20,7 @@ const requireGameInProgress = asyncHandler(async (req, res, next) => {
   next();
 });
 
-// 發起 PK：開房，產生 6 碼房號 + qr_token。
+// 發起 PK：開房，產生 6 碼房號。對手用房號加入。
 router.post('/create', requireGameInProgress, asyncHandler(async (req, res) => {
   const hostPlayerId = req.player.sub;
 
@@ -42,12 +41,11 @@ router.post('/create', requireGameInProgress, asyncHandler(async (req, res) => {
   }
 
   const roomCode = roomRegistry.generateRoomCode();
-  const qrToken = crypto.randomBytes(16).toString('hex');
 
   const { rows } = await db.query(
-    `INSERT INTO pk_duels (room_code, qr_token, host_player_id, status)
-     VALUES ($1, $2, $3, 'waiting') RETURNING id`,
-    [roomCode, qrToken, hostPlayerId]
+    `INSERT INTO pk_duels (room_code, host_player_id, status)
+     VALUES ($1, $2, 'waiting') RETURNING id`,
+    [roomCode, hostPlayerId]
   );
   const duelId = rows[0].id;
 
@@ -55,16 +53,16 @@ router.post('/create', requireGameInProgress, asyncHandler(async (req, res) => {
   console.log(`[pk ${duelId.slice(0, 8)}] 開房 roomCode=${roomCode} host=${hostPlayerId} 房間逾時=${roomRegistry.ROOM_TIMEOUT_MS}ms`);
 
   // 一併回傳房間有效秒數，前端顯示倒數用（見 public/pk.html）
-  res.json({ duelId, roomCode, qrToken, expiresInMs: roomRegistry.ROOM_TIMEOUT_MS });
+  res.json({ duelId, roomCode, expiresInMs: roomRegistry.ROOM_TIMEOUT_MS });
 }));
 
-// 加入 PK：用房號或 qr_token 找到對應的 duel，配對成功後兩人開始同步作答。
+// 加入 PK：用房號找到對應的 duel，配對成功後兩人開始同步作答。
 router.post('/join', requireGameInProgress, asyncHandler(async (req, res) => {
   const guestPlayerId = req.player.sub;
-  const { roomCode, qrToken } = req.body || {};
+  const { roomCode } = req.body || {};
 
-  if (!roomCode && !qrToken) {
-    return res.status(400).json({ error: 'roomCode or qrToken is required' });
+  if (!roomCode) {
+    return res.status(400).json({ error: 'roomCode is required' });
   }
 
   const { rows: teamRows } = await db.query(
@@ -83,16 +81,12 @@ router.post('/join', requireGameInProgress, asyncHandler(async (req, res) => {
     });
   }
 
-  let duelId = roomCode ? roomRegistry.lookup(roomCode) : null;
+  const duelId = roomRegistry.lookup(roomCode);
 
   let duel;
   if (duelId) {
     const { rows } = await db.query('SELECT * FROM pk_duels WHERE id = $1', [duelId]);
     duel = rows[0];
-  } else if (qrToken) {
-    const { rows } = await db.query('SELECT * FROM pk_duels WHERE qr_token = $1', [qrToken]);
-    duel = rows[0];
-    duelId = duel?.id;
   }
 
   if (!duel) {
@@ -105,9 +99,8 @@ router.post('/join', requireGameInProgress, asyncHandler(async (req, res) => {
     return res.status(409).json({ error: 'duel is not open for joining' });
   }
 
-  // 還停在 waiting、但已經超過有效期限的：可能是服務重啟後殘留的（記憶體裡的
-  // 逾時計時器跟著沒了），也可能是用 qr_token 繞過房號表找到的舊房間。
-  // 這裡補一次判定，順手標記成 cancelled，避免它一直被加入。
+  // 還停在 waiting、但已經超過有效期限的：服務重啟後殘留的房間（記憶體裡的
+  // 逾時計時器跟著沒了）。這裡補一次判定，順手標記成 cancelled，避免它一直被加入。
   if (Date.now() - new Date(duel.created_at).getTime() > roomRegistry.ROOM_TIMEOUT_MS) {
     await db.query(
       `UPDATE pk_duels SET status = 'cancelled' WHERE id = $1 AND status = 'waiting'`,

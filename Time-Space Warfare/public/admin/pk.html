@@ -17,7 +17,6 @@
   .tag-active { background: #2a7d2a; color:#fff; }
   .tag-completed { background: #555; color:#fff; }
   .tag-cancelled { background: #7a4b00; color:#fff; }
-  .cancelled { text-decoration: line-through; color: var(--dim); }
   table button { width: auto; padding: 4px 8px; }
   .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 0 0; }
   .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -91,9 +90,7 @@
         <th>對戰雙方</th>
         <th>狀態</th>
         <th>勝負</th>
-        <th>扣分懲罰</th>
         <th>建立時間</th>
-        <th></th>
       </tr>
     </thead>
     <tbody id="duelsBody"></tbody>
@@ -298,22 +295,6 @@ function renderResult(d) {
   return `勝：${escapeHtml(nameOf(d.winner_player_id))}　敗：${escapeHtml(nameOf(d.loser_player_id))}`;
 }
 
-function renderPenalty(d) {
-  if (!d.penalty_checkpoint_attempt_id || Number(d.penalty_amount) <= 0) return '無';
-  const cancelledClass = d.penalty_cancelled_at ? 'cancelled' : '';
-  const text = `<span class="${cancelledClass}">${escapeHtml(d.checkpoint_name || '?')} -${d.penalty_amount}</span>`;
-  return d.penalty_cancelled_at ? `${text}（已取消）` : text;
-}
-
-function renderActions(d) {
-  const canCancel = d.status === 'completed' &&
-    d.penalty_checkpoint_attempt_id &&
-    Number(d.penalty_amount) > 0 &&
-    !d.penalty_cancelled_at;
-  if (!canCancel) return '';
-  return `<button onclick="cancelPenalty('${d.id}')">取消扣分</button>`;
-}
-
 async function loadDuels() {
   const res = await api('/pk-duels');
   const duels = await res.json();
@@ -327,23 +308,10 @@ async function loadDuels() {
       </td>
       <td><span class="tag tag-${d.status}">${statusLabel(d.status)}</span></td>
       <td>${renderResult(d)}</td>
-      <td>${renderPenalty(d)}</td>
       <td>${new Date(d.created_at).toLocaleString()}</td>
-      <td>${renderActions(d)}</td>
     </tr>
-  `).join('') || '<tr><td colspan="7">目前沒有任何 PK 對戰紀錄</td></tr>';
+  `).join('') || '<tr><td colspan="5">目前沒有任何 PK 對戰紀錄</td></tr>';
 }
-
-window.cancelPenalty = async function (duelId) {
-  if (!confirm('確定要取消這場對戰的扣分懲罰嗎？分數會加回對應的交摺點。')) return;
-  const res = await api(`/overrides/pk/${duelId}/cancel-penalty`, { method: 'POST' });
-  const data = await res.json();
-  if (!res.ok) {
-    alert(data.error || `失敗 (${res.status})`);
-    return;
-  }
-  await loadDuels();
-};
 
 document.getElementById('refreshBtn').addEventListener('click', loadDuels);
 

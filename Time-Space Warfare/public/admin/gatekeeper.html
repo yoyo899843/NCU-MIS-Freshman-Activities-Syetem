@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>關主現場操作 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 640px; }
+  .prog { height: 12px; border-radius: 6px; overflow: hidden; background: var(--line); margin: 6px 0; }
+  .prog > i { display: block; height: 100%; background: var(--repair); transition: width .3s ease; }
+  .cp-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 0; border-bottom: 1px solid var(--line);
+  }
+  .cp-row:last-child { border-bottom: none; }
+  .cp-row .nm { flex: 1; font-weight: 700; }
+  .cp-row .pct { font-variant-numeric: tabular-nums; color: var(--repair); font-weight: 700; min-width: 4em; text-align: right; }
+  .cp-row .pct.zero { color: var(--dim); }
+  .cp-row button { width: auto; padding: 8px 14px; margin: 0; }
+  .act-repair { background: var(--repair); color: #05231a; }
+  .act-disrupt { background: var(--disrupt); color: #2b0006; }
+  .picked { border: 2px solid var(--accent); border-radius: 6px; padding: 8px; }
+  .log { font-size: 0.85rem; color: var(--dim); margin-top: 8px; white-space: pre-line; }
+</style>
+</head>
+<body>
+<h1>關主現場操作</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <p class="hint">隊伍在你駐守的據點通關之後，在這裡記錄「哪一隊、選了修復還是破壞」。系統只認這筆記錄——玩家手機上沒有這個操作。</p>
+  <label for="teamSel">通關的隊伍</label>
+  <select id="teamSel"></select>
+  <p id="teamNote" class="hint"></p>
+</div>
+
+<div class="card">
+  <h3>選擇據點與動作</h3>
+  <p id="stateWarn" class="error"></p>
+  <div id="cpList"></div>
+  <p id="result" class="log"></p>
+</div>
+
+<script src="../authFetch.js"></script>
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+const $ = id => document.getElementById(id);
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+let checkpoints = [];
+
+async function loadTeams() {
+  const res = await api('/teams');
+  const teams = await res.json();
+  const sel = $('teamSel');
+  if (teams.length === 0) {
+    sel.innerHTML = '<option value="">（還沒有任何隊伍登入）</option>';
+    return;
+  }
+  // 刻意不顯示陣營：關主不需要知道誰是內鬼，畫面上寫出來只會在現場走光。
+  sel.innerHTML = teams.map(t =>
+    `<option value="${t.id}">#${t.team_number}　${escapeHtml(t.name || '(未命名)')}</option>`
+  ).join('');
+}
+
+async function loadCheckpoints() {
+  const res = await api('/checkpoints');
+  if (!res.ok) {
+    $('cpList').innerHTML = '<p class="error">無法載入據點清單</p>';
+    return;
+  }
+  checkpoints = await res.json();
+  render();
+}
+
+function render() {
+  $('cpList').innerHTML = checkpoints.map(cp => {
+    const pct = Math.max(0, Math.min(100, Number(cp.progress) || 0));
+    return `
+      <div>
+        <div class="cp-row">
+          <span class="nm">${escapeHtml(cp.name)}</span>
+          <span class="pct ${pct === 0 ? 'zero' : ''}">${pct}%</span>
+          <button class="act-repair" onclick="record(${cp.id}, 'repair')">修復</button>
+          <button class="act-disrupt" onclick="record(${cp.id}, 'disrupt')">破壞</button>
+        </div>
+        <div class="prog"><i style="width:${pct}%"></i></div>
+      </div>`;
+  }).join('') || '<p class="hint">目前沒有任何據點。</p>';
+}
+
+window.record = async function (checkpointId, action) {
+  const teamId = $('teamSel').value;
+  if (!teamId) { $('result').textContent = '請先選擇通關的隊伍。'; return; }
+
+  const cp = checkpoints.find(c => c.id === checkpointId);
+  const label = action === 'repair' ? '修復' : '破壞';
+  if (!confirm(`確定要記錄：${$('teamSel').selectedOptions[0].textContent.trim()}　在「${cp.name}」執行${label}？`)) return;
+
+  const res = await api(`/checkpoints/${checkpointId}/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ teamId: Number(teamId), action })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    $('result').textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+
+  // 直接用回傳值更新本地那一筆，不重新拉整份清單——現場關主連按的節奏很快，
+  // 每次都等一次往返會讓畫面卡一下。
+  const idx = checkpoints.findIndex(c => c.id === checkpointId);
+  if (idx >= 0) checkpoints[idx].progress = data.checkpoint.progress;
+  render();
+
+  const unchanged = data.progressBefore === data.progressAfter;
+  $('result').textContent =
+    `已記錄：${cp.name} ${label}　${data.progressBefore}% → ${data.progressAfter}%` +
+    (unchanged ? `（已經${action === 'repair' ? '滿格' : '見底'}，這次沒有變化）` : '');
+};
+
+async function loadState() {
+  const res = await api('/game/state');
+  if (!res.ok) return; // 關主拿得到，拿不到就不擋畫面
+  const state = await res.json();
+  $('stateWarn').textContent = state.status === 'in_progress'
+    ? '' : '遊戲目前不在進行中，記錄會被伺服器擋下。';
+}
+
+(async () => {
+  await loadState();
+  await loadTeams();
+  await loadCheckpoints();
+  // 別的關主也在記錄，定期把進度拉新，不然畫面會停在自己最後一次操作的狀態
+  setInterval(loadCheckpoints, 10000);
+})();
+</script>
+</body>
+</html>

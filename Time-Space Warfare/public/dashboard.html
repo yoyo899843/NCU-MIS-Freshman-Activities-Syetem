@@ -36,37 +36,75 @@
   .top .clock.overtime { color: var(--accent); }
   @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
 
-  /* --- 兩陣營總分 --- */
-  .totals { padding: 2.5vh 3vw 1.5vh; }
-  .totals .row { display: flex; align-items: flex-end; gap: 2vw; }
-  .totals .side { flex: 1; }
-  .totals .side.d { text-align: right; }
-  .totals .fac { font-size: 2.6vh; font-weight: 700; letter-spacing: .08em; }
+  /* --- 全場修復狀況 --- */
+  .totals { padding: 2.5vh 3vw 1.5vh; text-align: center; }
+  .totals .headline { font-size: 2.6vh; font-weight: 700; letter-spacing: .08em; color: var(--dim); }
   .totals .num {
     font-size: 13vh; font-weight: 700; line-height: .95;
-    font-variant-numeric: tabular-nums;
+    font-variant-numeric: tabular-nums; color: var(--repair);
   }
-  .totals .r .fac, .totals .r .num { color: var(--repair); }
-  .totals .d .fac, .totals .d .num { color: var(--disrupt); }
-  .totals .vs { font-size: 3vh; color: var(--dim); padding-bottom: 2vh; }
+  .totals .num .of { font-size: 5vh; color: var(--dim); }
+  .totals .unit { font-size: 3vh; color: var(--dim); }
 
   .totalbar {
     margin-top: 1.6vh; height: 2.4vh; border-radius: 1.2vh; overflow: hidden;
-    background: var(--disrupt); display: flex;
+    background: var(--line);
   }
   .totalbar > i { display: block; height: 100%; background: var(--repair); }
-  .totalbar.empty { background: var(--line); }
   .lead-line { margin-top: 1vh; font-size: 2.2vh; font-weight: 700; text-align: center; }
   .lead-line.repair { color: var(--repair); }
   .lead-line.disrupt { color: var(--disrupt); }
   .lead-line.tie { color: var(--dim); }
 
-  /* --- 各交摺點 --- */
+  /* 下半部左右分欄：左邊各據點、右邊各隊積分 */
+  .lower { flex: 1; min-height: 0; display: flex; gap: 1.5vw; padding: 1vh 3vw 2vh; }
+  .lower > section { min-width: 0; display: flex; flex-direction: column; }
+  .lower .col-cps { flex: 3; }
+  .lower .col-rank { flex: 2; }
+  .col-title {
+    font-size: 2vh; font-weight: 700; color: var(--dim);
+    letter-spacing: .1em; margin-bottom: .8vh; flex: none;
+  }
+
+  /* --- 各隊積分 --- */
+  /* 每列壓成一行、並且允許排成兩欄。隊伍數是會變的（後台可調），單欄的話十隊
+     就已經頂到底、再多就被裁掉——投影畫面被裁掉的那幾隊等於不存在。 */
+  .rank {
+    flex: 1; min-height: 0; overflow: hidden;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(16vw, 1fr));
+    gap: 0 1.2vw; align-content: start;
+  }
+  .rank .row {
+    display: flex; align-items: baseline; gap: .6vw;
+    padding: .55vh .6vw; border-bottom: 1px solid var(--line);
+  }
+  .rank .row.top { background: rgba(95, 211, 154, .08); }
+  .rank .no {
+    font-size: 2vh; font-weight: 700; font-variant-numeric: tabular-nums;
+    color: var(--dim); min-width: 1.8em; text-align: right;
+  }
+  .rank .row.top .no { color: var(--accent); }
+  /* 隊名給保底寬度：明細那串（動作/PK/成就）是 nowrap，不設下限的話成就多的
+     隊伍反而會把自己的隊名擠成一個字，那是最需要看清楚的那一列。 */
+  .rank .nm {
+    flex: 1 1 auto; min-width: 5em; font-size: 2vh; font-weight: 700; color: var(--fg);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .rank .sub {
+    flex: 0 1 auto; min-width: 0; font-size: 1.4vh; color: var(--dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .rank .pts {
+    font-size: 2.4vh; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--repair);
+    min-width: 3.4em; text-align: right;
+  }
+  .rank-note { flex: none; font-size: 1.4vh; color: var(--dim); margin-top: .6vh; }
+
+  /* --- 各據點 --- */
   .cps {
     flex: 1; min-height: 0; overflow: hidden;
-    padding: 1vh 3vw 2vh;
     display: grid; gap: 1.2vh 1.2vw;
-    grid-template-columns: repeat(auto-fit, minmax(15vw, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(11vw, 1fr));
     /* 交摺點通常只有幾個到十幾個，靠上排會在畫面下半留一大片空白，投影出來很空。
        置中排版在少量時看起來才對；以 1080p 估算一列約 9vh，這塊約 60vh 放得下
        六列、也就是三十個左右的交摺點，正常規模不會被裁掉。 */
@@ -76,20 +114,18 @@
     background: var(--card); border: 1px solid var(--line);
     border-left-width: .5vw; border-radius: 6px; padding: 1vh 1vw;
   }
-  .cp.repair { border-left-color: var(--repair); }
-  .cp.disrupt { border-left-color: var(--disrupt); }
-  .cp.tie { border-left-color: var(--line); }
+  .cp.done { border-left-color: var(--repair); }
+  .cp.part { border-left-color: #3f7d63; }
+  .cp.zero { border-left-color: var(--line); }
   .cp .nm {
     font-size: 2.1vh; font-weight: 700; color: var(--fg);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .cp .bar { margin: .8vh 0 .6vh; height: 1.1vh; border-radius: .6vh; overflow: hidden; background: var(--disrupt); }
+  .cp .bar { margin: .8vh 0 .6vh; height: 1.1vh; border-radius: .6vh; overflow: hidden; background: var(--line); }
   .cp .bar > i { display: block; height: 100%; background: var(--repair); }
-  .cp .bar.empty { background: var(--line); }
-  .cp .vals { font-size: 1.9vh; font-variant-numeric: tabular-nums; }
-  .cp .vals .r { color: var(--repair); font-weight: 700; }
-  .cp .vals .d { color: var(--disrupt); font-weight: 700; }
-  .cp .vals .sep { color: var(--dim); }
+  .cp .vals { font-size: 1.9vh; font-variant-numeric: tabular-nums; color: var(--repair); font-weight: 700; }
+  .cp .vals.zero { color: var(--dim); }
+  .cp .vals .done { color: var(--repair); }
 
   .empty-note { grid-column: 1 / -1; text-align: center; color: var(--dim); font-size: 2.2vh; padding: 4vh 0; }
 
@@ -132,28 +168,30 @@
 </div>
 
 <div class="totals">
-  <div class="row">
-    <div class="side r">
-      <div class="fac">時空修復者</div>
-      <div class="num" id="repairTotal">0</div>
-    </div>
-    <div class="vs">VS</div>
-    <div class="side d">
-      <div class="fac">時空破壞者</div>
-      <div class="num" id="disruptTotal">0</div>
-    </div>
-  </div>
-  <div class="totalbar empty" id="totalBar"><i style="width:0%"></i></div>
-  <div class="lead-line tie" id="leadLine">尚未有人得分</div>
+  <div class="headline">已修復完成的據點</div>
+  <div class="num"><span id="doneCount">0</span><span class="of"> / <span id="totalCount">0</span></span></div>
+  <div class="unit">全場平均修復進度 <span id="avgProgress">0%</span></div>
+  <div class="totalbar" id="totalBar"><i style="width:0%"></i></div>
+  <div class="lead-line tie" id="leadLine">尚未開始修復</div>
 </div>
 
-<div class="cps" id="cps"></div>
+<div class="lower">
+  <section class="col-cps">
+    <div class="col-title">各據點修復進度</div>
+    <div class="cps" id="cps"></div>
+  </section>
+  <section class="col-rank">
+    <div class="col-title">各隊積分</div>
+    <div class="rank" id="rank"></div>
+    <div class="rank-note" id="rankNote"></div>
+  </section>
+</div>
 
 <div class="final" id="finalScreen" style="display:none">
   <div class="kicker">最終結算</div>
   <div class="winner" id="finalWinner"></div>
   <div class="score">
-    <span class="r" id="finalRepair">0</span><span class="sep">：</span><span class="d" id="finalDisrupt">0</span>
+    <span class="r" id="finalRepair">0</span><span class="sep">已完成　未完成</span><span class="d" id="finalDisrupt">0</span>
   </div>
   <div class="sub" id="finalSub"></div>
 </div>
@@ -175,14 +213,15 @@ function serverNow() { return Date.now() + clockOffsetMs; }
 
 let gameState = null;
 let checkpoints = [];
+let scores = null;
 
 // 連線斷掉時「畫面停在最後一次成功的資料」而不是清空——投影到一半整片變空白
 // 比顯示幾秒前的舊分數糟糕得多。兩支輪詢各自記錄，任一支掛掉就顯示提示。
-const failing = { state: false, checkpoints: false };
+const failing = { state: false, checkpoints: false, scores: false };
 function setFailing(key, isFailing) {
   failing[key] = isFailing;
   document.getElementById('offline').style.display =
-    (failing.state || failing.checkpoints) ? '' : 'none';
+    (failing.state || failing.checkpoints || failing.scores) ? '' : 'none';
 }
 
 /* ---------------- 倒數 ---------------- */
@@ -242,76 +281,92 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// 跟大地圖的交摺點標記同一套語言：底色是破壞、疊上去的寬度是修復。
-// 兩邊都 0 畫成中立的空條，不要畫 50/50——那看起來像平分，實際是還沒人碰過。
-function barHtml(repair, disrupt, cls) {
-  const total = repair + disrupt;
-  if (total === 0) return `<div class="${cls} empty"></div>`;
-  const pct = Math.round((repair / total) * 1000) / 10;
-  return `<div class="${cls}"><i style="width:${pct}%"></i></div>`;
-}
-
-function totals() {
-  return checkpoints.reduce((acc, cp) => {
-    acc.repair += Number(cp.repairValue) || 0;
-    acc.disrupt += Number(cp.disruptValue) || 0;
-    return acc;
-  }, { repair: 0, disrupt: 0 });
-}
-
-// 分數是 NUMERIC，可能有小數。整數就不要硬顯示 .0，有小數才留一位。
-function fmtScore(n) {
-  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+// 全場修復狀況。企劃書的第一權重是比「已修復完成（100%）的據點數」對「未修復
+// 完成的據點數」，所以主要數字就是那個；平均進度是輔助，讓人看得出離下一個
+// 完成還有多遠。
+function summary() {
+  const total = checkpoints.length;
+  const done = checkpoints.filter(c => (Number(c.progress) || 0) >= 100).length;
+  const sum = checkpoints.reduce((n, c) => n + (Number(c.progress) || 0), 0);
+  return { total, done, notDone: total - done, avg: total ? sum / total : 0 };
 }
 
 function renderTotals() {
-  const { repair, disrupt } = totals();
-  document.getElementById('repairTotal').textContent = fmtScore(repair);
-  document.getElementById('disruptTotal').textContent = fmtScore(disrupt);
-
-  const bar = document.getElementById('totalBar');
-  const total = repair + disrupt;
-  if (total === 0) {
-    bar.className = 'totalbar empty';
-    bar.firstElementChild.style.width = '0%';
-  } else {
-    bar.className = 'totalbar';
-    bar.firstElementChild.style.width = (repair / total) * 100 + '%';
-  }
+  const { total, done, notDone, avg } = summary();
+  document.getElementById('doneCount').textContent = done;
+  document.getElementById('totalCount').textContent = total;
+  document.getElementById('avgProgress').textContent = Math.round(avg) + '%';
+  document.getElementById('totalBar').firstElementChild.style.width = avg + '%';
 
   const lead = document.getElementById('leadLine');
   if (total === 0) {
     lead.className = 'lead-line tie';
-    lead.textContent = '尚未有人得分';
-  } else if (repair > disrupt) {
+    lead.textContent = '目前沒有任何據點';
+  } else if (done > notDone) {
     lead.className = 'lead-line repair';
-    lead.textContent = `時空修復者領先 ${fmtScore(repair - disrupt)} 分`;
-  } else if (disrupt > repair) {
+    lead.textContent = `已修復完成 ${done} 個，多於未完成的 ${notDone} 個——目前由時空保衛隊領先`;
+  } else if (notDone > done) {
     lead.className = 'lead-line disrupt';
-    lead.textContent = `時空破壞者領先 ${fmtScore(disrupt - repair)} 分`;
+    lead.textContent = `未修復完成 ${notDone} 個，多於已完成的 ${done} 個——目前由黑暗潛伏者領先`;
   } else {
     lead.className = 'lead-line tie';
-    lead.textContent = '雙方平手';
+    lead.textContent = `已完成 ${done} 個、未完成 ${notDone} 個，雙方持平`;
   }
 }
 
 function renderCheckpoints() {
   const el = document.getElementById('cps');
   if (checkpoints.length === 0) {
-    el.innerHTML = '<div class="empty-note">目前沒有任何交摺點</div>';
+    el.innerHTML = '<div class="empty-note">目前沒有任何據點</div>';
     return;
   }
   el.innerHTML = checkpoints.map(cp => {
-    const r = Number(cp.repairValue) || 0;
-    const d = Number(cp.disruptValue) || 0;
-    const lead = cp.leading || 'tie';
-    return `<div class="cp ${lead}">` +
+    const pct = Math.max(0, Math.min(100, Number(cp.progress) || 0));
+    const state = pct >= 100 ? 'done' : pct > 0 ? 'part' : 'zero';
+    return `<div class="cp ${state}">` +
       `<div class="nm">${escapeHtml(cp.name)}</div>` +
-      barHtml(r, d, 'bar') +
-      `<div class="vals"><span class="r">${fmtScore(r)}</span>` +
-      `<span class="sep"> / </span><span class="d">${fmtScore(d)}</span></div>` +
+      `<div class="bar"><i style="width:${pct}%"></i></div>` +
+      `<div class="vals ${pct === 0 ? 'zero' : ''}">` +
+        (pct >= 100 ? '<span class="done">已修復完成</span>' : `修復 ${pct}%`) +
+      `</div>` +
     `</div>`;
   }).join('');
+}
+
+/* ---------------- 各隊積分 ---------------- */
+
+// 名次、隊名、總分。六級權重的明細不逐項列出——投影畫面遠遠看，一行塞六個數字
+// 誰也讀不到；真的要查明細去後台看。這裡只在副標帶出最有感的兩項（符合陣營的
+// 動作次數、PK 積分），其餘由總分反映。
+function renderRank() {
+  const el = document.getElementById('rank');
+  if (!scores || scores.teams.length === 0) {
+    el.innerHTML = '<div class="rank-note">還沒有任何隊伍</div>';
+    document.getElementById('rankNote').textContent = '';
+    return;
+  }
+  el.innerHTML = scores.teams.map(t => `
+    <div class="row${t.rank === 1 ? ' top' : ''}">
+      <span class="no">${t.rank}</span>
+      <span class="nm">${escapeHtml(t.name || '#' + t.teamNumber)}</span>
+      <span class="sub">動作 ${t.detail.alignedCount}` +
+        (t.detail.pkPoints ? `　PK ${t.detail.pkPoints}` : '') +
+        (t.detail.achievements.length ? `　成就 ${t.detail.achievements.length}` : '') +
+      `</span>
+      <span class="pts">${t.total}</span>
+    </div>
+  `).join('');
+
+  // 還沒接資料來源的權重要講出來，否則現場會以為分數算錯了。
+  document.getElementById('rankNote').textContent =
+    scores.pending && scores.pending.length ? scores.pending.join('、') : '';
+}
+
+function loadScores() {
+  return fetch('/api/scores')
+    .then(res => (res.ok ? res.json() : Promise.reject(res.status)))
+    .then(data => { scores = data; renderRank(); setFailing('scores', false); })
+    .catch(() => setFailing('scores', true));
 }
 
 /* ---------------- 結算畫面 ---------------- */
@@ -322,22 +377,27 @@ function renderFinal() {
     screen.style.display = 'none';
     return;
   }
-  const { repair, disrupt } = totals();
+  const { total, done, notDone } = summary();
   const winner = document.getElementById('finalWinner');
-  if (repair > disrupt) {
+  // 第一權重：已修復完成的據點數 > 未修復完成的 → 好人陣營獲勝，反之內鬼陣營獲勝。
+  if (done > notDone) {
     winner.className = 'winner repair';
-    winner.textContent = '時空修復者 獲勝';
-  } else if (disrupt > repair) {
+    winner.textContent = '時空保衛隊 獲勝';
+  } else if (notDone > done) {
     winner.className = 'winner disrupt';
-    winner.textContent = '時空破壞者 獲勝';
+    winner.textContent = '黑暗潛伏者 獲勝';
   } else {
     winner.className = 'winner tie';
     winner.textContent = '平手';
   }
-  document.getElementById('finalRepair').textContent = fmtScore(repair);
-  document.getElementById('finalDisrupt').textContent = fmtScore(disrupt);
-  document.getElementById('finalSub').textContent =
-    `共 ${checkpoints.length} 個交摺點　結束於 ${new Date(gameState.ended_at).toLocaleString()}`;
+  document.getElementById('finalRepair').textContent = done;
+  document.getElementById('finalDisrupt').textContent = notDone;
+  // 企劃：陣營勝負是第一權重，但總冠軍是看各隊累計總積分。兩件事都要揭曉。
+  const champ = scores && scores.teams.length ? scores.teams[0] : null;
+  document.getElementById('finalSub').innerHTML =
+    `已修復完成 ${done} 個 / 未完成 ${notDone} 個（共 ${total} 個據點）<br>` +
+    (champ ? `總冠軍：<strong>${escapeHtml(champ.name || '#' + champ.teamNumber)}</strong>　${champ.total} 分<br>` : '') +
+    `結束於 ${new Date(gameState.ended_at).toLocaleString()}`;
   screen.style.display = '';
 }
 
@@ -378,8 +438,11 @@ function loadCheckpoints() {
 
 loadState();
 loadCheckpoints();
+loadScores();
 setInterval(loadState, STATE_INTERVAL_MS);
 setInterval(loadCheckpoints, CHECKPOINT_INTERVAL_MS);
+// 積分算得比較重（要掃通關紀錄跟對戰紀錄），拉長一點，反正分數不會每秒在跳
+setInterval(loadScores, 6000);
 // 倒數自己每秒重畫，不靠輪詢——輪詢是 5 秒一次，靠它的話秒數會一跳五格。
 setInterval(renderClock, 1000);
 
@@ -388,7 +451,8 @@ setInterval(renderClock, 1000);
 const socket = io();
 socket.on('game:state', state => {
   applyState(state);
-  loadCheckpoints(); // 結束的當下把分數也拉到最新，結算畫面才不會用舊比數
+  loadCheckpoints(); // 結束的當下把據點與積分都拉到最新，結算畫面才不會用舊資料
+  loadScores();
 });
 </script>
 </body>

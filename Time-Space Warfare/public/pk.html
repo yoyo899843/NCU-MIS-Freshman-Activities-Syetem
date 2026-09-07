@@ -6,7 +6,7 @@
 <title>PK 對戰 - 時空戰爭</title>
 <link rel="stylesheet" href="style.css">
 <style>
-  /* 倒數計時的樣式跟交摺點挑戰頁（checkpoint.html）一致，兩邊都是限時答題，
+  /* 倒數計時的樣式：限時答題
      視覺上沒理由差那麼多——原本 PK 這邊只是一行小小的純文字，很容易沒注意到
      時間快到了。 */
   .qhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
@@ -344,9 +344,7 @@ function initPk() {
       ? (byForfeit ? '對方斷線超過 20 秒未回來，判你獲勝！' : '對戰勝利！')
       : (byForfeit ? '你斷線超過 20 秒未回來，判對方獲勝。' : '對戰失敗！');
     if (!won) {
-      text += result.penalty && result.penalty.amount > 0
-        ? ` 你的小隊在最近一個交摺點的 ${result.penalty.amount} 分已被扣除。`
-        : ' 你的小隊尚未有交摺點積分，不扣分。';
+
     }
     document.getElementById('resultMessage').textContent = text;
 

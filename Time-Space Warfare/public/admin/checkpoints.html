@@ -38,7 +38,7 @@
     <input id="newLng" placeholder="經度 lng（例如 121.191）" inputmode="decimal">
   </div>
   <button id="createBtn">新增</button>
-  <p class="hint">QR 代碼由系統自動產生（不可猜的亂數），新增後可以直接列印。</p>
+  <p class="hint">關卡由關主在現場主持，過關後到「關主現場操作」記錄結果，玩家端沒有掃碼流程。</p>
   <p id="createResult" class="error"></p>
 </div>
 
@@ -46,7 +46,7 @@
   <h3>交摺點清單</h3>
   <table>
     <thead>
-      <tr><th>名稱</th><th>座標</th><th>QR 代碼</th><th>修復 / 破壞</th><th>操作</th></tr>
+      <tr><th>名稱</th><th>座標</th><th>修復進度</th><th>操作</th></tr>
     </thead>
     <tbody id="tbody"></tbody>
   </table>
@@ -94,22 +94,24 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function leadOf(cp) {
-  if (cp.repair_value > cp.disrupt_value) return { cls: 'repair', text: '修復者領先' };
-  if (cp.disrupt_value > cp.repair_value) return { cls: 'disrupt', text: '破壞者領先' };
-  return { cls: 'tie', text: '平手' };
+// 據點只有一條 0~100% 的修復進度，破壞是把它往回扣，不是另一個陣營的分數。
+function progressOf(cp) {
+  const pct = Math.max(0, Math.min(100, Number(cp.progress) || 0));
+  if (pct >= 100) return { pct, cls: 'repair', text: '已修復完成' };
+  if (pct > 0) return { pct, cls: 'tie', text: '修復中' };
+  return { pct, cls: 'tie', text: '尚未修復' };
 }
 
 async function load() {
   const res = await api('/checkpoints');
   if (res.status === 403) {
-    $('tbody').innerHTML = '<tr><td colspan="5">你目前是關主，沒有權限管理交摺點。</td></tr>';
+    $('tbody').innerHTML = '<tr><td colspan="4">你目前是關主，沒有權限管理交摺點。</td></tr>';
     return;
   }
   const list = await res.json();
 
   $('tbody').innerHTML = list.map(cp => {
-    const lead = leadOf(cp);
+    const prog = progressOf(cp);
     const coords = (cp.map_lat == null || cp.map_lng == null)
       ? '<span class="error">尚未設定</span>'
       : `${cp.map_lat}, ${cp.map_lng}`;
@@ -117,21 +119,17 @@ async function load() {
     <tr>
       <td>${escapeHtml(cp.name)}</td>
       <td>${coords}</td>
-      <td class="token">${escapeHtml(cp.qr_token)}</td>
       <td class="n">
-        <span class="v-repair">${cp.repair_value}</span> /
-        <span class="v-disrupt">${cp.disrupt_value}</span><br>
-        <span class="lead ${lead.cls}">${lead.text}</span>
+        <span class="v-repair">${prog.pct}%</span><br>
+        <span class="lead ${prog.cls}">${prog.text}</span>
       </td>
       <td class="row-actions">
-        <a href="qrcode-print.html?token=${encodeURIComponent(cp.qr_token)}&name=${encodeURIComponent(cp.name)}"
-           target="_blank">列印 QR</a>
         <button onclick="editCp(${cp.id})">編輯</button>
         <button onclick="resetCp(${cp.id})">歸零</button>
         <button onclick="deleteCp(${cp.id})">刪除</button>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="5">目前沒有交摺點，先在上面新增。</td></tr>';
+  }).join('') || '<tr><td colspan="4">目前沒有交摺點，先在上面新增。</td></tr>';
 
   $('ovCheckpoint').innerHTML = list.map(cp =>
     `<option value="${cp.id}">${escapeHtml(cp.name)}</option>`).join('');

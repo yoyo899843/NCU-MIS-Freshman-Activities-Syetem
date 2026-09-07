@@ -5,11 +5,11 @@ const express = require('express');
 const { Server } = require('socket.io');
 
 const db = require('./db');
+const { computeScores } = require('./scoring');
 const attachSockets = require('./sockets');
 
 const authRoutes = require('./routes/auth');
 const mapRoutes = require('./routes/map');
-const checkpointRoutes = require('./routes/checkpoints');
 const pkRoutes = require('./routes/pk');
 const locationRoutes = require('./routes/locations');
 const adminRoutes = require('./routes/admin');
@@ -50,9 +50,18 @@ app.get('/api/game/state', async (req, res) => {
   res.json({ ...rows[0], serverNow: new Date().toISOString() });
 });
 
+// 各隊積分。跟據點進度一樣是公開資訊——大螢幕沒有帳號，而且企劃裡積分本來就
+// 是要投影出來給所有人看的。回傳內容刻意不含陣營，那是內鬼機制的核心秘密。
+app.get('/api/scores', async (req, res) => {
+  const result = await computeScores();
+  res.json({
+    ...result,
+    teams: result.teams.map(({ faction, ...rest }) => rest)
+  });
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/map', mapRoutes);
-app.use('/api/checkpoints', checkpointRoutes);
 app.use('/api/pk', pkRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/admin/api', adminRoutes);
