@@ -416,39 +416,15 @@ async function persistResult(io, duelId, session, winnerId, loserId, { hostSumma
       [duelId, session.guestPlayerId, guestSummary.correctCount, guestSummary.totalTimeMs]
     );
 
-    // 找出敗方小隊「最近一次得分的交摺點」，全數歸零扣除。
+    // PK 不再動據點進度。企劃書裡 PK 只影響第六權重的 PK 積分庫（勝者奪取敗者的
+    // PK 積分），跟據點無關——原本「扣掉敗方最近得分的那個交摺點」整段已移除。
+    //
+    // 落敗方的三分鐘保護期保留：它擋的是「同一支隊伍被反覆挑戰洗分」，跟扣不扣
+    // 據點分數是兩件事，拿掉會讓弱隊變成大家輪流刷的提款機。
     const { rows: loserPlayerRows } = await client.query(
       'SELECT team_id FROM players WHERE id = $1', [loserId]
     );
     const loserTeamId = loserPlayerRows[0].team_id;
-
-    const { rows: teamRows } = await client.query(
-      'SELECT last_checkpoint_attempt_id FROM teams WHERE id = $1 FOR UPDATE',
-      [loserTeamId]
-    );
-    const lastAttemptId = teamRows[0].last_checkpoint_attempt_id;
-
-    let penaltyAttemptId = null;
-    let penaltyAmount = 0;
-    let affectedCheckpointId = null;
-
-    if (lastAttemptId) {
-      const { rows: attemptRows } = await client.query(
-        'SELECT checkpoint_id, faction, total_score FROM checkpoint_attempts WHERE id = $1',
-        [lastAttemptId]
-      );
-      if (attemptRows.length > 0) {
-        const attempt = attemptRows[0];
-        const column = attempt.faction === 'repair' ? 'repair_value' : 'disrupt_value';
-        await client.query(
-          `UPDATE checkpoints SET ${column} = GREATEST(${column} - $1, 0), updated_at = now() WHERE id = $2`,
-          [attempt.total_score, attempt.checkpoint_id]
-        );
-        penaltyAttemptId = lastAttemptId;
-        penaltyAmount = attempt.total_score;
-        affectedCheckpointId = attempt.checkpoint_id;
-      }
-    }
 
     await client.query(
       `UPDATE teams SET pk_protected_until = now() + interval '3 minutes' WHERE id = $1`,
@@ -457,10 +433,9 @@ async function persistResult(io, duelId, session, winnerId, loserId, { hostSumma
 
     await client.query(
       `UPDATE pk_duels
-       SET status = 'completed', winner_player_id = $1, loser_player_id = $2,
-           penalty_checkpoint_attempt_id = $3, penalty_amount = $4, completed_at = now()
-       WHERE id = $5`,
-      [winnerId, loserId, penaltyAttemptId, penaltyAmount, duelId]
+       SET status = 'completed', winner_player_id = $1, loser_player_id = $2, completed_at = now()
+       WHERE id = $3`,
+      [winnerId, loserId, duelId]
     );
 
     await client.query('COMMIT');
@@ -476,17 +451,8 @@ async function persistResult(io, duelId, session, winnerId, loserId, { hostSumma
       loserPlayerId: loserId,
       hostSummary,
       guestSummary,
-      reason: reason || 'answers',
-      penalty: { checkpointId: affectedCheckpointId, amount: penaltyAmount }
+      reason: reason || 'answers'
     });
-
-    if (affectedCheckpointId) {
-      const { rows: cp } = await db.query(
-        'SELECT id, name, repair_value, disrupt_value FROM checkpoints WHERE id = $1',
-        [affectedCheckpointId]
-      );
-      io.emit('checkpoint:update', cp[0]);
-    }
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

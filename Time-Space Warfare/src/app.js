@@ -42,8 +42,12 @@ app.get('/health', async (req, res) => {
 // 公開的唯讀遊戲狀態，給玩家頁面/大會 Dashboard 用，不需要登入
 // （管理後台改變狀態走的是另一支有 JWT 保護的 /admin/api/game/*）。
 app.get('/api/game/state', async (req, res) => {
-  const { rows } = await db.query('SELECT status, started_at, ended_at FROM game_state WHERE id = 1');
-  res.json(rows[0]);
+  const { rows } = await db.query(
+    'SELECT status, started_at, ended_at, duration_minutes FROM game_state WHERE id = 1'
+  );
+  // serverNow：投影用的那台電腦時鐘不一定準，差幾分鐘倒數就整個錯掉。回傳伺服器
+  // 當下的時間，讓前端自己算出時鐘差再套用，倒數就跟伺服器一致（見 dashboard.html）。
+  res.json({ ...rows[0], serverNow: new Date().toISOString() });
 });
 
 app.use('/api/auth', authRoutes);

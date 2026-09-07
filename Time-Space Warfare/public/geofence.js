@@ -20,26 +20,13 @@ function isWithinCampus(lat, lng) {
   );
 }
 
-// 有些頁面（例如 map.html）自己有一條 position:absolute、top:8px 的 .top-bar，
-// 跟這個 banner 一樣是 fixed/absolute 在畫面最上方，banner 顯示時會直接疊住蓋
-// 掉 .top-bar 裡的連結/文字。banner 顯示/隱藏時動態把 .top-bar 往下推開／還原，
-// 沒有 .top-bar 的頁面這裡就是無害的 no-op。
-function repositionTopBar(banner) {
-  const visible = banner.style.display !== 'none';
-  document.querySelectorAll('.top-bar').forEach(el => {
-    el.style.top = visible ? `${banner.offsetHeight + 8}px` : '8px';
-  });
-}
-
 function showBanner(banner, text) {
   banner.textContent = text;
   banner.style.display = '';
-  repositionTopBar(banner);
 }
 
 function hideBanner(banner) {
   banner.style.display = 'none';
-  repositionTopBar(banner);
 }
 
 // onUpdate(lat, lng) 會在每次收到「校園範圍內」的定位時呼叫，
@@ -47,8 +34,11 @@ function hideBanner(banner) {
 function startGeofence(onUpdate) {
   const banner = document.createElement('div');
   banner.id = 'geofenceBanner';
+  // sticky 而不是 fixed：fixed 會脫離文件流、直接蓋住頁面最上方的東西（地圖頁的
+  // .top-bar 首當其衝），原本得靠 JS 在 banner 顯示/隱藏時去推 .top-bar 的 top 值。
+  // sticky 佔位置，會把後面的內容往下擠，捲動時一樣釘在最上面，那段 JS 就不用了。
   banner.style.cssText =
-    'display:none;position:fixed;top:0;left:0;right:0;z-index:2000;' +
+    'display:none;position:sticky;top:0;z-index:2000;' +
     'background:#c00;color:#fff;padding:8px 12px;font-size:0.9rem;text-align:center';
   document.body.prepend(banner);
 

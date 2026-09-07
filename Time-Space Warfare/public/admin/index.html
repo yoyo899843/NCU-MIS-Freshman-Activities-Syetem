@@ -40,6 +40,12 @@
   <button id="startBtn">開始遊戲</button>
   <button id="endBtn">強制結束遊戲</button>
   <p id="controlResult" class="error"></p>
+  <hr>
+  <label for="durationMinutes">遊戲時長（分鐘，5～600）</label>
+  <input id="durationMinutes" type="number" min="5" max="600" inputmode="numeric">
+  <button id="durationBtn">儲存時長</button>
+  <p class="hint">大螢幕的倒數用這個時長從「開始遊戲」的時刻起算。時間到只會顯示「時間到」，不會自動結束遊戲——要收還是按上面的「強制結束遊戲」。進行中也可以改，改完大螢幕立刻換成新的倒數。</p>
+  <p id="durationResult" class="error"></p>
 </div>
 
 <div class="card admin-only" style="display:none">
@@ -90,6 +96,10 @@ function renderState(state) {
   document.getElementById('startBtn').disabled = state.status === 'in_progress';
   document.getElementById('endBtn').disabled = state.status !== 'in_progress';
 
+  if (state.duration_minutes != null) {
+    document.getElementById('durationMinutes').value = state.duration_minutes;
+  }
+
   // PK 設定跟遊戲狀態同一支 API 回傳，順便把輸入框帶成目前的值
   if (state.pk_questions_per_duel != null) {
     document.getElementById('pkQuestions').value = state.pk_questions_per_duel;
@@ -98,6 +108,23 @@ function renderState(state) {
     document.getElementById('pkSeconds').value = state.pk_answer_seconds;
   }
 }
+
+document.getElementById('durationBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('durationResult');
+  resultEl.textContent = '';
+  const res = await api('/game/duration', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ durationMinutes: Number(document.getElementById('durationMinutes').value) })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  renderState(data);
+  resultEl.textContent = '已儲存。';
+});
 
 document.getElementById('pkSettingsBtn').addEventListener('click', async () => {
   const resultEl = document.getElementById('pkSettingsResult');

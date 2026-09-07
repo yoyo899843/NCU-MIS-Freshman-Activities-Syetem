@@ -6,34 +6,390 @@
 <title>大會 Dashboard - 時空戰爭</title>
 <link rel="stylesheet" href="style.css">
 <style>
-  body { max-width: none; text-align: center; padding-top: 10vh; }
-  #statusText { font-size: 3rem; font-weight: bold; }
-  .st-not_started { color: var(--dim); }
-  .st-in_progress { color: var(--repair); }
-  .st-ended { color: var(--disrupt); }
+  /* 這一頁是投影用的：沒有互動、不捲動、字要遠遠就看得到。所有尺寸都用 vw/vh
+     換算，投影機從 1024x768 到 4K 都不用另外調。 */
+  body {
+    max-width: none; padding: 0; margin: 0;
+    height: 100vh; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+
+  .top {
+    display: flex; align-items: baseline; gap: 2vw;
+    padding: 1.4vh 2vw; border-bottom: 1px solid var(--line); background: var(--card-2);
+  }
+  .top .brand { font-size: 2.2vh; font-weight: 700; color: var(--accent); letter-spacing: .1em; }
+  .top .status {
+    font-size: 1.9vh; font-weight: 700; padding: .3vh 1.2vw; border-radius: 4px;
+    border: 1px solid var(--line); color: var(--dim);
+  }
+  .top .status.in_progress { color: var(--repair); border-color: var(--repair); }
+  .top .status.ended { color: var(--disrupt); border-color: var(--disrupt); }
+  .top .spacer { flex: 1; }
+  .top .clock-label { font-size: 1.7vh; color: var(--dim); }
+  .top .clock {
+    font-size: 5vh; font-weight: 700; font-variant-numeric: tabular-nums;
+    line-height: 1; letter-spacing: .02em;
+  }
+  /* 最後五分鐘轉紅並且慢慢閃，讓遠處的人也會注意到 */
+  .top .clock.urgent { color: var(--disrupt); animation: pulse 1.6s ease-in-out infinite; }
+  .top .clock.overtime { color: var(--accent); }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
+
+  /* --- 兩陣營總分 --- */
+  .totals { padding: 2.5vh 3vw 1.5vh; }
+  .totals .row { display: flex; align-items: flex-end; gap: 2vw; }
+  .totals .side { flex: 1; }
+  .totals .side.d { text-align: right; }
+  .totals .fac { font-size: 2.6vh; font-weight: 700; letter-spacing: .08em; }
+  .totals .num {
+    font-size: 13vh; font-weight: 700; line-height: .95;
+    font-variant-numeric: tabular-nums;
+  }
+  .totals .r .fac, .totals .r .num { color: var(--repair); }
+  .totals .d .fac, .totals .d .num { color: var(--disrupt); }
+  .totals .vs { font-size: 3vh; color: var(--dim); padding-bottom: 2vh; }
+
+  .totalbar {
+    margin-top: 1.6vh; height: 2.4vh; border-radius: 1.2vh; overflow: hidden;
+    background: var(--disrupt); display: flex;
+  }
+  .totalbar > i { display: block; height: 100%; background: var(--repair); }
+  .totalbar.empty { background: var(--line); }
+  .lead-line { margin-top: 1vh; font-size: 2.2vh; font-weight: 700; text-align: center; }
+  .lead-line.repair { color: var(--repair); }
+  .lead-line.disrupt { color: var(--disrupt); }
+  .lead-line.tie { color: var(--dim); }
+
+  /* --- 各交摺點 --- */
+  .cps {
+    flex: 1; min-height: 0; overflow: hidden;
+    padding: 1vh 3vw 2vh;
+    display: grid; gap: 1.2vh 1.2vw;
+    grid-template-columns: repeat(auto-fit, minmax(15vw, 1fr));
+    /* 交摺點通常只有幾個到十幾個，靠上排會在畫面下半留一大片空白，投影出來很空。
+       置中排版在少量時看起來才對；以 1080p 估算一列約 9vh，這塊約 60vh 放得下
+       六列、也就是三十個左右的交摺點，正常規模不會被裁掉。 */
+    align-content: center;
+  }
+  .cp {
+    background: var(--card); border: 1px solid var(--line);
+    border-left-width: .5vw; border-radius: 6px; padding: 1vh 1vw;
+  }
+  .cp.repair { border-left-color: var(--repair); }
+  .cp.disrupt { border-left-color: var(--disrupt); }
+  .cp.tie { border-left-color: var(--line); }
+  .cp .nm {
+    font-size: 2.1vh; font-weight: 700; color: var(--fg);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cp .bar { margin: .8vh 0 .6vh; height: 1.1vh; border-radius: .6vh; overflow: hidden; background: var(--disrupt); }
+  .cp .bar > i { display: block; height: 100%; background: var(--repair); }
+  .cp .bar.empty { background: var(--line); }
+  .cp .vals { font-size: 1.9vh; font-variant-numeric: tabular-nums; }
+  .cp .vals .r { color: var(--repair); font-weight: 700; }
+  .cp .vals .d { color: var(--disrupt); font-weight: 700; }
+  .cp .vals .sep { color: var(--dim); }
+
+  .empty-note { grid-column: 1 / -1; text-align: center; color: var(--dim); font-size: 2.2vh; padding: 4vh 0; }
+
+  /* --- 結算畫面：遊戲結束時整頁蓋上去 --- */
+  .final {
+    position: fixed; inset: 0; z-index: 10;
+    background: rgba(7, 11, 16, .96);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1.5vh;
+  }
+  .final .kicker { font-size: 3vh; color: var(--dim); letter-spacing: .3em; }
+  .final .winner { font-size: 12vh; font-weight: 700; line-height: 1; text-align: center; }
+  .final .winner.repair { color: var(--repair); }
+  .final .winner.disrupt { color: var(--disrupt); }
+  .final .winner.tie { color: var(--accent); }
+  .final .score {
+    font-size: 6vh; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 1vh;
+  }
+  .final .score .r { color: var(--repair); }
+  .final .score .d { color: var(--disrupt); }
+  .final .score .sep { color: var(--dim); font-size: 4vh; padding: 0 1.5vw; }
+  .final .sub { font-size: 2.2vh; color: var(--dim); }
+
+  /* 連線狀況：正常時完全不顯示，斷了才浮出來。投影畫面上不該有平時就在閃的東西 */
+  .offline {
+    position: fixed; right: 1.5vw; bottom: 1.5vh; z-index: 20;
+    font-size: 1.8vh; font-weight: 700; color: #1a0f00; background: var(--accent);
+    padding: .6vh 1.2vw; border-radius: 4px;
+  }
 </style>
 </head>
 <body>
-<h1>大會集合投影 Dashboard</h1>
-<div class="card">
-  <p id="statusText">載入中...</p>
-  <p style="font-size:0.85rem;color:var(--dim)">骨架階段：這裡之後會加上戰況比數、倒數計時。目前只即時反映遊戲進程狀態（不 join 任何隊伍私密頻道，只收全域廣播）。</p>
+
+<div class="top">
+  <span class="brand">時空戰爭 · 戰況</span>
+  <span class="status" id="statusBadge">載入中</span>
+  <span class="spacer"></span>
+  <span class="clock-label" id="clockLabel"></span>
+  <span class="clock" id="clock">--:--</span>
 </div>
+
+<div class="totals">
+  <div class="row">
+    <div class="side r">
+      <div class="fac">時空修復者</div>
+      <div class="num" id="repairTotal">0</div>
+    </div>
+    <div class="vs">VS</div>
+    <div class="side d">
+      <div class="fac">時空破壞者</div>
+      <div class="num" id="disruptTotal">0</div>
+    </div>
+  </div>
+  <div class="totalbar empty" id="totalBar"><i style="width:0%"></i></div>
+  <div class="lead-line tie" id="leadLine">尚未有人得分</div>
+</div>
+
+<div class="cps" id="cps"></div>
+
+<div class="final" id="finalScreen" style="display:none">
+  <div class="kicker">最終結算</div>
+  <div class="winner" id="finalWinner"></div>
+  <div class="score">
+    <span class="r" id="finalRepair">0</span><span class="sep">：</span><span class="d" id="finalDisrupt">0</span>
+  </div>
+  <div class="sub" id="finalSub"></div>
+</div>
+
+<div class="offline" id="offline" style="display:none">連線中斷，畫面停留在最後一次成功更新</div>
 
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script>
-const labels = { not_started: '尚未開始', in_progress: '進行中', ended: '已結束' };
+const STATE_INTERVAL_MS = 5000;      // 遊戲狀態（順便重新校時）
+const CHECKPOINT_INTERVAL_MS = 3000; // 戰況分數
 
-function render(state) {
-  const el = document.getElementById('statusText');
-  el.textContent = labels[state.status] || state.status;
-  el.className = 'st-' + state.status;
+const statusLabels = { not_started: '尚未開始', in_progress: '進行中', ended: '已結束' };
+
+// 投影機那台電腦的時鐘不一定準，差幾分鐘倒數就整個錯掉。/api/game/state 會回
+// serverNow，用它跟本機時間的差算出 offset，之後所有「現在幾點」都套這個修正，
+// 倒數才會跟伺服器一致。每次輪詢都會重新校一次，跑一整天也不會慢慢飄掉。
+let clockOffsetMs = 0;
+function serverNow() { return Date.now() + clockOffsetMs; }
+
+let gameState = null;
+let checkpoints = [];
+
+// 連線斷掉時「畫面停在最後一次成功的資料」而不是清空——投影到一半整片變空白
+// 比顯示幾秒前的舊分數糟糕得多。兩支輪詢各自記錄，任一支掛掉就顯示提示。
+const failing = { state: false, checkpoints: false };
+function setFailing(key, isFailing) {
+  failing[key] = isFailing;
+  document.getElementById('offline').style.display =
+    (failing.state || failing.checkpoints) ? '' : 'none';
 }
 
-fetch('/api/game/state').then(r => r.json()).then(render);
+/* ---------------- 倒數 ---------------- */
 
+function formatClock(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+function renderClock() {
+  const clock = document.getElementById('clock');
+  const label = document.getElementById('clockLabel');
+  clock.className = 'clock';
+
+  if (!gameState) { clock.textContent = '--:--'; label.textContent = ''; return; }
+
+  if (gameState.status === 'not_started') {
+    label.textContent = '預計時長';
+    clock.textContent = formatClock((gameState.duration_minutes || 0) * 60000);
+    return;
+  }
+
+  if (gameState.status === 'ended') {
+    // 結束後倒數凍結在「實際打了多久」，比繼續倒數或歸零有意義。
+    const started = new Date(gameState.started_at).getTime();
+    const ended = new Date(gameState.ended_at).getTime();
+    label.textContent = '本場歷時';
+    clock.textContent = formatClock(ended - started);
+    return;
+  }
+
+  const endAt = new Date(gameState.started_at).getTime() + (gameState.duration_minutes || 0) * 60000;
+  const left = endAt - serverNow();
+
+  if (left <= 0) {
+    // 時間到不代表遊戲結束——結束與否只看 status，那是主辦按下去才會變的。
+    // 這裡只是提示該收了，所以用強調色而不是紅色的「危險」。
+    label.textContent = '已超時';
+    clock.textContent = '+' + formatClock(-left);
+    clock.className = 'clock overtime';
+    return;
+  }
+
+  label.textContent = '剩餘時間';
+  clock.textContent = formatClock(left);
+  if (left <= 5 * 60000) clock.className = 'clock urgent';
+}
+
+/* ---------------- 戰況 ---------------- */
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// 跟大地圖的交摺點標記同一套語言：底色是破壞、疊上去的寬度是修復。
+// 兩邊都 0 畫成中立的空條，不要畫 50/50——那看起來像平分，實際是還沒人碰過。
+function barHtml(repair, disrupt, cls) {
+  const total = repair + disrupt;
+  if (total === 0) return `<div class="${cls} empty"></div>`;
+  const pct = Math.round((repair / total) * 1000) / 10;
+  return `<div class="${cls}"><i style="width:${pct}%"></i></div>`;
+}
+
+function totals() {
+  return checkpoints.reduce((acc, cp) => {
+    acc.repair += Number(cp.repairValue) || 0;
+    acc.disrupt += Number(cp.disruptValue) || 0;
+    return acc;
+  }, { repair: 0, disrupt: 0 });
+}
+
+// 分數是 NUMERIC，可能有小數。整數就不要硬顯示 .0，有小數才留一位。
+function fmtScore(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function renderTotals() {
+  const { repair, disrupt } = totals();
+  document.getElementById('repairTotal').textContent = fmtScore(repair);
+  document.getElementById('disruptTotal').textContent = fmtScore(disrupt);
+
+  const bar = document.getElementById('totalBar');
+  const total = repair + disrupt;
+  if (total === 0) {
+    bar.className = 'totalbar empty';
+    bar.firstElementChild.style.width = '0%';
+  } else {
+    bar.className = 'totalbar';
+    bar.firstElementChild.style.width = (repair / total) * 100 + '%';
+  }
+
+  const lead = document.getElementById('leadLine');
+  if (total === 0) {
+    lead.className = 'lead-line tie';
+    lead.textContent = '尚未有人得分';
+  } else if (repair > disrupt) {
+    lead.className = 'lead-line repair';
+    lead.textContent = `時空修復者領先 ${fmtScore(repair - disrupt)} 分`;
+  } else if (disrupt > repair) {
+    lead.className = 'lead-line disrupt';
+    lead.textContent = `時空破壞者領先 ${fmtScore(disrupt - repair)} 分`;
+  } else {
+    lead.className = 'lead-line tie';
+    lead.textContent = '雙方平手';
+  }
+}
+
+function renderCheckpoints() {
+  const el = document.getElementById('cps');
+  if (checkpoints.length === 0) {
+    el.innerHTML = '<div class="empty-note">目前沒有任何交摺點</div>';
+    return;
+  }
+  el.innerHTML = checkpoints.map(cp => {
+    const r = Number(cp.repairValue) || 0;
+    const d = Number(cp.disruptValue) || 0;
+    const lead = cp.leading || 'tie';
+    return `<div class="cp ${lead}">` +
+      `<div class="nm">${escapeHtml(cp.name)}</div>` +
+      barHtml(r, d, 'bar') +
+      `<div class="vals"><span class="r">${fmtScore(r)}</span>` +
+      `<span class="sep"> / </span><span class="d">${fmtScore(d)}</span></div>` +
+    `</div>`;
+  }).join('');
+}
+
+/* ---------------- 結算畫面 ---------------- */
+
+function renderFinal() {
+  const screen = document.getElementById('finalScreen');
+  if (!gameState || gameState.status !== 'ended') {
+    screen.style.display = 'none';
+    return;
+  }
+  const { repair, disrupt } = totals();
+  const winner = document.getElementById('finalWinner');
+  if (repair > disrupt) {
+    winner.className = 'winner repair';
+    winner.textContent = '時空修復者 獲勝';
+  } else if (disrupt > repair) {
+    winner.className = 'winner disrupt';
+    winner.textContent = '時空破壞者 獲勝';
+  } else {
+    winner.className = 'winner tie';
+    winner.textContent = '平手';
+  }
+  document.getElementById('finalRepair').textContent = fmtScore(repair);
+  document.getElementById('finalDisrupt').textContent = fmtScore(disrupt);
+  document.getElementById('finalSub').textContent =
+    `共 ${checkpoints.length} 個交摺點　結束於 ${new Date(gameState.ended_at).toLocaleString()}`;
+  screen.style.display = '';
+}
+
+/* ---------------- 資料來源 ---------------- */
+
+function applyState(state) {
+  gameState = state;
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = statusLabels[state.status] || state.status;
+  badge.className = 'status ' + state.status;
+  renderClock();
+  renderFinal();
+}
+
+function loadState() {
+  return fetch('/api/game/state')
+    .then(res => (res.ok ? res.json() : Promise.reject(res.status)))
+    .then(state => {
+      if (state.serverNow) clockOffsetMs = new Date(state.serverNow).getTime() - Date.now();
+      applyState(state);
+      setFailing('state', false);
+    })
+    .catch(() => setFailing('state', true));
+}
+
+function loadCheckpoints() {
+  return fetch('/api/map/checkpoints')
+    .then(res => (res.ok ? res.json() : Promise.reject(res.status)))
+    .then(list => {
+      checkpoints = list;
+      renderTotals();
+      renderCheckpoints();
+      renderFinal(); // 結算畫面上的比數也要跟著更新
+      setFailing('checkpoints', false);
+    })
+    .catch(() => setFailing('checkpoints', true));
+}
+
+loadState();
+loadCheckpoints();
+setInterval(loadState, STATE_INTERVAL_MS);
+setInterval(loadCheckpoints, CHECKPOINT_INTERVAL_MS);
+// 倒數自己每秒重畫，不靠輪詢——輪詢是 5 秒一次，靠它的話秒數會一跳五格。
+setInterval(renderClock, 1000);
+
+// 開始/結束/改時長會即時廣播，收到就立刻反映，不用等下一次輪詢。
+// 這條斷了也不影響正確性，上面的輪詢仍然會把狀態補上。
 const socket = io();
-socket.on('game:state', render);
+socket.on('game:state', state => {
+  applyState(state);
+  loadCheckpoints(); // 結束的當下把分數也拉到最新，結算畫面才不會用舊比數
+});
 </script>
 </body>
 </html>

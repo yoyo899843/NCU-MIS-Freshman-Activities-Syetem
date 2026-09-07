@@ -10,7 +10,8 @@ const router = express.Router();
 
 // 現在一組（一支隊伍）只用一支手機登入，所以「登入」等於「開一支新隊伍」，不再有
 // 「找一個還沒滿的隊伍塞進去」這件事——每次登入都是新隊伍，直到達到隊伍上限。
-const MAX_TEAMS = 20;
+// 上限本來寫死 20，改成讀後台設定（game_state.max_teams，預設 10）：報名隊數
+// 每年不一樣，這種數字不該要改程式重新部署。
 
 // PIN 錯誤次數限制（見 src/loginThrottle.js：記憶體內、會定期清掉過期項目）。
 const pinThrottle = createLoginThrottle();
@@ -88,10 +89,12 @@ router.post('/join', asyncHandler(async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    const { rows: limitRows } = await client.query('SELECT max_teams FROM game_state WHERE id = 1');
+    const maxTeams = limitRows[0]?.max_teams ?? 10;
     const { rows: countRows } = await client.query('SELECT COUNT(*)::int AS cnt FROM teams');
-    if (countRows[0].cnt >= MAX_TEAMS) {
+    if (countRows[0].cnt >= maxTeams) {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: `已達隊伍上限（${MAX_TEAMS} 隊），無法再加入` });
+      return res.status(403).json({ error: `已達隊伍上限（${maxTeams} 隊），無法再加入` });
     }
 
     // 目前兩陣營各自的隊伍數，用來決定這支新隊伍該分去哪邊（人少的那邊，平手隨機）。

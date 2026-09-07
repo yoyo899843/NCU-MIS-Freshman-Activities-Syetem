@@ -181,20 +181,16 @@ router.get('/me', (req, res) => {
 // 清單同時給交摺點管理頁、以及題目管理畫面的「這題屬於哪個交摺點」下拉選單用。
 router.get('/checkpoints', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT id, name, map_lat, map_lng, qr_token, repair_value, disrupt_value, updated_at
+    `SELECT id, name, map_lat, map_lng, qr_token, progress, updated_at
      FROM checkpoints ORDER BY id`
   );
   res.json(rows.map(numericCheckpoint));
 }));
 
-// pg 的 NUMERIC 型別回來是字串，前端要拿來比大小/畫進度條，統一轉成數字再回。
+// progress 是 INT，pg 直接回數字，不用再轉。留這個函式當統一出口，
+// 之後如果又加了 NUMERIC 欄位才有地方接。
 function numericCheckpoint(row) {
-  if (!row) return row;
-  return {
-    ...row,
-    repair_value: Number(row.repair_value),
-    disrupt_value: Number(row.disrupt_value)
-  };
+  return row;
 }
 
 // qr_token 是印在現場實體 QR Code 上的字串，玩家掃了就能開始挑戰，
@@ -227,7 +223,7 @@ router.post('/checkpoints', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `INSERT INTO checkpoints (name, map_lat, map_lng, qr_token)
      VALUES ($1, $2, $3, $4)
-     RETURNING id, name, map_lat, map_lng, qr_token, repair_value, disrupt_value`,
+     RETURNING id, name, map_lat, map_lng, qr_token, progress`,
     [name.trim(), lat.value, lng.value, generateQrToken()]
   );
 
@@ -254,7 +250,7 @@ router.patch('/checkpoints/:id', asyncHandler(async (req, res) => {
            map_lng = COALESCE($3, map_lng),
            updated_at = now()
      WHERE id = $4
-     RETURNING id, name, map_lat, map_lng, qr_token, repair_value, disrupt_value`,
+     RETURNING id, name, map_lat, map_lng, qr_token, progress`,
     [name?.trim() || null, lat.value, lng.value, req.params.id]
   );
   if (rows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
@@ -277,18 +273,18 @@ router.delete('/checkpoints/:id', asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
-// 手動歸零：把某個交摺點的修復值/破壞值打回 0。
-// 挑戰紀錄（checkpoint_attempts）刻意保留不動，稽核才追得回來。
+// 手動歸零：把某個據點的修復進度打回 0%。
+// 通關紀錄（checkpoint_attempts）刻意保留不動，稽核才追得回來。
 router.post('/checkpoints/:id/reset', asyncHandler(async (req, res) => {
   const { rows: beforeRows } = await db.query(
-    'SELECT repair_value, disrupt_value FROM checkpoints WHERE id = $1', [req.params.id]
+    'SELECT progress FROM checkpoints WHERE id = $1', [req.params.id]
   );
   if (beforeRows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
 
   const { rows } = await db.query(
-    `UPDATE checkpoints SET repair_value = 0, disrupt_value = 0, updated_at = now()
+    `UPDATE checkpoints SET progress = 0, updated_at = now()
      WHERE id = $1
-     RETURNING id, name, repair_value, disrupt_value`,
+     RETURNING id, name, map_lat, map_lng, qr_token, progress`,
     [req.params.id]
   );
 
@@ -296,13 +292,11 @@ router.post('/checkpoints/:id/reset', asyncHandler(async (req, res) => {
     `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
      VALUES ($1, 'reset_checkpoint', 'checkpoint', $2, $3, $4)`,
     [req.admin.sub, String(req.params.id),
-     JSON.stringify({
-       repair_value: Number(beforeRows[0].repair_value),
-       disrupt_value: Number(beforeRows[0].disrupt_value)
-     }),
-     JSON.stringify({ repair_value: 0, disrupt_value: 0 })]
+     JSON.stringify({ progress: beforeRows[0].progress }),
+     JSON.stringify({ progress: 0 })]
   );
 
+  getIO().emit('checkpoint:update', rows[0]);
   res.json(numericCheckpoint(rows[0]));
 }));
 
@@ -522,7 +516,8 @@ router.post('/questions/import', upload.single('file'), asyncHandler(async (req,
 
 router.get('/game/state', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT status, started_at, ended_at, pk_questions_per_duel, pk_answer_seconds
+    `SELECT status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+            pk_questions_per_duel, pk_answer_seconds
      FROM game_state WHERE id = 1`
   );
   res.json(rows[0]);
@@ -551,7 +546,8 @@ router.patch('/game/pk-settings', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `UPDATE game_state SET pk_questions_per_duel = $1, pk_answer_seconds = $2
      WHERE id = 1
-     RETURNING status, started_at, ended_at, pk_questions_per_duel, pk_answer_seconds`,
+     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+               pk_questions_per_duel, pk_answer_seconds`,
     [qpd, secs]
   );
 
@@ -565,6 +561,75 @@ router.patch('/game/pk-settings', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
+// 遊戲時長：大螢幕倒數用的。倒數是「started_at 起算 duration_minutes」，時間到
+// 只會在畫面上顯示「時間到」，不會自動結束遊戲——真正要收還是主辦按「強制結束
+// 遊戲」（現場常常要多留幾分鐘等還在路上的隊伍）。
+//
+// 遊戲進行中也可以改：倒數是每次都用「started_at + 時長 - 現在」重算的，不是
+// 開場算一次就固定，所以改完大螢幕下一秒就跟著變（臨時要延長或縮短都行）。
+router.patch('/game/duration', asyncHandler(async (req, res) => {
+  const minutes = Number((req.body || {}).durationMinutes);
+  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 600) {
+    return res.status(400).json({ error: '遊戲時長必須是 5 到 600 分鐘之間的整數' });
+  }
+
+  const { rows: beforeRows } = await db.query('SELECT duration_minutes FROM game_state WHERE id = 1');
+
+  const { rows } = await db.query(
+    `UPDATE game_state SET duration_minutes = $1 WHERE id = 1
+     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+               pk_questions_per_duel, pk_answer_seconds`,
+    [minutes]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'update_game_duration', 'game_state', '1', $2, $3)`,
+    [req.admin.sub, JSON.stringify(beforeRows[0] || {}), JSON.stringify({ duration_minutes: minutes })]
+  );
+
+  // 廣播出去，大螢幕不用等下一次輪詢就會換成新的倒數。
+  getIO().emit('game:state', rows[0]);
+  res.json(rows[0]);
+}));
+
+// 場次規模設定：隊伍數上限、每次修復/破壞推動的進度幅度。
+// 企劃書寫 10 隊、±25%，但這兩個是會臨場調整的東西（報名隊數變動、想讓進度
+// 跑快一點），不該寫死在程式裡要改版重新部署。
+//
+// 隊伍上限只在「新隊伍登入」時檢查，調小不會把已經在場上的隊伍踢掉。
+router.patch('/game/scale', asyncHandler(async (req, res) => {
+  const { maxTeams, progressStep } = req.body || {};
+  const teams = Number(maxTeams);
+  const step = Number(progressStep);
+  if (!Number.isInteger(teams) || teams < 2 || teams > 100) {
+    return res.status(400).json({ error: '隊伍數上限必須是 2 到 100 之間的整數' });
+  }
+  if (!Number.isInteger(step) || step < 1 || step > 100) {
+    return res.status(400).json({ error: '每次進度幅度必須是 1 到 100 之間的整數' });
+  }
+
+  const { rows: beforeRows } = await db.query(
+    'SELECT max_teams, progress_step FROM game_state WHERE id = 1'
+  );
+
+  const { rows } = await db.query(
+    `UPDATE game_state SET max_teams = $1, progress_step = $2 WHERE id = 1
+     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+               pk_questions_per_duel, pk_answer_seconds`,
+    [teams, step]
+  );
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'update_game_scale', 'game_state', '1', $2, $3)`,
+    [req.admin.sub, JSON.stringify(beforeRows[0] || {}),
+     JSON.stringify({ max_teams: teams, progress_step: step })]
+  );
+
+  res.json(rows[0]);
+}));
+
 router.post('/game/start', asyncHandler(async (req, res) => {
   const { rows: current } = await db.query('SELECT status FROM game_state WHERE id = 1');
   if (current[0].status === 'in_progress') {
@@ -573,7 +638,7 @@ router.post('/game/start', asyncHandler(async (req, res) => {
 
   const { rows } = await db.query(
     `UPDATE game_state SET status = 'in_progress', started_at = now(), ended_at = NULL
-     WHERE id = 1 RETURNING status, started_at, ended_at`
+     WHERE id = 1 RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step`
   );
   getIO().emit('game:state', rows[0]);
   res.json(rows[0]);
@@ -587,7 +652,7 @@ router.post('/game/end', asyncHandler(async (req, res) => {
 
   const { rows } = await db.query(
     `UPDATE game_state SET status = 'ended', ended_at = now()
-     WHERE id = 1 RETURNING status, started_at, ended_at`
+     WHERE id = 1 RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step`
   );
   getIO().emit('game:state', rows[0]);
   res.json(rows[0]);
@@ -599,17 +664,13 @@ router.get('/pk-duels', asyncHandler(async (req, res) => {
     SELECT
       d.id, d.room_code, d.status, d.created_at, d.completed_at,
       d.host_player_id, d.guest_player_id, d.winner_player_id, d.loser_player_id,
-      d.penalty_amount, d.penalty_checkpoint_attempt_id, d.penalty_cancelled_at,
       hp.display_name AS host_name, ht.faction AS host_faction,
-      gp.display_name AS guest_name, gt.faction AS guest_faction,
-      cp.name AS checkpoint_name
+      gp.display_name AS guest_name, gt.faction AS guest_faction
     FROM pk_duels d
     JOIN players hp ON hp.id = d.host_player_id
     JOIN teams ht ON ht.id = hp.team_id
     LEFT JOIN players gp ON gp.id = d.guest_player_id
     LEFT JOIN teams gt ON gt.id = gp.team_id
-    LEFT JOIN checkpoint_attempts ca ON ca.id = d.penalty_checkpoint_attempt_id
-    LEFT JOIN checkpoints cp ON cp.id = ca.checkpoint_id
     ORDER BY d.created_at DESC
     LIMIT 100
   `);
@@ -630,7 +691,7 @@ router.get('/players', asyncHandler(async (req, res) => {
 }));
 
 // 用新 PIN 直接覆蓋掉舊 PIN——給隊輔忘記/打錯 PIN 卡住登入時，管理員在後台直接
-// 幫忙重設，不用再請他們去翻 PgAdmin。留稽核紀錄（比照 cancel-penalty 的做法）。
+// 幫忙重設，不用再請他們去翻 PgAdmin。留稽核紀錄。
 router.patch('/players/:id/pin', asyncHandler(async (req, res) => {
   const { pin } = req.body || {};
   if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
@@ -694,112 +755,36 @@ router.patch('/players/:id/faction', asyncHandler(async (req, res) => {
 
 // 手動增減某個交摺點的修復值/破壞值。掃碼答題以外的補救手段
 // （例如現場判定爭議、或關主代為記分）。delta 可正可負，扣到負數會夾在 0。
-router.post('/overrides/score', asyncHandler(async (req, res) => {
-  const { checkpointId, faction, delta, note } = req.body || {};
+router.post('/overrides/progress', asyncHandler(async (req, res) => {
+  const { checkpointId, progress, note } = req.body || {};
   if (!checkpointId) return res.status(400).json({ error: 'checkpointId is required' });
-  if (!['repair', 'disrupt'].includes(faction)) {
-    return res.status(400).json({ error: "faction must be 'repair' or 'disrupt'" });
-  }
-  const amount = Number(delta);
-  if (!Number.isFinite(amount) || amount === 0) {
-    return res.status(400).json({ error: 'delta must be a non-zero number' });
+  const value = Number(progress);
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    return res.status(400).json({ error: 'progress 必須是 0 到 100 之間的整數' });
   }
 
-  const column = faction === 'repair' ? 'repair_value' : 'disrupt_value';
   const { rows: beforeRows } = await db.query(
-    `SELECT ${column} AS value FROM checkpoints WHERE id = $1`, [checkpointId]
+    'SELECT progress FROM checkpoints WHERE id = $1', [checkpointId]
   );
   if (beforeRows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
 
   const { rows } = await db.query(
-    `UPDATE checkpoints SET ${column} = GREATEST(0, ${column} + $1), updated_at = now()
+    `UPDATE checkpoints SET progress = $1, updated_at = now()
      WHERE id = $2
-     RETURNING id, name, repair_value, disrupt_value`,
-    [amount, checkpointId]
+     RETURNING id, name, map_lat, map_lng, qr_token, progress`,
+    [value, checkpointId]
   );
 
   await db.query(
     `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-     VALUES ($1, 'override_checkpoint_score', 'checkpoint', $2, $3, $4)`,
+     VALUES ($1, 'override_checkpoint_progress', 'checkpoint', $2, $3, $4)`,
     [req.admin.sub, String(checkpointId),
-     JSON.stringify({ [column]: Number(beforeRows[0].value) }),
-     JSON.stringify({ [column]: Number(rows[0][column]), delta: amount, note: note || null })]
+     JSON.stringify({ progress: beforeRows[0].progress }),
+     JSON.stringify({ progress: value, note: note || null })]
   );
 
+  getIO().emit('checkpoint:update', rows[0]);
   res.json(numericCheckpoint(rows[0]));
-}));
-
-// 取消某一場 PK 對戰的扣分懲罰：把當初扣掉的分數加回對應交摺點，並留下稽核紀錄。
-// penalty_amount 本身不會被清掉（留著當「當初扣了多少」的歷史紀錄），
-// 用 penalty_cancelled_at 是否有值來判斷這筆懲罰現在還算不算數。
-router.post('/overrides/pk/:duelId/cancel-penalty', asyncHandler(async (req, res) => {
-  const { duelId } = req.params;
-
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { rows: duelRows } = await client.query(
-      'SELECT * FROM pk_duels WHERE id = $1 FOR UPDATE', [duelId]
-    );
-    if (duelRows.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'duel not found' });
-    }
-    const duel = duelRows[0];
-
-    if (duel.status !== 'completed') {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'duel has not completed yet' });
-    }
-    if (duel.penalty_cancelled_at) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'this penalty was already cancelled' });
-    }
-    if (!duel.penalty_checkpoint_attempt_id || Number(duel.penalty_amount) <= 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'this duel has no penalty to cancel' });
-    }
-
-    const { rows: attemptRows } = await client.query(
-      'SELECT checkpoint_id, faction FROM checkpoint_attempts WHERE id = $1',
-      [duel.penalty_checkpoint_attempt_id]
-    );
-    const attempt = attemptRows[0];
-    const column = attempt.faction === 'repair' ? 'repair_value' : 'disrupt_value';
-
-    const { rows: checkpointRows } = await client.query(
-      `UPDATE checkpoints SET ${column} = ${column} + $1, updated_at = now()
-       WHERE id = $2 RETURNING id, name, repair_value, disrupt_value`,
-      [duel.penalty_amount, attempt.checkpoint_id]
-    );
-
-    await client.query(
-      `UPDATE pk_duels SET penalty_cancelled_at = now() WHERE id = $1`,
-      [duelId]
-    );
-
-    await client.query(
-      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-       VALUES ($1, 'cancel_pk_penalty', 'pk_duel', $2, $3, $4)`,
-      [
-        req.admin.sub,
-        duelId,
-        JSON.stringify({ penaltyAmount: duel.penalty_amount, checkpointId: attempt.checkpoint_id }),
-        JSON.stringify({ cancelled: true })
-      ]
-    );
-
-    await client.query('COMMIT');
-
-    getIO().emit('checkpoint:update', checkpointRows[0]);
-    res.json({ ok: true, checkpoint: checkpointRows[0] });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
 }));
 
 module.exports = router;

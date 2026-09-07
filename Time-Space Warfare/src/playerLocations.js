@@ -10,7 +10,26 @@
 // 連線是用 live 這個欄位標出來（見 getAllLocations），前端據此決定要顯示「現在」
 // 還是「X 分鐘前」，不是由伺服器端刪資料來表示。
 
-const locations = new Map(); // playerId -> { displayName, faction, lat, lng, updatedAt }
+const crypto = require('crypto');
+
+const locations = new Map(); // playerId -> { lat, lng, updatedAt }
+
+// 地圖上的圓點是「匿名」的（見 溫馨周企劃.pdf：玩家要靠「某據點進度驟降」＋
+// 「當時停留在那裡的匿名圓點」自己推理內鬼身分）。所以對外一律不給代號、不給
+// 陣營，只給一個看不出身分的代號用來讓前端把同一個圓點跨輪詢對起來——沒有它
+// 的話每次輪詢都是新標記，軌跡就斷了，推理也就無從做起。
+//
+// 不直接用 playerId：玩家自己的登入畫面看得到「隊伍 #N」，playerId 跟 team id
+// 是同時建立的連號，等於把「幾號圓點是幾隊」送到對方手上。這裡改發一組隨機
+// 代號，process 重啟就重編（重啟本來就會清空所有座標，行為一致）。
+const aliases = new Map(); // playerId -> 匿名代號
+
+function aliasOf(playerId) {
+  if (!aliases.has(playerId)) {
+    aliases.set(playerId, crypto.randomBytes(6).toString('hex'));
+  }
+  return aliases.get(playerId);
+}
 
 // 玩家端是每 2 秒上傳一次，超過這麼久沒收到新的更新，就視為目前斷線中
 // （只影響 live 這個欄位怎麼標，不會把資料刪掉）。
@@ -20,14 +39,15 @@ function setLocation(playerId, data) {
   locations.set(playerId, { ...data, updatedAt: Date.now() });
 }
 
-function getAllLocations() {
+// excludePlayerId：呼叫者自己。自己的位置前端直接用 GPS 畫（不必等伺服器繞一圈），
+// 而且從清單裡拿掉之後，玩家連「哪一顆是我」都無從對照起，更不可能反推別人。
+function getAllLocations(excludePlayerId) {
   const now = Date.now();
   const result = [];
   for (const [playerId, data] of locations) {
+    if (playerId === excludePlayerId) continue;
     result.push({
-      playerId,
-      displayName: data.displayName,
-      faction: data.faction,
+      id: aliasOf(playerId),
       lat: data.lat,
       lng: data.lng,
       updatedAt: data.updatedAt,

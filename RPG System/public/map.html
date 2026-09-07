@@ -7,21 +7,26 @@
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-  body { max-width: none; padding: 0; }
-  #map { height: 100vh; width: 100%; }
+  /* 版面改成「上面一條 bar、下面整塊地圖」的正常排版，而不是把 bar 浮在地圖上。
+     原本 .top-bar 是 position:absolute 疊在地圖上，剛好壓住 Leaflet 左上角的
+     縮放 +/- 按鈕，放大縮小要盲點。改成正常流之後就不會互相蓋到。 */
+  html, body { height: 100%; }
+  body { max-width: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+  #content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #map { flex: 1; min-height: 0; width: 100%; }
   .top-bar {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    right: 8px;
-    z-index: 1000;
+    flex: none;
     background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 8px;
+    border-bottom: 1px solid var(--line);
     padding: 8px 12px;
     font-size: 0.9rem;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px;
   }
-  .top-bar a { margin-right: 8px; }
+  .top-bar .back {
+    color: var(--accent); text-decoration: none; font-weight: 700;
+    padding: 4px 8px; margin: -4px 0 -4px -8px; border-radius: 4px;
+  }
+  .top-bar .back:hover, .top-bar .back:active { background: var(--card-3); }
 </style>
 </head>
 <body>
@@ -31,7 +36,7 @@
 
 <div id="content" style="display:none">
   <div class="top-bar">
-    <a href="index.html">&laquo; 回儀表板</a>
+    <a class="back" href="index.html">&laquo; 回儀表板</a>
     <strong>探索導覽</strong>
     <span id="progressSummary"></span>
     <span id="locationStatus"></span>
@@ -102,6 +107,11 @@ function initMap() {
     maxBoundsViscosity: 1.0
   });
   map.fitBounds(BOUNDS);
+  // GPS 圍籬的提示條出現/消失會改變地圖容器的高度，但那不是視窗 resize，Leaflet
+  // 不會自己發現，會繼續用舊尺寸繪製（底部露灰帶、點到的座標也會偏）。盯著容器
+  // 本身，尺寸一變就叫 Leaflet 重新量。
+  new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+
 
   // 自行 host 的活動範圍 tile 圖磚（scripts/download-tiles.js 下載好放進
   // public/tiles/），不對外連任何 tile server。

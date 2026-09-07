@@ -19,21 +19,19 @@ router.post('/', (req, res) => {
   if (!isPlausibleCampusCoord(lat, lng)) {
     return res.status(400).json({ error: '座標超出活動區域範圍太多，已忽略這次上傳' });
   }
-  setLocation(req.player.sub, {
-    displayName: req.player.displayName,
-    faction: req.player.faction,
-    lat,
-    lng
-  });
+  // 只存座標。代號跟陣營刻意不存進來——地圖是匿名的，存了就遲早會從某個
+  // 回應漏出去（見 src/playerLocations.js 的說明）。
+  setLocation(req.player.sub, { lat, lng });
   res.status(204).end();
 });
 
-// 大地圖顯示每個玩家「最後已知」的位置，不分陣營、不分隊伍，關掉瀏覽器/斷線
-// 也不會從清單消失——只是每一筆會多帶 live（是否仍在連線中）跟 updatedAt
-// （最後上傳時間），前端據此顯示「現在」或「X 分鐘前」（見 public/map.html）。
+// 大地圖顯示每支隊伍「最後已知」的位置，一律是匿名圓點：沒有代號、沒有陣營，
+// 只有一組看不出身分的 id（用來把同一顆圓點跨輪詢對起來，軌跡才連得起來）。
+// 關掉瀏覽器/斷線也不會從清單消失——每一筆多帶 live（是否仍在連線中）跟
+// updatedAt（最後上傳時間），前端據此顯示「現在」或「X 分鐘前」。
 // 玩家端每 2 秒 poll 一次，不用 Socket.IO 推播。
 router.get('/', (req, res) => {
-  res.json(getAllLocations());
+  res.json(getAllLocations(req.player.sub));
 });
 
 module.exports = router;

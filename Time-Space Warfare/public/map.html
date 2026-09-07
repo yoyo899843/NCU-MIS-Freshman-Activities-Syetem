@@ -7,8 +7,12 @@
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-  body { max-width: none; padding: 0; }
-  #map { height: 100vh; width: 100%; }
+  /* 版面改成「上面一條 bar、下面整塊地圖」的正常排版，而不是把 bar 浮在地圖上。
+     原本 .top-bar 是 position:absolute 疊在地圖上，剛好壓住 Leaflet 左上角的
+     縮放 +/- 按鈕，放大縮小要盲點。改成正常流之後就不會互相蓋到。 */
+  html, body { height: 100%; }
+  body { max-width: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+  #map { flex: 1; min-height: 0; width: 100%; }
   .legend { margin-top: 6px; font-size: 0.78rem; color: var(--dim); }
   .legend span { margin-right: 10px; white-space: nowrap; }
   .legend .sw {
@@ -48,21 +52,24 @@
   .cp-marker.tie .cp-lead { background: #646c75; }
 
   .top-bar {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    right: 8px;
-    z-index: 1000;
+    flex: none;
     background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 8px;
+    border-bottom: 1px solid var(--line);
     padding: 8px 12px;
     font-size: 0.9rem;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px;
   }
+  .top-bar .back {
+    color: var(--accent); text-decoration: none; font-weight: 700;
+    /* 手指點得到的大小，不要只有一行小字 */
+    padding: 4px 8px; margin: -4px 0 -4px -8px; border-radius: 4px;
+  }
+  .top-bar .back:hover, .top-bar .back:active { background: var(--card-3); }
 </style>
 </head>
 <body>
 <div class="top-bar">
+  <a class="back" href="index.html">&laquo; 回首頁</a>
   <strong>大地圖</strong>
   <span id="checkpointStatus"></span>
   <span id="locationStatus"></span>
@@ -130,6 +137,11 @@ function applyMinZoom() {
 applyMinZoom();
 map.fitBounds(BOUNDS);
 map.on('resize', applyMinZoom);
+// GPS 圍籬的提示條出現/消失會改變地圖容器的高度，但那不是視窗 resize，Leaflet
+// 不會自己發現，會繼續用舊尺寸繪製（底部露灰帶、點到的座標也會偏）。盯著容器
+// 本身，尺寸一變就叫 Leaflet 重新量。
+new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+
 
 // 自行 host 的校園範圍 tile 圖磚（活動籌備期間用 scripts/download-tiles.js 下載），
 // 不對外連任何 tile server。
@@ -236,19 +248,18 @@ function updateSelfMarker(lat, lng) {
 if (token && playerInfo) {
   document.getElementById('locationStatus').textContent = '（定位分享中）';
 
-  // 大地圖直接顯示所有人的位置，不分陣營、不分隊伍——不用等隊友，任何登入的
-  // 玩家都看得到彼此。座標刻意不落地到 DB，但關掉瀏覽器/斷線也不會讓標記消失：
-  // 伺服器一直保留每個人最後一次回報的座標，只是標記會從「連線中」（實心、
-  // 顯示「現在」）變成「離線」（半透明、顯示「X 分鐘前」），見下面 live 欄位。
-  const otherMarkers = new Map(); // playerId -> L.CircleMarker
-  const selfPlayerId = playerInfo.player.id;
+  // 大地圖上其他隊伍一律是「匿名圓點」：同一種顏色、沒有代號、沒有陣營。
+  // 這是遊戲機制的一部分而不是隱私考量——玩家要靠「某據點進度驟降」搭配「當時
+  // 停留在那裡的圓點」自己推理內鬼身分（見 溫馨周企劃.pdf）。標記如果寫著隊名
+  // 跟陣營，抓內鬼這件事就不用玩了。伺服器端也不會發出這些欄位，見
+  // src/playerLocations.js。
+  //
+  // 座標刻意不落地到 DB，但關掉瀏覽器/斷線也不會讓標記消失：伺服器一直保留每支
+  // 隊伍最後一次回報的座標，只是標記會從「連線中」（實心）變成「離線」（半透明），
+  // 見下面的 live 欄位。軌跡要連得起來，所以每筆帶一個匿名 id 當標記的鍵。
+  const otherMarkers = new Map(); // 匿名 id -> L.CircleMarker
+  const OTHER_COLOR = '#8fa3b8'; // 中性灰藍，跟自己的藍點、跟兩個陣營色都不撞
 
-  function factionColor(faction) {
-    return faction === 'repair' ? '#2a8' : '#c00';
-  }
-  function factionLabel(faction) {
-    return faction === 'repair' ? '時空修復者' : '時空破壞者';
-  }
   // live=false 時，用最後上傳時間（updatedAt）換算成「X 分鐘前」；剛斷線不到
   // 一分鐘先顯示「剛離線」，不然會一直卡在「0 分鐘前」很奇怪。
   function statusText(player) {
@@ -281,23 +292,25 @@ if (token && playerInfo) {
         // 這裡回來的名單不會因為斷線而少人，所以不用做「消失名單裡沒有的標記」
         // 那種清理——每個人只會一直被更新（位置 + 連線狀態），不會被移除。
         players.forEach(p => {
-          if (p.playerId === selfPlayerId) return; // 自己已經用 selfMarker 畫過了
+          // 自己不在這份清單裡（伺服器就沒回），所以不用另外過濾。
+          //
+          // tooltip 不設 permanent：二十顆點各掛一張「其他隊伍」的常駐標籤只是
+          // 把地圖糊掉，而且真正有用的資訊是「這顆點現在在哪」。要看新舊點一下
+          // 就好。內容也只有連線狀態，沒有任何身分資訊。
+          const tooltipText = escapeHtml(`其他隊伍（${statusText(p)}）`);
 
-          const color = factionColor(p.faction);
-          const tooltipText = `${p.displayName || '?'}（${factionLabel(p.faction)}）<br>${statusText(p)}`;
-
-          let marker = otherMarkers.get(p.playerId);
+          let marker = otherMarkers.get(p.id);
           if (!marker) {
             marker = L.circleMarker([p.lat, p.lng], {
               radius: 8,
-              color,
-              fillColor: color,
+              color: OTHER_COLOR,
+              fillColor: OTHER_COLOR,
               fillOpacity: p.live ? 0.85 : 0.35
-            }).addTo(map).bindTooltip(tooltipText, { permanent: true });
-            otherMarkers.set(p.playerId, marker);
+            }).addTo(map).bindTooltip(tooltipText);
+            otherMarkers.set(p.id, marker);
           } else {
             marker.setLatLng([p.lat, p.lng]);
-            marker.setStyle({ color, fillColor: color, fillOpacity: p.live ? 0.85 : 0.35 });
+            marker.setStyle({ fillOpacity: p.live ? 0.85 : 0.35 });
             marker.setTooltipContent(tooltipText);
           }
         });
