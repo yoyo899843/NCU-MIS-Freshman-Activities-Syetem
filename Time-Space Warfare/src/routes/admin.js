@@ -421,8 +421,11 @@ router.delete('/questions/:id', asyncHandler(async (req, res) => {
 // 「關卡ID/PK」欄：空白＝通用題庫；填 PK（不分大小寫）＝PK 專用；填數字＝該交摺點專屬。
 // 用 csv-parse 的 stream/async-iterator 介面逐筆處理、每 20 筆一批寫入，
 // 避免大檔案同步解析卡住 event loop（這台伺服器同時也在跑玩家的即時連線）。
-function validateCsvRow(record, rowNumber, checkpointIds) {
-  const scopeRaw = (record['關卡ID/PK'] || '').trim();
+// forceScope：從 PK 對戰管理那一頁上傳時會帶 'pk'，代表整份 CSV 都是 PK 題目，
+// 「關卡ID/PK」欄直接忽略（那一頁的範例 CSV 根本沒有這一欄）。題庫管理頁不帶這個
+// 參數，維持原本「一份 CSV 混著三種歸屬」的行為。
+function validateCsvRow(record, rowNumber, checkpointIds, forceScope) {
+  const scopeRaw = forceScope === 'pk' ? 'PK' : (record['關卡ID/PK'] || '').trim();
   const content = (record['題目'] || '').trim();
   const optionA = (record['選項A'] || '').trim();
   const optionB = (record['選項B'] || '').trim();
@@ -461,6 +464,11 @@ function validateCsvRow(record, rowNumber, checkpointIds) {
 router.post('/questions/import', upload.single('file'), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'file is required (multipart field name: file)' });
 
+  const forceScope = (req.body && req.body.forceScope) || null;
+  if (forceScope !== null && forceScope !== 'pk') {
+    return res.status(400).json({ error: 'forceScope 目前只支援 pk' });
+  }
+
   const { rows: checkpoints } = await db.query('SELECT id FROM checkpoints');
   const checkpointIds = new Set(checkpoints.map(c => c.id));
 
@@ -495,7 +503,7 @@ router.post('/questions/import', upload.single('file'), asyncHandler(async (req,
 
   for await (const record of parser) {
     rowNumber += 1;
-    const validated = validateCsvRow(record, rowNumber, checkpointIds);
+    const validated = validateCsvRow(record, rowNumber, checkpointIds, forceScope);
     if (validated.error) {
       result.failed.push({ row: rowNumber, reason: validated.error });
       continue;

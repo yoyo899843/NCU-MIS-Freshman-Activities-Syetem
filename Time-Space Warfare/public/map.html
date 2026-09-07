@@ -78,22 +78,56 @@ const playerInfo = JSON.parse(localStorage.getItem('playerInfo') || 'null');
 // 輪詢（見 src/routes/locations.js），不再用 Socket.IO。
 const LOCATION_INTERVAL_MS = 2000;
 
-// 校園 bounding box（跟 geofence.js 的 CAMPUS_BOUNDS 是同一個範圍）
+// 遊戲範圍。數值跟 geofence.js 的 CAMPUS_BOUNDS 相同，但兩者是不同的東西：
+// 那邊管「離開這個範圍就不能玩」，這邊只拿來決定開場要框住哪一塊。
 const BOUNDS = L.latLngBounds(
   [24.964764, 121.184735],
   [24.972425, 121.197936]
 );
-const CENTER = BOUNDS.getCenter();
+
+// 地圖能拖到哪、能縮多小，取決於磁碟上真的有圖磚的範圍，跟遊戲範圍是兩回事。
+// scripts/download-tiles.js 是以 BOUNDS 去抓，但圖磚是切齊格線的，每一級實際
+// 蓋到的矩形都不一樣大（z15 往外多很多，z19 最貼）；能安全走動的只有「每一級
+// 都蓋得到」的交集，也就是 z19 那塊，再往內縮 3 公尺避開格線本身：
+//   lat 24.964273~24.972987, lng 121.184692~121.198425（z19 圖磚涵蓋範圍）
+// 這塊完整包住 BOUNDS，所以玩家看得到全部交摺點。圖磚重抓過的話這裡要一起改。
+//
+// 原本這裡是 BOUNDS.pad(0.1)，四個方向都超出圖磚範圍，拖到邊緣就是一片空白。
+const TILE_BOUNDS = L.latLngBounds(
+  [24.964300, 121.184722],
+  [24.972960, 121.198396]
+);
 
 const map = L.map('map', {
-  minZoom: 15,
   maxZoom: 19,
-  maxBounds: BOUNDS.pad(0.1),
+  maxBounds: TILE_BOUNDS,
   maxBoundsViscosity: 1.0
-}).setView(CENTER, 17);
+});
+
+// minZoom 是「最多能縮多小」。原本寫死 15，但 z15 的圖磚總共只有 512x512 px，
+// 鋪不滿一個螢幕——縮到底看到的是校園變一個小點、四周一大片灰，等於沒有下限。
+//
+// 正確的下限是「TILE_BOUNDS 剛好還鋪得滿整個畫面」的那一級，而它跟螢幕大小
+// 有關，不是固定值（#map 是 100vh，畫面多大就要鋪多大）：TILE_BOUNDS 在 z17
+// 是 1274x890 px，手機夠鋪滿，但 1440px 寬的桌機左右兩側就會露出灰邊。所以交
+// 給 Leaflet 依當下畫面去算（getBoundsZoom 第二個參數 inside=true 就是問「哪
+// 一級才能讓這塊範圍蓋滿整個畫面」），轉螢幕方向、改視窗大小時重算。
+function applyMinZoom() {
+  const fill = map.getBoundsZoom(TILE_BOUNDS, true);
+  map.setMinZoom(Math.min(fill, map.getMaxZoom()));
+}
+
+// 先算下限、再 fitBounds，順序不能反過來：fitBounds 是「把整塊範圍塞進畫面裡」，
+// 在還沒有下限的狀態下它會一路縮到 z15/z16，載入的瞬間就閃一下缺圖。
+applyMinZoom();
+map.fitBounds(BOUNDS);
+map.on('resize', applyMinZoom);
 
 // 自行 host 的校園範圍 tile 圖磚（活動籌備期間用 scripts/download-tiles.js 下載），
 // 不對外連任何 tile server。
+// 這裡的 minZoom/maxZoom 說的是「磁碟上有哪幾級的圖磚」（download-tiles.js 抓了
+// 15~19），不是使用者能縮到哪——那個由上面 map 的 minZoom 決定。兩者刻意分開：
+// 小螢幕上 applyMinZoom 有可能算出 16，這一層要放得比它寬才不會整片空白。
 L.tileLayer('/tiles/{z}/{x}/{y}.png', {
   minZoom: 15,
   maxZoom: 19,

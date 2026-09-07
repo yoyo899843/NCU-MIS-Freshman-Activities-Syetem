@@ -18,13 +18,16 @@
 </head>
 <body>
 <h1>題庫管理</h1>
-<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+<p class="nav">
+  <a href="index.html">&laquo; 回管理後台</a>
+  <a href="pk.html">PK 題庫</a>
+</p>
+<p class="hint">這一頁管交摺點挑戰用的題目（通用題庫＋交摺點專屬）。PK 對戰的題目已經跟對戰紀錄合併到「<a href="pk.html">PK 對戰管理</a>」那一頁，不在這裡列出。</p>
 
 <div class="card">
   <h3 id="formTitle">新增題目</h3>
   <select id="scopeType">
     <option value="general">通用題庫</option>
-    <option value="pk">PK 專用</option>
     <option value="checkpoint">特定交摺點</option>
   </select>
   <select id="checkpointId" style="display:none"></select>
@@ -51,7 +54,7 @@
 
 <div class="card">
   <h3>CSV 批次匯入</h3>
-  <p style="font-size:0.85rem">欄位格式：關卡ID/PK, 題目, 選項A, 選項B, 選項C, 選項D, 正確選項, 秒數（關卡ID/PK 欄留空＝通用題庫，填 PK＝PK 專用，填交摺點 ID＝該交摺點專屬）</p>
+  <p style="font-size:0.85rem">欄位格式：關卡ID/PK, 題目, 選項A, 選項B, 選項C, 選項D, 正確選項, 秒數（關卡ID/PK 欄留空＝通用題庫，填交摺點 ID＝該交摺點專屬）。這一欄仍然吃得下 PK，但那樣匯進去的題目只會出現在「PK 對戰管理」那一頁；要匯 PK 題目建議直接用那一頁的匯入功能。</p>
   <p class="nav"><a href="sample-questions.csv" download>下載範例 CSV</a></p>
   <input type="file" id="csvFile" accept=".csv">
   <button id="importBtn">上傳匯入</button>
@@ -91,7 +94,6 @@ async function api(path, options = {}) {
 }
 
 function scopeLabel(q) {
-  if (q.scope_type === 'pk') return 'PK 專用';
   if (q.scope_type === 'general') return '通用';
   const cp = checkpoints.find(c => c.id === q.checkpoint_id);
   return '交摺點：' + (cp ? cp.name : `#${q.checkpoint_id}`);
@@ -106,7 +108,9 @@ async function loadCheckpoints() {
 
 async function loadQuestions() {
   const res = await api('/questions');
-  const questions = await res.json();
+  // PK 題目歸 pk.html 管，這裡只留交摺點挑戰會抽到的（通用＋交摺點專屬），
+  // 免得同一題在兩頁都能改、改完又搞不清楚剛剛是在哪一頁動的。
+  const questions = (await res.json()).filter(q => q.scope_type !== 'pk');
   const body = document.getElementById('questionsBody');
   body.innerHTML = questions.map(q => `
     <tr>

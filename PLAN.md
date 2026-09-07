@@ -105,12 +105,12 @@
 
 ## 管理後台 — PK 對戰管理（實作完成）
 
-獨立的一頁 `public/admin/pk-duels.html`，對應規格裡「戰況覆寫」中 PK 的部分：列出所有 PK 對戰、取消某場對戰的扣分懲罰。一般積分覆寫（`/admin/api/overrides/score`，跟 PK 無關的手動增減分數）還是 stub，不在這次範圍內。
+獨立的一頁 `public/admin/pk.html`（原本叫 `pk-duels.html`，後來把 PK 題庫也併進同一頁，就不只是「對戰列表」了），對應規格裡「戰況覆寫」中 PK 的部分：列出所有 PK 對戰、取消某場對戰的扣分懲罰。一般積分覆寫（`/admin/api/overrides/score`，跟 PK 無關的手動增減分數）還是 stub，不在這次範圍內。
 
 - **新增欄位**（`migrations/003_pk_penalty_cancel.sql`）：`pk_duels.penalty_cancelled_at`。`penalty_amount` 保留「當初扣了多少」的歷史紀錄不清掉，用 `penalty_cancelled_at` 是否有值判斷這筆懲罰現在還算不算數，取消時分數用同一個金額加回去，帳目對得起來。
 - **清單**（`GET /admin/api/pk-duels`）：JOIN 雙方玩家/隊伍/交摺點資料，一次回傳管理員看得懂的完整資訊（誰對誰、哪個陣營、扣了哪個交摺點多少分、有沒有被取消過），最多回最近 100 場。
 - **取消扣分**（`POST /admin/api/overrides/pk/:duelId/cancel-penalty`）：整個操作包在一個 DB transaction 裡，用 `SELECT ... FOR UPDATE` 鎖住那筆 `pk_duels`，依序檢查「對戰是否已結束」「是否本來就沒有扣分」「是否已經取消過」，通過才把分數加回對應交摺點的 `repair_value`/`disrupt_value`、標記 `penalty_cancelled_at`、寫一筆 `admin_actions` 稽核紀錄（記錄是哪個管理員、原本扣了多少、扣哪個交摺點），最後廣播 `checkpoint:update` 讓正在看地圖/Dashboard 的人即時看到分數變化。已測過：正常取消（分數精確加回原本扣掉的數字）、重複取消（擋掉並回錯誤）、對沒有扣分的對戰取消（擋掉）、對不存在的對戰 ID 操作（404），稽核紀錄也確認正確寫入。
-- **前端**：`public/admin/pk-duels.html`，表格列出房號、雙方（含陣營標籤）、狀態、勝負（顯示玩家名稱，不是原始 ID）、扣分資訊（已取消的用刪除線標示）、建立時間，符合條件的列才會出現「取消扣分」按鈕。`admin/index.html` 加了連結過去。
+- **前端**：`public/admin/pk.html`，表格列出房號、雙方（含陣營標籤）、狀態、勝負（顯示玩家名稱，不是原始 ID）、扣分資訊（已取消的用刪除線標示）、建立時間，符合條件的列才會出現「取消扣分」按鈕。`admin/index.html` 加了連結過去。
 
 ## 玩家登入模式變更：一組一支手機 + PIN 找回身份（實作完成）
 

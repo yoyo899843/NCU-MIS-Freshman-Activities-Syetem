@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PK 對戰管理 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 900px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; font-size: 0.85rem; }
+  th { background: var(--card-2); }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
+  .tag-repair { background: #2a6dd1; }
+  .tag-disrupt { background: #c0392b; }
+  .tag-waiting { background: #626b75; color:#fff; }
+  .tag-active { background: #2a7d2a; color:#fff; }
+  .tag-completed { background: #555; color:#fff; }
+  .tag-cancelled { background: #7a4b00; color:#fff; }
+  .cancelled { text-decoration: line-through; color: var(--dim); }
+  table button { width: auto; padding: 4px 8px; }
+  .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 0 0; }
+  .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  select { display: block; width: 100%; padding: 8px; margin-bottom: 8px; }
+  .bank-status { font-size: 0.9rem; margin: 0 0 8px; }
+  .bank-status.warn { color: var(--accent); }
+  .bank-status.bad { color: var(--danger); }
+</style>
+</head>
+<body>
+<h1>PK 對戰管理</h1>
+<p class="nav">
+  <a href="index.html">&laquo; 回管理後台</a>
+  <a href="#duels">跳到對戰紀錄</a>
+  <a href="questions.html">交摺點／通用題庫</a>
+</p>
+
+<!-- PK 題庫先、對戰紀錄後：題庫是賽前要準備好的東西，對戰紀錄是賽中/賽後才看的。 -->
+<div class="card" id="bank">
+  <h2>PK 題庫</h2>
+  <p id="bankStatus" class="bank-status">載入中...</p>
+  <p class="hint">PK 只會從這裡的題目抽題，不會抽到通用題庫或交摺點專屬題目。一場抽幾題、每題幾秒是統一設定，在<a href="index.html">管理後台首頁</a>的「PK 對戰設定」調整——所以這一頁的表單不用（也不能）逐題設定秒數。</p>
+</div>
+
+<div class="card">
+  <h3 id="formTitle">新增 PK 題目</h3>
+  <input id="content" placeholder="題目內容">
+  <div class="options-grid">
+    <input id="optionA" placeholder="選項 A">
+    <input id="optionB" placeholder="選項 B">
+    <input id="optionC" placeholder="選項 C">
+    <input id="optionD" placeholder="選項 D">
+  </div>
+  <select id="correctOption">
+    <option value="A">正確答案：A</option>
+    <option value="B">正確答案：B</option>
+    <option value="C">正確答案：C</option>
+    <option value="D">正確答案：D</option>
+  </select>
+  <button id="saveBtn">新增 PK 題目</button>
+  <button id="cancelEditBtn" style="display:none">取消編輯</button>
+  <p id="formResult" class="error"></p>
+</div>
+
+<div class="card">
+  <h3>CSV 批次匯入（全部匯成 PK 題目）</h3>
+  <p style="font-size:0.85rem">欄位格式：題目, 選項A, 選項B, 選項C, 選項D, 正確選項。從這裡上傳的每一列都會直接歸成 PK 專用，不用再填歸屬欄。</p>
+  <p class="nav"><a href="sample-pk-questions.csv" download>下載 PK 範例 CSV</a></p>
+  <input type="file" id="csvFile" accept=".csv">
+  <button id="importBtn">上傳匯入</button>
+  <p id="importResult"></p>
+</div>
+
+<div class="card">
+  <h3>PK 題目清單</h3>
+  <table>
+    <thead>
+      <tr><th>題目</th><th>選項</th><th>正確答案</th><th></th></tr>
+    </thead>
+    <tbody id="questionsBody"></tbody>
+  </table>
+</div>
+
+<div class="card" id="duels">
+  <h2>對戰紀錄</h2>
+  <button id="refreshBtn">重新整理</button>
+  <table>
+    <thead>
+      <tr>
+        <th>房號</th>
+        <th>對戰雙方</th>
+        <th>狀態</th>
+        <th>勝負</th>
+        <th>扣分懲罰</th>
+        <th>建立時間</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="duelsBody"></tbody>
+  </table>
+</div>
+
+<script src="../authFetch.js"></script>
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ---------------- PK 題庫 ---------------- */
+
+let editingId = null;
+let pkQuestions = [];
+let questionsPerDuel = null; // 後台設定的「一場抽幾題」，用來判斷題庫夠不夠
+
+// 題庫夠不夠是這一頁最值得先講的事：PK 抽不到題會直接開不了場（createSession 會丟
+// 'no PK questions available'），題目比一場要抽的少則會安靜地打成短局，兩種都不會有人
+// 主動來回報，所以放在最上面直接算給人看。
+function renderBankStatus() {
+  const el = document.getElementById('bankStatus');
+  const n = pkQuestions.length;
+  if (n === 0) {
+    el.className = 'bank-status bad';
+    el.textContent = '目前沒有任何 PK 題目，玩家會完全發不起對戰。請先新增題目。';
+    return;
+  }
+  if (questionsPerDuel != null && n < questionsPerDuel) {
+    el.className = 'bank-status warn';
+    el.textContent = `目前 ${n} 題，但一場要抽 ${questionsPerDuel} 題——題目不夠，對戰只會出 ${n} 題就結束。`;
+    return;
+  }
+  el.className = 'bank-status';
+  el.textContent = questionsPerDuel != null
+    ? `目前 ${n} 題，一場抽 ${questionsPerDuel} 題。`
+    : `目前 ${n} 題。`;
+}
+
+async function loadPkSettings() {
+  // 關主沒有讀 game/state 的權限，拿不到就只是少顯示「一場抽幾題」，不擋整頁。
+  try {
+    const res = await api('/game/state');
+    if (!res.ok) return;
+    const state = await res.json();
+    if (state.pk_questions_per_duel != null) questionsPerDuel = Number(state.pk_questions_per_duel);
+  } catch (err) {
+    /* 忽略：這只是輔助資訊 */
+  }
+}
+
+async function loadQuestions() {
+  // /questions 回傳整個題庫（通用＋交摺點＋PK），這一頁只留 PK 的。題目總數是幾百筆
+  // 等級，沒必要為了這個再開一支帶篩選的 API。
+  const res = await api('/questions');
+  const all = await res.json();
+  pkQuestions = all.filter(q => q.scope_type === 'pk');
+
+  document.getElementById('questionsBody').innerHTML = pkQuestions.map(q => `
+    <tr>
+      <td>${escapeHtml(q.content)}</td>
+      <td style="color:var(--dim)">
+        A. ${escapeHtml(q.option_a)}　B. ${escapeHtml(q.option_b)}<br>
+        C. ${escapeHtml(q.option_c)}　D. ${escapeHtml(q.option_d)}
+      </td>
+      <td>${escapeHtml(q.correct_option)}</td>
+      <td class="row-actions">
+        <button onclick="startEdit(${q.id})">編輯</button>
+        <button onclick="deleteQuestion(${q.id})">刪除</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="4">目前沒有 PK 題目</td></tr>';
+
+  renderBankStatus();
+}
+
+function resetForm() {
+  editingId = null;
+  document.getElementById('formTitle').textContent = '新增 PK 題目';
+  document.getElementById('saveBtn').textContent = '新增 PK 題目';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  document.getElementById('content').value = '';
+  document.getElementById('optionA').value = '';
+  document.getElementById('optionB').value = '';
+  document.getElementById('optionC').value = '';
+  document.getElementById('optionD').value = '';
+  document.getElementById('correctOption').value = 'A';
+}
+
+window.startEdit = function (id) {
+  const q = pkQuestions.find(x => x.id === id);
+  if (!q) return;
+  editingId = id;
+  document.getElementById('formTitle').textContent = `編輯 PK 題目 #${id}`;
+  document.getElementById('saveBtn').textContent = '更新題目';
+  document.getElementById('cancelEditBtn').style.display = '';
+  document.getElementById('content').value = q.content;
+  document.getElementById('optionA').value = q.option_a;
+  document.getElementById('optionB').value = q.option_b;
+  document.getElementById('optionC').value = q.option_c;
+  document.getElementById('optionD').value = q.option_d;
+  document.getElementById('correctOption').value = q.correct_option;
+  window.scrollTo(0, 0);
+};
+
+window.deleteQuestion = async function (id) {
+  if (!confirm('確定要刪除這一題嗎？')) return;
+  const res = await api(`/questions/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || `刪除失敗 (${res.status})`);
+    return;
+  }
+  if (editingId === id) resetForm();
+  await loadQuestions();
+};
+
+document.getElementById('cancelEditBtn').addEventListener('click', resetForm);
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('formResult');
+  const body = {
+    scopeType: 'pk',
+    checkpointId: null,
+    content: document.getElementById('content').value.trim(),
+    optionA: document.getElementById('optionA').value.trim(),
+    optionB: document.getElementById('optionB').value.trim(),
+    optionC: document.getElementById('optionC').value.trim(),
+    optionD: document.getElementById('optionD').value.trim(),
+    correctOption: document.getElementById('correctOption').value,
+    // 後端仍要求正整數秒數，但 PK 實際跑的是後台設定的值（createSession 會蓋掉）。
+    // 這裡沿用編輯中那題原本的秒數，新增則給 10，避免無謂地改動既有資料。
+    timeLimitSeconds: (editingId && pkQuestions.find(q => q.id === editingId)?.time_limit_seconds) || 10
+  };
+
+  const res = await api(editingId ? `/questions/${editingId}` : '/questions', {
+    method: editingId ? 'PATCH' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    return;
+  }
+  resultEl.textContent = '';
+  resetForm();
+  await loadQuestions();
+});
+
+document.getElementById('importBtn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('csvFile');
+  const resultEl = document.getElementById('importResult');
+  if (!fileInput.files[0]) {
+    resultEl.textContent = '請先選擇 CSV 檔案';
+    resultEl.className = 'error';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  formData.append('forceScope', 'pk'); // 從這一頁上傳的一律歸成 PK，忽略 CSV 裡的歸屬欄
+
+  const res = await api('/questions/import', { method: 'POST', body: formData });
+  const data = await res.json();
+  if (!res.ok) {
+    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    resultEl.className = 'error';
+    return;
+  }
+  resultEl.className = '';
+  resultEl.textContent = `匯入完成：成功 ${data.inserted} 筆，失敗 ${data.failed.length} 筆。` +
+    (data.failed.length ? ' 失敗原因：' + data.failed.map(f => f.reason).join('；') : '');
+  await loadQuestions();
+});
+
+/* ---------------- 對戰紀錄 ---------------- */
+
+const factionLabel = f => f === 'repair' ? '修復者' : f === 'disrupt' ? '破壞者' : f;
+const statusLabel = s => ({ waiting: '等待配對', active: '進行中', completed: '已結束', cancelled: '已取消' }[s] || s);
+
+function renderResult(d) {
+  if (d.status !== 'completed') return '-';
+  const nameOf = playerId => playerId === d.host_player_id ? d.host_name : d.guest_name;
+  return `勝：${escapeHtml(nameOf(d.winner_player_id))}　敗：${escapeHtml(nameOf(d.loser_player_id))}`;
+}
+
+function renderPenalty(d) {
+  if (!d.penalty_checkpoint_attempt_id || Number(d.penalty_amount) <= 0) return '無';
+  const cancelledClass = d.penalty_cancelled_at ? 'cancelled' : '';
+  const text = `<span class="${cancelledClass}">${escapeHtml(d.checkpoint_name || '?')} -${d.penalty_amount}</span>`;
+  return d.penalty_cancelled_at ? `${text}（已取消）` : text;
+}
+
+function renderActions(d) {
+  const canCancel = d.status === 'completed' &&
+    d.penalty_checkpoint_attempt_id &&
+    Number(d.penalty_amount) > 0 &&
+    !d.penalty_cancelled_at;
+  if (!canCancel) return '';
+  return `<button onclick="cancelPenalty('${d.id}')">取消扣分</button>`;
+}
+
+async function loadDuels() {
+  const res = await api('/pk-duels');
+  const duels = await res.json();
+  document.getElementById('duelsBody').innerHTML = duels.map(d => `
+    <tr>
+      <td>${escapeHtml(d.room_code)}</td>
+      <td>
+        ${escapeHtml(d.host_name)} <span class="tag tag-${d.host_faction}">${factionLabel(d.host_faction)}</span>
+        vs
+        ${escapeHtml(d.guest_name || '(尚未加入)')} ${d.guest_faction ? `<span class="tag tag-${d.guest_faction}">${factionLabel(d.guest_faction)}</span>` : ''}
+      </td>
+      <td><span class="tag tag-${d.status}">${statusLabel(d.status)}</span></td>
+      <td>${renderResult(d)}</td>
+      <td>${renderPenalty(d)}</td>
+      <td>${new Date(d.created_at).toLocaleString()}</td>
+      <td>${renderActions(d)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="7">目前沒有任何 PK 對戰紀錄</td></tr>';
+}
+
+window.cancelPenalty = async function (duelId) {
+  if (!confirm('確定要取消這場對戰的扣分懲罰嗎？分數會加回對應的交摺點。')) return;
+  const res = await api(`/overrides/pk/${duelId}/cancel-penalty`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error || `失敗 (${res.status})`);
+    return;
+  }
+  await loadDuels();
+};
+
+document.getElementById('refreshBtn').addEventListener('click', loadDuels);
+
+(async () => {
+  await loadPkSettings();
+  await loadQuestions();
+  await loadDuels();
+})();
+</script>
+</body>
+</html>

@@ -26,6 +26,14 @@
   <button id="logoutBtn">登出</button>
 </div>
 
+<!-- 工作人員入口單獨一張卡，不放進上面那個 nav：那個 nav 只有學派登入成功才會出現，
+     但管理員/關主本來就不會有學派帳號，要能直接進得去。也因為它跟登入狀態無關，
+     這張卡不做顯示/隱藏，兩種狀態下都在。 -->
+<div class="card">
+  <p class="nav"><a href="admin/login.html">管理後台</a></p>
+  <p class="hint">工作人員專用：管理員與關主從這裡登入。</p>
+</div>
+
 <script src="authFetch.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
