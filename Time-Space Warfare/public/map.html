@@ -29,6 +29,14 @@
   .cp-marker.disrupt { border-color: var(--disrupt); }
   .cp-marker .cp-name { font-weight: 700; color: var(--fg); }
   .cp-marker .cp-vals { font-variant-numeric: tabular-nums; }
+  /* 修復/破壞的比例條。底色是破壞、上面疊修復的寬度，兩段加起來就是整條。
+     min-width 是為了名字很短的交摺點——條子太短看不出比例。 */
+  .cp-marker .cp-bar {
+    display: block; min-width: 76px; height: 5px; margin: 3px 0 2px;
+    border-radius: 3px; overflow: hidden; background: var(--disrupt);
+  }
+  .cp-marker .cp-bar > i { display: block; height: 100%; background: var(--repair); }
+  .cp-marker .cp-bar.empty { background: var(--line); }
   .cp-marker .cp-r { color: var(--repair); font-weight: 700; }
   .cp-marker .cp-d { color: var(--disrupt); font-weight: 700; }
   .cp-marker .cp-lead {
@@ -146,12 +154,27 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
 
+// 一條把「修復 vs 破壞」畫成比例的橫條。數字要看清楚得停下來讀，走在路上抬頭
+// 掃一眼只想知道「這個點現在偏哪邊、差多少」，那是長度比文字快的事。
+function checkpointBar(cp) {
+  const repair = Number(cp.repairValue) || 0;
+  const disrupt = Number(cp.disruptValue) || 0;
+  const total = repair + disrupt;
+  // 兩邊都還是 0：畫一條中立的空條，不要畫成 50/50——那看起來像「兩邊平分」，
+  // 但實際狀況是「還沒有人碰過這個點」，意思完全不一樣。
+  if (total === 0) return '<span class="cp-bar empty"></span>';
+  const pct = Math.round((repair / total) * 1000) / 10;
+  return `<span class="cp-bar"><i style="width:${pct}%"></i></span>`;
+}
+
 function checkpointIcon(cp) {
   const lead = cp.leading || 'tie';
   // 顏色只是輔助，領先方另外用文字寫出來——色盲/大太陽下看不出顏色也能判讀。
+  // 比例條同理，是加在數字旁邊的輔助，不是拿來取代數字或「領先」那行字的。
   const html =
     `<div class="cp-marker ${lead}">` +
-      `<span class="cp-name">${escapeHtml(cp.name)}</span><br>` +
+      `<span class="cp-name">${escapeHtml(cp.name)}</span>` +
+      checkpointBar(cp) +
       `<span class="cp-vals"><span class="cp-r">修復 ${cp.repairValue}</span>` +
       ` / <span class="cp-d">破壞 ${cp.disruptValue}</span></span>` +
       `<span class="cp-lead">${LEAD_LABEL[lead]}</span>` +

@@ -21,6 +21,7 @@
   <input id="usernameInput" placeholder="帳號（例如 school1）">
   <input id="passwordInput" placeholder="密碼（至少 8 個字元）">
   <input id="displayNameInput" placeholder="顯示名稱（例如 資管一系）">
+  <p class="hint">顯示名稱只能用中英文字、數字與 emoji，不能有空白或標點符號。</p>
   <button id="createBtn">新增學派帳號</button>
   <p id="createResult" class="error"></p>
 </div>
@@ -127,6 +128,13 @@ document.getElementById('createBtn').addEventListener('click', async () => {
   const password = document.getElementById('passwordInput').value;
   const displayName = document.getElementById('displayNameInput').value.trim();
   const resultEl = document.getElementById('createResult');
+
+  // 跟伺服器同一套規則（src/displayName.js 的 NAME_PATTERN）。這裡只是先給即時
+  // 回饋，真正說了算的是伺服器（POST/PATCH /schools 與 create-school.js 都會擋）。
+  if (!/^[\p{L}\p{Nd}\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u200D\uFE0F\u20E3]+$/u.test(displayName)) {
+    resultEl.textContent = '顯示名稱只能用中英文字、數字與 emoji，不能有空白或標點符號';
+    return;
+  }
 
   const res = await fetch('/admin/api/schools', {
     method: 'POST',

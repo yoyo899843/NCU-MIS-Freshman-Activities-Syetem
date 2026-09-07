@@ -10,6 +10,7 @@
 <h1>加入時空戰爭</h1>
 <div class="card" id="loginCard">
   <input id="displayName" placeholder="輸入你的代號/姓名（最多 10 個字）" maxlength="10">
+  <p class="hint">代號只能用中英文字、數字與 emoji，不能有空白或標點符號。</p>
   <input id="pin" placeholder="設定 4 碼 PIN（掉線/換手機用同一組代號+PIN 找回身份）" maxlength="4" inputmode="numeric" pattern="[0-9]*">
   <button id="joinBtn">加入時空戰爭</button>
   <p id="result" class="error"></p>
@@ -46,6 +47,12 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
 
   if (!displayName) {
     resultEl.textContent = '請輸入代號/姓名';
+    return;
+  }
+  // 跟伺服器同一套規則（src/displayName.js 的 NAME_PATTERN）。這裡只是先給
+  // 即時回饋，真正說了算的是伺服器——直接打 API 一樣會被擋。
+  if (!/^[\p{L}\p{Nd}\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u200D\uFE0F\u20E3]+$/u.test(displayName)) {
+    resultEl.textContent = '代號只能用中英文字、數字與 emoji，不能有空白或標點符號';
     return;
   }
   if (!/^\d{4}$/.test(pin)) {

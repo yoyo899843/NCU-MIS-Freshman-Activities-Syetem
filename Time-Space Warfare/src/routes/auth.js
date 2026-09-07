@@ -4,6 +4,7 @@ const db = require('../db');
 const playerAuth = require('../middleware/playerAuth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { createLoginThrottle } = require('../loginThrottle');
+const { validateName } = require('../displayName');
 
 const router = express.Router();
 
@@ -75,6 +76,13 @@ router.post('/join', asyncHandler(async (req, res) => {
       returning: true
     });
   }
+
+  // 字元規則（見 src/displayName.js：只准文字、數字、emoji）只套在「新代號」上，
+  // 刻意放在查完既有代號之後。規則收緊之前建立的隊伍，名字可能帶空白或標點，
+  // 要是在最前面就擋掉，那些隊伍連原本的身份都拿不回來——登入就是靠同一個代號
+  // ＋PIN 找回身份的，擋在這裡等於直接把人鎖在門外。
+  const validated = validateName(name);
+  if (validated.error) return res.status(400).json({ error: validated.error });
 
   const client = await db.connect();
   try {

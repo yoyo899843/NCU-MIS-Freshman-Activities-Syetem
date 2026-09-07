@@ -9,6 +9,7 @@ const adminAuth = require('../middleware/adminAuth');
 const { gatekeeperGuard, requireFullAdmin } = require('../middleware/gatekeeperGuard');
 const asyncHandler = require('../middleware/asyncHandler');
 const { createLoginThrottle } = require('../loginThrottle');
+const { validateName } = require('../displayName');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -327,6 +328,10 @@ router.post('/schools', asyncHandler(async (req, res) => {
   if (!displayName || typeof displayName !== 'string' || !displayName.trim()) {
     return res.status(400).json({ error: 'displayName is required' });
   }
+  // 學派名稱會出現在地圖 tooltip、戰況板、後台表格等地方，字元規則見
+  // src/displayName.js（只准文字、數字、emoji，把標點與角括號擋在輸入端）。
+  const validatedName = validateName(displayName);
+  if (validatedName.error) return res.status(400).json({ error: validatedName.error });
 
   try {
     const { rows } = await db.query(
@@ -353,6 +358,10 @@ router.patch('/schools/:id', asyncHandler(async (req, res) => {
   }
   if (displayName !== undefined && (typeof displayName !== 'string' || !displayName.trim())) {
     return res.status(400).json({ error: 'displayName cannot be empty' });
+  }
+  if (displayName !== undefined) {
+    const validatedName = validateName(displayName);
+    if (validatedName.error) return res.status(400).json({ error: validatedName.error });
   }
 
   const { rows: existingRows } = await db.query('SELECT * FROM schools WHERE id = $1', [req.params.id]);
