@@ -60,7 +60,18 @@ router.get('/news', asyncHandler(async (req, res) => {
 // 隊名、現金、股票現值、總資產，跟現場投影出來的東西一模一樣。
 router.get('/leaderboard', asyncHandler(async (req, res) => {
   const { rows } = await db.query('SELECT wave, total_waves, phase FROM game_state WHERE id = 1');
-  res.json({ ...rows[0], teams: await leaderboard(rows[0].wave) });
+  const board = await leaderboard(rows[0].wave);
+
+  // positions（每隊各檔持有幾張）刻意在這裡拿掉。
+  //
+  // 這一頁是投影出去給全場看的，而持股是還沒實現的部位——公開之後，最後一波
+  // 交易時間大家只要盯著螢幕就知道領先的那隊押在哪一檔，變成互相跟單/狙擊，
+  // 「依據新聞自己判斷」那一段就沒意義了。後台的 /admin/api/leaderboard 才回
+  // 明細，那是給工作人員結算與查帳用的。
+  res.json({
+    ...rows[0],
+    teams: board.teams.map(({ positions, ...rest }) => rest)
+  });
 }));
 
 module.exports = router;

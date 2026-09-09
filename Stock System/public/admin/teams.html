@@ -16,11 +16,15 @@
   <p id="addErr" style="color:#c00"></p>
 </div>
 
-<h2>總資產排行榜（現金 + 股票現值）</h2>
-<table border="1" cellpadding="4">
-  <thead><tr><th>名次</th><th>隊伍</th><th>現金</th><th>股票現值</th><th>總資產</th></tr></thead>
-  <tbody id="lb"></tbody>
-</table>
+<h2>總資產排行榜與持股總覽</h2>
+<p>四檔的欄位顯示「持有張數（市值）」，張數是目前庫存，市值用第 <strong id="lbWave">—</strong> 波的股價計算。
+   <label style="margin-left:12px"><input type="checkbox" id="showValue" checked> 顯示市值</label></p>
+<div style="overflow-x:auto">
+  <table border="1" cellpadding="4">
+    <thead><tr id="lbHead"></tr></thead>
+    <tbody id="lb"></tbody>
+  </table>
+</div>
 
 <h2>隊伍帳號</h2>
 <table border="1" cellpadding="4">
@@ -43,6 +47,7 @@
 if (requireAdminLogin()) {
   let isAdmin = false;
   let teams = [];
+  let lastBoard = null;   // 最近一次的排行榜資料，切換「顯示市值」時重畫用
   const nameOf = id => (teams.find(t => t.id === id) || {}).display_name || '';
 
   $('addBtn').addEventListener('click', async () => {
@@ -101,14 +106,49 @@ if (requireAdminLogin()) {
     $('cashErr').textContent = res.body.error || `刪除失敗 (${res.status})`;
   };
 
+  // 排行榜 ＋ 每隊四檔持股的矩陣。
+  //
+  // 欄位由伺服器回的 stocks 決定而不是寫死四欄：股票是資料庫裡的資料，之後要
+  // 加減一檔或改名都不用動這一頁。每一列的 positions 也保證涵蓋全部股票（沒
+  // 持股的是 0），所以直接照順序輸出就一定對齊。
+  function renderBoard(body) {
+    const stocks = body.stocks || [];
+    $('lbWave').textContent = body.wave;
+
+    $('lbHead').innerHTML =
+      '<th>名次</th><th>隊伍</th>' +
+      stocks.map(s => `<th>${esc(s.name)}<br><span style="font-weight:normal">${
+        s.price === null ? '尚未開盤' : money(s.price)}</span></th>`).join('') +
+      '<th>現金</th><th>股票現值</th><th>總資產</th>';
+
+    const withValue = $('showValue').checked;
+    const cols = stocks.length + 5;
+
+    $('lb').innerHTML = body.teams.map(t => {
+      const cells = stocks.map(s => {
+        // positions 是照 stocks 的順序來的，但還是用 stockId 對，不靠順序巧合
+        const p = (t.positions || []).find(x => x.stockId === s.id);
+        const shares = p ? p.shares : 0;
+        // 沒持股的格子用淡灰的 0，不留白——空白格會讓人分不清「沒有」和「還沒載入」
+        if (!shares) return '<td style="color:#bbb">0</td>';
+        return `<td><strong>${shares}</strong> 張${
+          withValue ? `<br><span style="color:#666">${money(p.value)}</span>` : ''}</td>`;
+      }).join('');
+      return `<tr>
+        <td>${t.rank}</td><td>${esc(t.name)}</td>
+        ${cells}
+        <td>${money(t.cash)}</td><td>${money(t.stockValue)}</td>
+        <td><strong>${money(t.total)}</strong></td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="${cols}">還沒有隊伍</td></tr>`;
+  }
+
+  // 只切換顯示方式，不用重打 API
+  $('showValue').addEventListener('change', () => { if (lastBoard) renderBoard(lastBoard); });
+
   async function load() {
     const lb = await api('/leaderboard');
-    if (lb.ok) {
-      $('lb').innerHTML = lb.body.teams.map(t => `
-        <tr><td>${t.rank}</td><td>${esc(t.name)}</td><td>${money(t.cash)}</td>
-        <td>${money(t.stockValue)}</td><td><strong>${money(t.total)}</strong></td></tr>`).join('')
-        || '<tr><td colspan="5">還沒有隊伍</td></tr>';
-    }
+    if (lb.ok) { lastBoard = lb.body; renderBoard(lb.body); }
 
     const ts = await api('/teams');
     if (ts.ok) {

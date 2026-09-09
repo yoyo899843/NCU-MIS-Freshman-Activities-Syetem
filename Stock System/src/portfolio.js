@@ -141,7 +141,12 @@ async function placeOrder({ teamId, stockId, side, shares, wave }) {
   }
 }
 
-// 全場排行榜：各隊「現金 + 股票現值」。
+// 全場排行榜：各隊「現金 + 股票現值」，外加每一檔的持股明細。
+//
+// 回傳 { stocks, teams }。stocks 是這一波的四檔（含當下價格），teams 裡每一列的
+// positions 一定涵蓋「全部四檔」，沒有持股的補 0 而不是省略——後台的總覽表是
+// 一個隊伍 × 股票的矩陣，欄位必須固定對齊。只回有持股的那幾檔，前端就得自己
+// 補洞，很容易把某一隊的張數對到別檔的欄位去。
 async function leaderboard(wave) {
   const prices = await effectivePrices(wave);
   const priceOf = Object.fromEntries(prices.map(s => [s.id, s.price ?? 0]));
@@ -154,20 +159,38 @@ async function leaderboard(wave) {
      GROUP BY t.id ORDER BY t.id`
   );
 
-  const list = rows.map(r => {
-    const stockValue = r.holdings.reduce((n, h) => n + h.shares * (priceOf[h.stockId] || 0), 0);
+  const teams = rows.map(r => {
+    const held = Object.fromEntries(r.holdings.map(h => [h.stockId, h.shares]));
+    const positions = prices.map(s => {
+      const shares = held[s.id] || 0;
+      return {
+        stockId: s.id,
+        name: s.name,
+        price: s.price,
+        shares,
+        value: shares * (priceOf[s.id] || 0)
+      };
+    });
+    const stockValue = positions.reduce((n, p) => n + p.value, 0);
     const cash = Number(r.cash);
-    return { teamId: r.id, name: r.display_name, cash, stockValue, total: cash + stockValue };
+    return {
+      teamId: r.id, name: r.display_name,
+      cash, stockValue, total: cash + stockValue, positions
+    };
   });
 
-  list.sort((a, b) => b.total - a.total || a.teamId - b.teamId);
+  teams.sort((a, b) => b.total - a.total || a.teamId - b.teamId);
   // 同分並列，名次跳號（1,1,3）
   let rank = 0, prev = null;
-  list.forEach((r, i) => {
+  teams.forEach((r, i) => {
     if (r.total !== prev) { rank = i + 1; prev = r.total; }
     r.rank = rank;
   });
-  return list;
+
+  return {
+    stocks: prices.map(s => ({ id: s.id, name: s.name, price: s.price, changePct: s.changePct })),
+    teams
+  };
 }
 
 module.exports = { pricesAt, effectivePrices, portfolio, placeOrder, leaderboard };

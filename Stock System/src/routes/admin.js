@@ -470,9 +470,15 @@ router.get('/trades', asyncHandler(async (req, res) => {
 }));
 
 // 全場總資產排行榜（現金 + 股票現值），最後公布名次用。
+//
+// 跟公開那支（/api/market/leaderboard）的差別是這裡會帶 positions：每一隊在
+// 四檔各持有幾張、市值多少。企劃寫的是「即時監控各隊伍的所有買賣明細與庫存
+// 持股」——買賣明細看成交紀錄就有了，庫存持股要的是「現在手上有什麼」，
+// 那不是把成交紀錄一筆一筆加回去就能一眼看出來的東西。
 router.get('/leaderboard', asyncHandler(async (req, res) => {
   const { rows: st } = await db.query('SELECT wave FROM game_state WHERE id = 1');
-  res.json({ wave: st[0].wave, teams: await leaderboard(st[0].wave) });
+  const board = await leaderboard(st[0].wave);
+  res.json({ wave: st[0].wave, ...board });
 }));
 
 // 單一隊伍的完整持股明細（現場有爭議時查帳用）。
