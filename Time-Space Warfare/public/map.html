@@ -42,6 +42,12 @@
   .cp-marker .cp-bar > i { display: block; height: 100%; background: var(--repair); }
   .cp-marker .cp-pct { font-variant-numeric: tabular-nums; color: var(--repair); font-weight: 700; }
   .cp-marker .cp-pct.zero { color: var(--dim); }
+  /* 隊伍自己的筆記。只有自己隊看得到（伺服器只回自己隊的），所以用琥珀色跟
+     據點本身的資訊區分開來，一眼看得出「這是我們寫的」。 */
+  .cp-marker .cp-note {
+    display: block; margin-top: 2px; font-size: 10px; font-weight: 700;
+    color: var(--accent); max-width: 96px; overflow: hidden; text-overflow: ellipsis;
+  }
   .cp-marker .cp-done {
     display: block; margin-top: 1px; font-size: 10px; font-weight: 700;
     color: #05231a; background: var(--repair); border-radius: 3px; padding: 0 3px;
@@ -154,6 +160,10 @@ L.tileLayer('/tiles/{z}/{x}/{y}.png', {
 // 這支 API 不需要登入（交摺點戰況是公開資訊，大會投影 Dashboard 也用同一支）。
 const CHECKPOINT_INTERVAL_MS = 5000;
 const checkpointMarkers = new Map(); // checkpointId -> L.Marker
+// 自己隊伍對各據點的筆記（checkpointId -> 文字）。伺服器只回自己隊的，
+// 別隊的筆記前端根本拿不到，不是靠不顯示（見 src/routes/notes.js）。
+let notes = {};
+const NOTE_MAX = 10;
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, ch =>
@@ -168,11 +178,13 @@ function escapeHtml(s) {
 function checkpointIcon(cp) {
   const pct = Math.max(0, Math.min(100, Number(cp.progress) || 0));
   const done = pct >= 100;
+  const note = notes[cp.id];
   const html =
     `<div class="cp-marker ${done ? 'done' : ''}">` +
       `<span class="cp-name">${escapeHtml(cp.name)}</span>` +
       `<span class="cp-bar"><i style="width:${pct}%"></i></span>` +
       `<span class="cp-pct ${pct === 0 ? 'zero' : ''}">修復 ${pct}%</span>` +
+      (note ? `<span class="cp-note">✎ ${escapeHtml(note)}</span>` : '') +
       (done ? '<span class="cp-done">已修復完成</span>' : '') +
     `</div>`;
   return L.divIcon({ html, className: '', iconSize: null, iconAnchor: [0, 0] });
@@ -191,14 +203,54 @@ function renderCheckpoints(list) {
       existing.setIcon(checkpointIcon(cp));
     } else {
       // 交摺點壓在玩家標記底下（zIndexOffset 負值），才不會擋住走動中的隊伍
+      // interactive 改成 true：要能點開來寫筆記。zIndexOffset 仍是負的，
+      // 標記還是壓在玩家圓點底下，不會擋住走動中的隊伍。
       const marker = L.marker([cp.lat, cp.lng], {
         icon: checkpointIcon(cp),
-        zIndexOffset: -500,
-        interactive: false
+        zIndexOffset: -500
       }).addTo(map);
+      marker.on('click', () => editNote(cp));
       checkpointMarkers.set(cp.id, marker);
     }
   });
+}
+
+// 點據點標記就能幫它取自己隊的名字/註記。用 prompt 而不是自製對話框：這是
+// 走在路上單手操作的動作，系統原生的輸入框在手機上最不容易點錯。
+async function editNote(cp) {
+  if (!token) return; // 沒登入沒有隊伍，也就沒有「自己隊的筆記」
+  const current = notes[cp.id] || '';
+  const input = window.prompt(`「${cp.name}」的筆記（最多 ${NOTE_MAX} 個字，只有你們這隊看得到）`, current);
+  if (input === null) return; // 按取消
+  const note = input.trim();
+  if (Array.from(note).length > NOTE_MAX) {
+    alert(`最多 ${NOTE_MAX} 個字`);
+    return;
+  }
+
+  const res = await fetch(`/api/notes/${cp.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ note })
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || '筆記儲存失敗');
+    return;
+  }
+  if (note) notes[cp.id] = note; else delete notes[cp.id];
+
+  // 只重畫這一顆標記，不重拉整份清單
+  const marker = checkpointMarkers.get(cp.id);
+  if (marker) marker.setIcon(checkpointIcon({ ...cp, progress: cp.progress }));
+}
+
+function loadNotes() {
+  if (!token) return Promise.resolve();
+  return fetch('/api/notes', { headers: { Authorization: 'Bearer ' + token } })
+    .then(res => (res.ok ? res.json() : {}))
+    .then(data => { notes = data || {}; })
+    .catch(() => {});
 }
 
 function loadCheckpoints() {
@@ -210,7 +262,8 @@ function loadCheckpoints() {
     });
 }
 
-loadCheckpoints();
+// 先把筆記拿到手再畫據點，否則第一次繪製會少掉筆記那一行、要等下一輪輪詢才出現
+loadNotes().then(loadCheckpoints);
 setInterval(loadCheckpoints, CHECKPOINT_INTERVAL_MS);
 
 // 自己的位置：不用等伺服器回應，收到 GPS 更新的當下直接畫在地圖上，

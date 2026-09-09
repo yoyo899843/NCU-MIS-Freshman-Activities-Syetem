@@ -77,10 +77,13 @@ async function computeScores() {
   teams.forEach(t => { pkWins[t.id] = 0; });
   pkWinRows.forEach(r => { pkWins[r.team_id] = r.n; });
 
-  // 任務系統還沒做，全部算 0。等它做好之後，這裡換成真的任務完成數即可，
-  // 其餘計分不用動。
+  const { rows: missionRows } = await db.query(
+    `SELECT team_id, count(*)::int AS n FROM missions
+     WHERE status = 'completed' GROUP BY team_id`
+  );
   const missions = {};
   teams.forEach(t => { missions[t.id] = 0; });
+  missionRows.forEach(r => { missions[r.team_id] = r.n; });
 
   const topRepair = topTeams(repairs);
   const topDisrupt = topTeams(disrupts);
@@ -116,6 +119,7 @@ async function computeScores() {
       },
       detail: {
         alignedCount: aligned[t.id] || 0,
+        missionCount: missions[t.id] || 0,
         repairCount: repairs[t.id] || 0,
         disruptCount: disrupts[t.id] || 0,
         pkWins: pkWins[t.id] || 0,
@@ -141,7 +145,7 @@ async function computeScores() {
     checkpoints: { total: cpRows[0].total, done, notDone },
     winningFaction,
     // 還沒接上資料來源的權重，明白標出來，免得大螢幕上一排 0 分讓人以為算錯了
-    pending: ['第三權重（抓內鬼）尚未實作', '第五權重（任務）尚未實作'],
+    pending: ['第三權重（抓內鬼）尚未實作'],
     teams: rows
   };
 }

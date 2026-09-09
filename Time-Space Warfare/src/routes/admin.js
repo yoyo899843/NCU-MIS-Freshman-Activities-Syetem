@@ -359,6 +359,103 @@ router.post('/checkpoints/:id/action', asyncHandler(async (req, res) => {
 }));
 
 // 目前所有隊伍（關主操作頁的下拉選單、以及積分板要用）。
+// --- 突發任務 ---
+//
+// 企劃原本寫「系統隨機派發」，改成主辦手動派發：選對象小隊、選接受點位、填內容。
+// 系統配一組解鎖碼，關主在現場確認完成後把碼給那一隊，該隊輸入碼才結案並計分。
+//
+// 解鎖碼刻意做成人唸得出來的短碼（現場是口頭或紙條傳遞），但排除 0/O/1/I 這種
+// 唸起來會搞混的字元。
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function generateUnlockCode() {
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
+  }
+  return code;
+}
+
+// 管理端的任務信箱：看得到所有隊伍的任務，含解鎖碼（關主要照著唸給隊伍）。
+router.get('/missions', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT m.id, m.team_id, m.content, m.unlock_code, m.status,
+            m.created_at, m.completed_at, m.checkpoint_id,
+            c.name AS checkpoint_name,
+            t.team_number,
+            (SELECT p.display_name FROM players p WHERE p.team_id = t.id ORDER BY p.id LIMIT 1) AS team_name
+     FROM missions m
+     JOIN teams t ON t.id = m.team_id
+     LEFT JOIN checkpoints c ON c.id = m.checkpoint_id
+     ORDER BY m.status = 'open' DESC, m.created_at DESC`
+  );
+  res.json(rows);
+}));
+
+router.post('/missions', asyncHandler(async (req, res) => {
+  const { teamId, checkpointId, content } = req.body || {};
+  const tid = Number(teamId);
+  if (!Number.isInteger(tid)) return res.status(400).json({ error: '請選擇派發對象' });
+
+  const text = typeof content === 'string' ? content.trim() : '';
+  if (!text) return res.status(400).json({ error: '請填寫任務內容' });
+  if (Array.from(text).length > 200) return res.status(400).json({ error: '任務內容最多 200 個字' });
+
+  const { rows: teamRows } = await db.query('SELECT id FROM teams WHERE id = $1', [tid]);
+  if (teamRows.length === 0) return res.status(404).json({ error: '找不到這支隊伍' });
+
+  let cid = null;
+  if (checkpointId !== undefined && checkpointId !== null && checkpointId !== '') {
+    cid = Number(checkpointId);
+    if (!Number.isInteger(cid)) return res.status(400).json({ error: '接受點位不正確' });
+    const { rows: cpRows } = await db.query('SELECT id FROM checkpoints WHERE id = $1', [cid]);
+    if (cpRows.length === 0) return res.status(404).json({ error: '找不到這個據點' });
+  }
+
+  // 未結案的任務之間解鎖碼不能重複（DB 有 partial unique index 擋著）。
+  // 六碼 32 進位撞號機率極低，但真的撞到就重抽，不要把錯誤丟給使用者。
+  let row = null;
+  for (let attempt = 0; attempt < 5 && !row; attempt++) {
+    try {
+      const { rows } = await db.query(
+        `INSERT INTO missions (team_id, checkpoint_id, content, unlock_code, created_by)
+         VALUES ($1,$2,$3,$4,$5)
+         RETURNING id, team_id, checkpoint_id, content, unlock_code, status, created_at`,
+        [tid, cid, text, generateUnlockCode(), req.admin.sub]
+      );
+      row = rows[0];
+    } catch (err) {
+      if (err.code !== '23505') throw err;
+    }
+  }
+  if (!row) return res.status(500).json({ error: '解鎖碼產生失敗，請再試一次' });
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'create_mission', 'mission', $2, NULL, $3)`,
+    [req.admin.sub, String(row.id), JSON.stringify({ teamId: tid, checkpointId: cid })]
+  );
+
+  res.status(201).json(row);
+}));
+
+// 取消任務（派錯對象、內容打錯）。已結案的不能取消，那會讓積分憑空消失。
+router.post('/missions/:id/cancel', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `UPDATE missions SET status = 'cancelled'
+     WHERE id = $1 AND status = 'open' RETURNING id`,
+    [req.params.id]
+  );
+  if (rows.length === 0) {
+    return res.status(409).json({ error: '這個任務不存在，或已經結案/取消了' });
+  }
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'cancel_mission', 'mission', $2, NULL, NULL)`,
+    [req.admin.sub, String(req.params.id)]
+  );
+  res.json({ ok: true });
+}));
+
 // 各隊積分（六級權重明細＋名次）。大螢幕與後台都用這一支。
 // 不需要登入的版本另外掛在 app.js 上（大螢幕沒有帳號）。
 router.get('/scores', asyncHandler(async (req, res) => {

@@ -5,6 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>時空戰爭</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  .badge {
+    display: inline-block; font-size: 0.8rem; font-weight: 700;
+    background: var(--accent); color: #1a0f00; border-radius: 10px; padding: 1px 8px;
+  }
+  .mission { border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+  .mission.done { opacity: .55; }
+  .mission .meta { font-size: 0.8rem; color: var(--dim); }
+  .mission .body { margin: 6px 0; white-space: pre-wrap; }
+  .mission .row { display: flex; gap: 8px; }
+  .mission .row input { flex: 1; margin: 0; text-transform: uppercase; }
+  .mission .row button { width: auto; margin: 0; white-space: nowrap; }
+  .mission .state-done { color: var(--repair); font-weight: 700; }
+  /* 新任務彈窗 */
+  .modal {
+    position: fixed; inset: 0; z-index: 500; display: flex;
+    align-items: center; justify-content: center; padding: 20px;
+    background: rgba(7, 11, 16, .82);
+  }
+  .modal .box {
+    background: var(--card); border: 2px solid var(--accent); border-radius: 8px;
+    padding: 18px; max-width: 420px; width: 100%;
+  }
+  .modal h3 { margin-top: 0; }
+</style>
 </head>
 <body>
 <h1>時空戰爭</h1>
@@ -26,6 +51,12 @@
     <a href="pk.html">PK 對戰</a>
   </p>
   <button id="logoutBtn">登出</button>
+</div>
+
+<div id="missionCard" class="card" style="display:none">
+  <h3>任務信箱 <span id="missionCount" class="badge"></span></h3>
+  <div id="missionList"></div>
+  <p id="missionResult" class="error"></p>
 </div>
 
 <!-- 工作人員入口單獨一張卡，跟玩家的功能分開，也不跟著登入狀態顯示/隱藏：
@@ -66,12 +97,110 @@ if (!token || !playerInfo) {
       if (window.__authRedirecting) return; // authFetch.js 已經在導頁了
       if (!res.ok) return;                  // 非 401 的偶發錯誤先不擋，交給下面的 catch 邏輯
       showLoggedIn();
+      loadMissions();
+      // 主辦是手動派發的，不會有固定節奏，所以固定週期問一次就好
+      setInterval(loadMissions, 5000);
     })
     .catch(() => {
       if (window.__authRedirecting) return;
       // 網路暫時不通：還是用本機存的資料顯示，不要因為一次連線失敗就把人擋在外面
       showLoggedIn();
     });
+}
+
+/* ---------------- 任務信箱 ---------------- */
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// 已經彈過視窗的任務 id。存在 localStorage 而不是記憶體：玩家在頁面之間跳來跳去，
+// 每次回首頁都重新彈一次同一個任務會很煩。
+const SEEN_KEY = 'seenMissionIds';
+function seenIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); }
+  catch (e) { return new Set(); }
+}
+function markSeen(ids) {
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify([...ids])); } catch (e) { /* 無痕模式等 */ }
+}
+
+function showMissionModal(mission) {
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.innerHTML =
+    '<div class="box">' +
+      '<h3>收到新任務</h3>' +
+      (mission.checkpoint_name ? `<p class="hint">接受點位：${escapeHtml(mission.checkpoint_name)}</p>` : '') +
+      `<p style="white-space:pre-wrap">${escapeHtml(mission.content)}</p>` +
+      '<p class="hint">完成後向關主領取解鎖碼，回到任務信箱輸入即可結案。</p>' +
+      '<button>知道了</button>' +
+    '</div>';
+  box.querySelector('button').addEventListener('click', () => box.remove());
+  document.body.appendChild(box);
+}
+
+function renderMissions(list) {
+  document.getElementById('missionCard').style.display = '';
+  const open = list.filter(m => m.status === 'open');
+  const badge = document.getElementById('missionCount');
+  badge.textContent = open.length ? `${open.length} 則待完成` : '';
+  badge.style.display = open.length ? '' : 'none';
+
+  if (list.length === 0) {
+    document.getElementById('missionList').innerHTML =
+      '<p class="hint">目前沒有任務。主辦派發時會跳出通知。</p>';
+    return;
+  }
+
+  document.getElementById('missionList').innerHTML = list.map(m => {
+    const done = m.status !== 'open';
+    return `<div class="mission ${done ? 'done' : ''}">
+      <div class="meta">${new Date(m.created_at).toLocaleString()}` +
+        (m.checkpoint_name ? `　接受點位：${escapeHtml(m.checkpoint_name)}` : '') + `</div>
+      <div class="body">${escapeHtml(m.content)}</div>` +
+      (done
+        ? `<div class="state-done">${m.status === 'completed' ? '已完成' : '已取消'}</div>`
+        : `<div class="row">
+             <input id="code-${m.id}" placeholder="向關主領取解鎖碼" maxlength="12">
+             <button onclick="completeMission(${m.id})">結案</button>
+           </div>`) +
+    `</div>`;
+  }).join('');
+}
+
+window.completeMission = async function (id) {
+  const el = document.getElementById('missionResult');
+  el.textContent = '';
+  const code = document.getElementById('code-' + id).value.trim();
+  if (!code) { el.textContent = '請輸入解鎖碼'; return; }
+
+  const res = await fetch(`/api/missions/${id}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ code })
+  });
+  const data = await res.json();
+  if (!res.ok) { el.textContent = data.error || `失敗 (${res.status})`; return; }
+  el.textContent = '';
+  await loadMissions();
+};
+
+async function loadMissions() {
+  const res = await fetch('/api/missions', { headers: { Authorization: 'Bearer ' + token } });
+  if (!res.ok) return;
+  const list = await res.json();
+  renderMissions(list);
+
+  // 新的未完成任務才彈窗。第一次載入時把既有任務全部標記成看過，
+  // 不然重新登入會一口氣彈出一整串舊任務。
+  const seen = seenIds();
+  const fresh = list.filter(m => m.status === 'open' && !seen.has(m.id));
+  const first = seen.size === 0 && localStorage.getItem(SEEN_KEY) === null;
+  list.forEach(m => seen.add(m.id));
+  markSeen(seen);
+  if (!first) fresh.forEach(showMissionModal);
 }
 
 document.getElementById('logoutBtn').addEventListener('click', () => {

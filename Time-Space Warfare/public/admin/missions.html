@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任務派發與信箱 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 820px; }
+  select, textarea { display: block; width: 100%; padding: 10px; margin-bottom: 12px; }
+  textarea { min-height: 90px; resize: vertical; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; font-size: 0.85rem; vertical-align: top; }
+  th { background: var(--card-2); }
+  .code {
+    font-family: ui-monospace, Menlo, monospace; font-size: 1.1rem; font-weight: 700;
+    letter-spacing: .12em; color: var(--accent);
+  }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+  .tag-open { background: var(--accent); color: #1a0f00; }
+  .tag-completed { background: var(--repair); color: #05231a; }
+  .tag-cancelled { background: #555; color: #fff; }
+  td button { width: auto; padding: 4px 8px; margin: 0; }
+  .modal {
+    position: fixed; inset: 0; z-index: 500; display: flex;
+    align-items: center; justify-content: center; padding: 20px;
+    background: rgba(7, 11, 16, .82);
+  }
+  .modal .box {
+    background: var(--card); border: 2px solid var(--accent); border-radius: 8px;
+    padding: 18px; max-width: 460px; width: 100%;
+  }
+  .modal h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<h1>任務派發與信箱</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card admin-only" style="display:none">
+  <h3>派發任務</h3>
+  <label for="teamSel">派發對象</label>
+  <select id="teamSel"></select>
+  <label for="cpSel">接受點位</label>
+  <select id="cpSel"></select>
+  <label for="content">任務內容</label>
+  <textarea id="content" maxlength="200" placeholder="例如：到中大湖跟關主說一次隊呼"></textarea>
+  <button id="sendBtn">派發</button>
+  <p class="hint">派發後系統會配一組解鎖碼。關主在現場確認任務完成後，把解鎖碼給該隊，該隊輸入才會結案並計分。</p>
+  <p id="sendResult" class="error"></p>
+</div>
+
+<div class="card">
+  <h3>任務信箱</h3>
+  <p class="hint" id="gkNote" style="display:none">你目前是關主：可以查看所有任務與解鎖碼，但不能派發或取消。</p>
+  <table>
+    <thead>
+      <tr><th>隊伍</th><th>接受點位</th><th>任務內容</th><th>解鎖碼</th><th>狀態</th><th></th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script src="../authFetch.js"></script>
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+const $ = id => document.getElementById(id);
+let isAdmin = false;
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const STATUS = { open: '待完成', completed: '已完成', cancelled: '已取消' };
+
+// 已經彈過視窗的任務 id。放 localStorage：管理員會在後台各頁之間切換，
+// 每次回到這頁就把所有任務重彈一次會很吵。
+const SEEN_KEY = 'seenAdminMissionIds';
+function seenIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); }
+  catch (e) { return new Set(); }
+}
+function markSeen(ids) {
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify([...ids])); } catch (e) { /* 無痕模式等 */ }
+}
+
+function showModal(m) {
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.innerHTML =
+    '<div class="box">' +
+      '<h3>新任務已派發</h3>' +
+      `<p>對象：<strong>${escapeHtml(m.team_name || '#' + m.team_number)}</strong>` +
+      (m.checkpoint_name ? `　接受點位：${escapeHtml(m.checkpoint_name)}` : '') + '</p>' +
+      `<p style="white-space:pre-wrap">${escapeHtml(m.content)}</p>` +
+      `<p>解鎖碼：<span class="code">${escapeHtml(m.unlock_code)}</span></p>` +
+      '<p class="hint">確認該隊完成後，把這組碼給他們。</p>' +
+      '<button>知道了</button>' +
+    '</div>';
+  box.querySelector('button').addEventListener('click', () => box.remove());
+  document.body.appendChild(box);
+}
+
+async function loadPickers() {
+  const [teamsRes, cpRes] = await Promise.all([api('/teams'), api('/checkpoints')]);
+  const teams = await teamsRes.json();
+  $('teamSel').innerHTML = teams.length
+    ? teams.map(t => `<option value="${t.id}">#${t.team_number}　${escapeHtml(t.name || '(未命名)')}</option>`).join('')
+    : '<option value="">（還沒有隊伍登入）</option>';
+
+  if (cpRes.ok) {
+    const cps = await cpRes.json();
+    $('cpSel').innerHTML = '<option value="">（不指定點位）</option>' +
+      cps.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  }
+}
+
+async function load() {
+  const res = await api('/missions');
+  if (!res.ok) return;
+  const list = await res.json();
+
+  $('tbody').innerHTML = list.map(m => `
+    <tr>
+      <td>#${m.team_number}　${escapeHtml(m.team_name || '')}</td>
+      <td>${escapeHtml(m.checkpoint_name || '—')}</td>
+      <td style="white-space:pre-wrap">${escapeHtml(m.content)}</td>
+      <td class="code">${escapeHtml(m.unlock_code)}</td>
+      <td><span class="tag tag-${m.status}">${STATUS[m.status] || m.status}</span></td>
+      <td>${isAdmin && m.status === 'open' ? `<button onclick="cancelMission(${m.id})">取消</button>` : ''}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="6">目前沒有任何任務</td></tr>';
+
+  // 新派發的任務要讓所有管理端跳出通知——派發的人自己已經看過了，但其他
+  // 管理員/關主是從這裡才知道有新任務。第一次載入不彈，否則一進頁面就洗版。
+  const seen = seenIds();
+  const firstLoad = localStorage.getItem(SEEN_KEY) === null;
+  const fresh = list.filter(m => m.status === 'open' && !seen.has(m.id));
+  list.forEach(m => seen.add(m.id));
+  markSeen(seen);
+  if (!firstLoad) fresh.forEach(showModal);
+}
+
+window.cancelMission = async function (id) {
+  if (!confirm('確定要取消這個任務嗎？該隊就無法再結案。')) return;
+  const res = await api(`/missions/${id}/cancel`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || '取消失敗');
+    return;
+  }
+  await load();
+};
+
+$('sendBtn').addEventListener('click', async () => {
+  $('sendResult').textContent = '';
+  const teamId = $('teamSel').value;
+  if (!teamId) { $('sendResult').textContent = '請選擇派發對象'; return; }
+
+  const res = await api('/missions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      teamId: Number(teamId),
+      checkpointId: $('cpSel').value || null,
+      content: $('content').value
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) { $('sendResult').textContent = data.error || `失敗 (${res.status})`; return; }
+
+  $('content').value = '';
+  await load();
+});
+
+(async () => {
+  const meRes = await api('/me');
+  const me = await meRes.json();
+  isAdmin = me.adminRole === 'admin';
+  document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+  $('gkNote').style.display = isAdmin ? 'none' : '';
+
+  if (isAdmin) await loadPickers();
+  await load();
+  setInterval(load, 5000);
+})();
+</script>
+</body>
+</html>

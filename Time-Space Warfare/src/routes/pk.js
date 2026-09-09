@@ -81,7 +81,9 @@ router.post('/join', requireGameInProgress, asyncHandler(async (req, res) => {
     });
   }
 
-  const duelId = roomRegistry.lookup(roomCode);
+  // 先查記憶體（快），沒有就回 DB 找（服務重啟後記憶體是空的，見 roomRegistry）
+  const code = String(roomCode).trim();
+  const duelId = roomRegistry.lookup(code) || await roomRegistry.lookupInDb(code);
 
   let duel;
   if (duelId) {

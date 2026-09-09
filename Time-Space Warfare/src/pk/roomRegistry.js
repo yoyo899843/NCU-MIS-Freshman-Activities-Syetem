@@ -25,6 +25,7 @@ async function cancelDuel(duelId) {
 }
 
 function register(roomCode, duelId) {
+  roomCode = String(roomCode).trim();
   const timeout = setTimeout(() => {
     console.log(`[pk ${String(duelId).slice(0, 8)}] 房間逾時，沒有人加入 roomCode=${roomCode}`);
     rooms.delete(roomCode);
@@ -36,8 +37,25 @@ function register(roomCode, duelId) {
 }
 
 function lookup(roomCode) {
-  const entry = rooms.get(roomCode);
+  const entry = rooms.get(String(roomCode).trim());
   return entry ? entry.duelId : null;
+}
+
+// 記憶體那張表只活在這個 process 裡：服務一重啟就全空了，但 pk_duels 裡那些
+// 還在 waiting 的房間並不會消失。只查記憶體的話，房主明明剛開好房，對手輸入
+// 房號卻會得到「房間不存在」——重啟前開的房全部作廢，而且錯誤訊息完全誤導。
+//
+// 所以查不到就回 DB 找。room_code 沒有 UNIQUE（六碼數字會重複用），所以限定
+// status='waiting' 並取最新的一筆；逾時與否交給呼叫端用 created_at 判斷，
+// 這裡只負責「這個房號現在對應到哪一場」。
+async function lookupInDb(roomCode) {
+  const { rows } = await db.query(
+    `SELECT id FROM pk_duels
+     WHERE room_code = $1 AND status = 'waiting'
+     ORDER BY created_at DESC LIMIT 1`,
+    [String(roomCode).trim()]
+  );
+  return rows[0] ? rows[0].id : null;
 }
 
 function remove(roomCode) {
@@ -56,4 +74,4 @@ function generateRoomCode() {
   return code;
 }
 
-module.exports = { register, lookup, remove, generateRoomCode, ROOM_TIMEOUT_MS };
+module.exports = { register, lookup, lookupInDb, remove, generateRoomCode, ROOM_TIMEOUT_MS };

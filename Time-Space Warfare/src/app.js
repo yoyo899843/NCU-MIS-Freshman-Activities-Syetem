@@ -10,6 +10,8 @@ const attachSockets = require('./sockets');
 
 const authRoutes = require('./routes/auth');
 const mapRoutes = require('./routes/map');
+const notesRoutes = require('./routes/notes');
+const missionRoutes = require('./routes/missions');
 const pkRoutes = require('./routes/pk');
 const locationRoutes = require('./routes/locations');
 const adminRoutes = require('./routes/admin');
@@ -62,6 +64,8 @@ app.get('/api/scores', async (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/map', mapRoutes);
+app.use('/api/notes', notesRoutes);
+app.use('/api/missions', missionRoutes);
 app.use('/api/pk', pkRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/admin/api', adminRoutes);
