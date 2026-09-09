@@ -1,3 +1,12 @@
+# 每個 ${VAR:?...} 的 :? 是「這個變數沒有值就直接失敗」。
+#
+# 沒有這個保護的話，缺 .env 時 compose 只會印一行 warning 然後把變數代成空字串，
+# postgres 因為 POSTGRES_PASSWORD 是空的而拒絕初始化、容器起來就馬上退出，最後
+# 畫面上只看得到「dependency failed to start: container xxx-db is unhealthy」——
+# 那句話完全沒提到真正的原因是少了一個檔案。實際上就踩過這個坑。
+#
+# 加了之後 compose 會在建立任何容器「之前」就停下來，並且直接說出少了哪個變數。
+
 services:
   app:
     build: .
@@ -6,8 +15,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://${POSTGRES_USER:?請先在這個資料夾 cp .env.example .env 並填好內容}:${POSTGRES_PASSWORD:?請先在這個資料夾 cp .env.example .env 並填好內容}@db:5432/${POSTGRES_DB:?請先在這個資料夾 cp .env.example .env 並填好內容}
+      JWT_SECRET: ${JWT_SECRET:?請先在這個資料夾 cp .env.example .env 並填好內容}
     ports:
       - "9003:3000"
     depends_on:
@@ -27,15 +36,15 @@ services:
     container_name: rpg-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?請先在這個資料夾 cp .env.example .env 並填好內容}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?請先在這個資料夾 cp .env.example .env 並填好內容}
+      POSTGRES_DB: ${POSTGRES_DB:?請先在這個資料夾 cp .env.example .env 並填好內容}
     volumes:
       - rpg-db-data:/var/lib/postgresql/data
     networks:
       - rpg-internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?請先在這個資料夾 cp .env.example .env 並填好內容} -d ${POSTGRES_DB:?請先在這個資料夾 cp .env.example .env 並填好內容}"]
       interval: 10s
       timeout: 5s
       retries: 5
