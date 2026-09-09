@@ -49,6 +49,7 @@
   <p class="nav">
     <a href="map.html">大地圖</a>
     <a href="pk.html">PK 對戰</a>
+    <a href="vote.html" id="voteLink" style="display:none">最終審判 · 指認內鬼</a>
   </p>
   <button id="logoutBtn">登出</button>
 </div>
@@ -98,14 +99,28 @@ if (!token || !playerInfo) {
       if (!res.ok) return;                  // 非 401 的偶發錯誤先不擋，交給下面的 catch 邏輯
       showLoggedIn();
       loadMissions();
-      // 主辦是手動派發的，不會有固定節奏，所以固定週期問一次就好
+      refreshVoteLink();
+      // 主辦是手動派發/開投票的，不會有固定節奏，所以固定週期問一次就好
       setInterval(loadMissions, 5000);
+      setInterval(refreshVoteLink, 5000);
     })
     .catch(() => {
       if (window.__authRedirecting) return;
       // 網路暫時不通：還是用本機存的資料顯示，不要因為一次連線失敗就把人擋在外面
       showLoggedIn();
     });
+}
+
+// 最終審判的入口平常不顯示——投票沒開放的時候點進去也只是看到「還沒開始」，
+// 放著只會讓人一直點。開放了才浮出來，順便當成「該去投票了」的提示。
+async function refreshVoteLink() {
+  try {
+    const res = await fetch('/api/votes', { headers: { Authorization: 'Bearer ' + token } });
+    if (!res.ok) return;
+    const data = await res.json();
+    document.getElementById('voteLink').style.display =
+      (data.open && data.canVote) ? '' : 'none';
+  } catch (e) { /* 連線問題就維持原狀 */ }
 }
 
 /* ---------------- 任務信箱 ---------------- */

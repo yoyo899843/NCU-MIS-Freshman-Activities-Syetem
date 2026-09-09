@@ -6,6 +6,16 @@ const asyncHandler = require('../middleware/asyncHandler');
 const router = express.Router();
 router.use(playerAuth);
 
+// 陣營一律從資料庫現查，不用 token 裡那份。
+//
+// req.player.faction 是登入當下簽進 JWT 的快照——主辦在後台調整過某隊的陣營之後
+// （PATCH /players/:id/faction），那張 token 直到重新登入前都還是舊值。投票的
+// 資格判定完全建立在陣營上，用舊值會變成「好人被擋、內鬼反而能投」。
+async function factionOf(teamId) {
+  const { rows } = await db.query('SELECT faction FROM teams WHERE id = $1', [teamId]);
+  return rows[0] ? rows[0].faction : null;
+}
+
 async function votingState() {
   const { rows } = await db.query(
     `SELECT voting_unlocked_at, voting_closed_at, spy_vote_count
@@ -42,7 +52,7 @@ router.get('/', asyncHandler(async (req, res) => {
   // 回傳這個只是讓前端知道要不要顯示投票表單。
   res.json({
     ...state,
-    canVote: req.player.faction === 'repair',
+    canVote: (await factionOf(req.player.teamId)) === 'repair',
     candidates: teams,
     myVotes: mine.map(r => r.suspect_team_id)
   });
@@ -57,7 +67,7 @@ router.put('/', asyncHandler(async (req, res) => {
   }
   // 內鬼自己不投票（企劃：「每個好人隊伍需投票指認」）。擋在伺服器端，
   // 不是只靠前端不顯示表單。
-  if (req.player.faction !== 'repair') {
+  if ((await factionOf(req.player.teamId)) !== 'repair') {
     return res.status(403).json({ error: '只有時空保衛隊需要指認內鬼' });
   }
 

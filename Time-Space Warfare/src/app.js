@@ -107,3 +107,20 @@ const port = process.env.PORT || 3000;
 server.listen(port, () => {
   console.log(`time-space-warfare listening on ${port}`);
 });
+
+// 收到 docker stop / Ctrl-C 時把伺服器關乾淨。
+//
+// 這段不是可有可無的：容器裡 app 是 PID 1，而 PID 1 拿不到預設的訊號處理——
+// kernel 只在行程「自己裝了 handler」時才把訊號送過去，沒裝就直接忽略。結果是
+// docker stop 每次都要等 10 秒逾時再 SIGKILL（實測過就是 10.4 秒），部署重啟
+// 因此每個系統都白等十秒。
+//
+// 逾時保險：Socket.IO 的長連線不會因為 server.close() 就斷，等它自己收會一直
+// 卡著，所以給 5 秒上限。unref 讓這個計時器不要反過來拖住 process。
+function shutdown(signal) {
+  console.log(`收到 ${signal}，關閉中...`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

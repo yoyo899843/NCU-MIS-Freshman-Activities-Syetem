@@ -16,6 +16,9 @@
   .status-not_started { background: #626b75; }
   .status-in_progress { background: #2a7d2a; }
   .status-ended { background: #c00; }
+  .voting-badge { background: #626b75; }
+  .voting-badge.open { background: #2a7d2a; }
+  .voting-badge.closed { background: #a85400; }
 </style>
 </head>
 <body>
@@ -48,6 +51,22 @@
   <button id="durationBtn">儲存時長</button>
   <p class="hint">大螢幕的倒數用這個時長從「開始遊戲」的時刻起算。時間到只會顯示「時間到」，不會自動結束遊戲——要收還是按上面的「強制結束遊戲」。進行中也可以改，改完大螢幕立刻換成新的倒數。</p>
   <p id="durationResult" class="error"></p>
+</div>
+
+<div class="card admin-only" style="display:none">
+  <h3>最終審判（內鬼指認投票）</h3>
+  <p>投票狀態：<span id="votingBadge" class="status-badge">載入中...</span></p>
+  <p id="votingCounts" style="font-size:0.85rem;color:var(--dim)"></p>
+  <button id="openVotingBtn">開放投票</button>
+  <button id="closeVotingBtn">關閉投票</button>
+  <p id="votingResult" class="error"></p>
+  <hr>
+  <label for="spyVoteCount">每隊要指認幾支（1～20）</label>
+  <input id="spyVoteCount" type="number" min="1" max="20" inputmode="numeric">
+  <button id="spyCountBtn">儲存</button>
+  <p class="hint">企劃是 3 支（10 隊裡有 3 支內鬼）。投票開放後也能改，但已經投過的隊伍會需要重投。</p>
+  <p id="spyCountResult" class="error"></p>
+  <p class="nav"><a href="votes.html">查看投票結果</a></p>
 </div>
 
 <div class="card admin-only" style="display:none">
@@ -98,6 +117,8 @@ function renderState(state) {
   document.getElementById('startBtn').disabled = state.status === 'in_progress';
   document.getElementById('endBtn').disabled = state.status !== 'in_progress';
 
+  renderVoting(state);
+
   if (state.duration_minutes != null) {
     document.getElementById('durationMinutes').value = state.duration_minutes;
   }
@@ -110,6 +131,69 @@ function renderState(state) {
     document.getElementById('pkSeconds').value = state.pk_answer_seconds;
   }
 }
+
+// 投票的開/關跟「遊戲結束」是分開的兩件事——企劃寫「遊戲結束前進入最終審判
+// 階段」，所以投票要在遊戲收掉之前開，主辦要能各自控制。
+function renderVoting(state) {
+  const badge = document.getElementById('votingBadge');
+  let label, cls;
+  if (!state.voting_unlocked_at) { label = '尚未開放'; cls = ''; }
+  else if (state.voting_closed_at) { label = '已關閉'; cls = 'closed'; }
+  else { label = '開放中'; cls = 'open'; }
+  badge.textContent = label;
+  badge.className = 'status-badge voting-badge' + (cls ? ' ' + cls : '');
+
+  document.getElementById('openVotingBtn').disabled = cls === 'open';
+  document.getElementById('closeVotingBtn').disabled = cls !== 'open';
+
+  if (state.spy_vote_count != null) {
+    document.getElementById('spyVoteCount').value = state.spy_vote_count;
+  }
+}
+
+async function loadVotingCounts() {
+  const res = await api('/votes');
+  if (!res.ok) return;
+  const data = await res.json();
+  const voters = data.teams.filter(t => t.faction === 'repair');
+  const voted = voters.filter(t => t.voted).length;
+  document.getElementById('votingCounts').textContent =
+    `已投票 ${voted}/${voters.length} 支好人隊伍`;
+}
+
+document.getElementById('openVotingBtn').addEventListener('click', async () => {
+  const el = document.getElementById('votingResult');
+  const res = await api('/game/open-voting', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) { el.textContent = data.error || `失敗 (${res.status})`; return; }
+  el.textContent = '';
+  renderState(data);
+  await loadVotingCounts();
+});
+
+document.getElementById('closeVotingBtn').addEventListener('click', async () => {
+  if (!confirm('確定要關閉投票嗎？關閉後隊伍就不能再指認或改票了。')) return;
+  const el = document.getElementById('votingResult');
+  const res = await api('/game/close-voting', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) { el.textContent = data.error || `失敗 (${res.status})`; return; }
+  el.textContent = '';
+  renderState(data);
+});
+
+document.getElementById('spyCountBtn').addEventListener('click', async () => {
+  const el = document.getElementById('spyCountResult');
+  el.textContent = '';
+  const res = await api('/game/spy-vote-count', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ spyVoteCount: Number(document.getElementById('spyVoteCount').value) })
+  });
+  const data = await res.json();
+  if (!res.ok) { el.textContent = data.error || `失敗 (${res.status})`; return; }
+  renderState(data);
+  el.textContent = '已儲存。';
+});
 
 document.getElementById('durationBtn').addEventListener('click', async () => {
   const resultEl = document.getElementById('durationResult');
@@ -198,7 +282,10 @@ async function loadMe() {
 
 (async () => {
   const isAdmin = await loadMe();
-  if (isAdmin) await loadState();
+  if (isAdmin) {
+    await loadState();
+    await loadVotingCounts();
+  }
 })();
 </script>
 </body>

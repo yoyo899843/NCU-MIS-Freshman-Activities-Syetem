@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>投票結果 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 900px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; font-size: 0.85rem; vertical-align: top; }
+  th { background: var(--card-2); }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+  .tag-spy { background: var(--disrupt); color: #2b0006; }
+  .tag-good { background: var(--repair); color: #05231a; }
+  .pick { display: inline-block; margin-right: 6px; }
+  .pick.hit { color: var(--repair); font-weight: 700; }
+  .pick.miss { color: var(--dim); text-decoration: line-through; }
+  .novote { color: var(--accent); }
+  .warn { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>投票結果</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <p id="warn" class="warn"></p>
+  <p class="hint">這一頁會顯示每支隊伍的真實身分。投票還開著的時候不要投影出去，也不要給玩家看到。</p>
+</div>
+
+<div class="card">
+  <h3>各隊指認情形</h3>
+  <table>
+    <thead>
+      <tr><th>隊伍</th><th>真實身分</th><th>指認了誰</th><th>猜中</th><th>被幾隊指認</th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script src="../authFetch.js"></script>
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    location.href = 'login.html';
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+async function load() {
+  const st = await api('/game/state');
+  if (st.ok) {
+    const s = await st.json();
+    const open = s.voting_unlocked_at && !s.voting_closed_at;
+    $('warn').textContent = open
+      ? '⚠ 投票進行中：這一頁看得到誰是內鬼，現在千萬不要投影或給玩家看到。'
+      : '';
+  }
+
+  const res = await api('/votes');
+  if (!res.ok) return;
+  const data = await res.json();
+
+  // 好人隊伍排前面（他們才是投票者），內鬼排後面，方便主辦一眼掃完
+  const rows = data.teams.slice().sort((a, b) =>
+    (a.isSpy === b.isSpy) ? a.teamId - b.teamId : (a.isSpy ? 1 : -1));
+
+  $('tbody').innerHTML = rows.map(t => `
+    <tr>
+      <td>${esc(t.name)}</td>
+      <td><span class="tag ${t.isSpy ? 'tag-spy' : 'tag-good'}">${t.isSpy ? '黑暗潛伏者' : '時空保衛隊'}</span></td>
+      <td>${t.isSpy
+        ? '<span class="hint">內鬼不投票</span>'
+        : (t.picks.length
+            ? t.picks.map(p => `<span class="pick ${p.correct ? 'hit' : 'miss'}">${esc(p.name)}</span>`).join('')
+            : '<span class="novote">尚未投票</span>')}</td>
+      <td>${t.isSpy ? '—' : t.correctCount}</td>
+      <td>${t.votesReceived}</td>
+    </tr>`).join('') || '<tr><td colspan="5">目前沒有隊伍</td></tr>';
+}
+
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

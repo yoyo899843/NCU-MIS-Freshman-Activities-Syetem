@@ -32,11 +32,28 @@ jobs:
             (cd "$d" && docker compose up -d --build --remove-orphans)
           done
 
-      # 已套用過的會自己跳過，重複執行是安全的。-T 是因為 CI 沒有 TTY。
-      # 只有帶資料庫的系統需要（Portal 和 Mods 是純靜態 nginx）。
-      - name: Migrate
+      # Migration 已經移進容器啟動流程（見各系統的 Dockerfile：先跑 migrate、
+      # 成功才起 app），所以這裡不再單獨執行——那樣做會有一段「新程式已在服務、
+      # schema 還沒更新」的空窗。
+      #
+      # 改成確認每個 app 真的活著。migration 失敗的話容器會起不來，這一步就會
+      # 讓整個 deploy 紅掉；沒有這一步的話失敗會完全無聲。
+      - name: Verify apps are healthy
         run: |
           cd "$DEPLOY_DIR"
           for d in "Time-Space Warfare" "RPG System" "Stock System"; do
-            (cd "$d" && docker compose exec -T app node migrations/migrate.js)
+            (
+              cd "$d"
+              for i in $(seq 1 30); do
+                if docker compose exec -T app node -e \
+                     "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))" 2>/dev/null; then
+                  echo "$d: healthy"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "$d: 啟動失敗，最後 50 行 log："
+              docker compose logs --tail=50 app
+              exit 1
+            )
           done
