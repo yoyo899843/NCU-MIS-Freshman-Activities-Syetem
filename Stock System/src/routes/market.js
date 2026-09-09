@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const asyncHandler = require('../middleware/asyncHandler');
-const { effectivePrices } = require('../portfolio');
+const { effectivePrices, leaderboard } = require('../portfolio');
 
 const router = express.Router();
 
@@ -50,6 +50,17 @@ router.get('/news', asyncHandler(async (req, res) => {
     all ? [] : [st[0].wave]
   );
   res.json(rows);
+}));
+
+// 全場總資產排行榜（現金 ＋ 股票現值）。
+//
+// 這支不用登入，跟行情和新聞同一個理由：企劃要的是投影在大螢幕上「以便最後
+// 公布名次」，而大螢幕那台電腦沒有隊伍帳號。管理端也有一支同名的
+// （/admin/api/leaderboard），差別在這裡不回任何隊伍的私有資訊——只有名次、
+// 隊名、現金、股票現值、總資產，跟現場投影出來的東西一模一樣。
+router.get('/leaderboard', asyncHandler(async (req, res) => {
+  const { rows } = await db.query('SELECT wave, total_waves, phase FROM game_state WHERE id = 1');
+  res.json({ ...rows[0], teams: await leaderboard(rows[0].wave) });
 }));
 
 module.exports = router;

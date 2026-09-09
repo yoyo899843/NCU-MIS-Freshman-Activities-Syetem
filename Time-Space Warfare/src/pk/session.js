@@ -135,6 +135,27 @@ async function cancelUnstartedDuel(duelId) {
   }
 }
 
+// 重啟遊戲時把所有進行中的對戰都收掉。
+//
+// session 全部在記憶體裡，而重啟會把 pk_duels 整張表刪光。不清的話，正在打的
+// 那幾場會繼續跑計時器，然後在結算時 UPDATE 一列已經不存在的 pk_duels——不會
+// 報錯（rowCount 0），但兩邊的畫面會一直卡在答題中等一個永遠不會來的結果。
+function clearAll() {
+  const n = sessions.size;
+  sessions.forEach((session, duelId) => {
+    session.finished = true;
+    if (session.timer) clearTimeout(session.timer);
+    clearMatchStartTimer(session);
+    Object.values(session.disconnectTimers).forEach(clearTimeout);
+    getIO().to(`duel:${duelId}`).emit('pk:cancelled', {
+      reason: 'game_reset',
+      message: '主辦已重啟遊戲，這場對戰取消'
+    });
+  });
+  sessions.clear();
+  return n;
+}
+
 function clearMatchStartTimer(session) {
   if (session?.matchStartTimer) {
     clearTimeout(session.matchStartTimer);
@@ -484,4 +505,4 @@ async function persistResult(io, duelId, session, winnerId, loserId, { hostSumma
   }
 }
 
-module.exports = { createSession, getSession, playerEntered, playerDisconnected, submitAnswer };
+module.exports = { createSession, getSession, playerEntered, playerDisconnected, submitAnswer, clearAll };

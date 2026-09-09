@@ -213,6 +213,17 @@ function renderCheckpoints(list) {
       checkpointMarkers.set(cp.id, marker);
     }
   });
+
+  // 已經不在清單裡的標記要拿掉。這張表只加不減的話，主辦在後台刪掉一個交摺點、
+  // 或把它的座標清空（還沒定好位置）之後，玩家的地圖上那顆點會一直留著——而且
+  // 進度永遠停在最後一次看到的數字，看起來像個沒人管的死點。
+  const alive = new Set(withCoords.map(cp => cp.id));
+  checkpointMarkers.forEach((marker, id) => {
+    if (!alive.has(id)) {
+      map.removeLayer(marker);
+      checkpointMarkers.delete(id);
+    }
+  });
 }
 
 // 點據點標記就能幫它取自己隊的名字/註記。用 prompt 而不是自製對話框：這是

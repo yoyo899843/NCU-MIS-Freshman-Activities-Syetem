@@ -317,6 +317,146 @@ router.patch('/teams/:id/cash', requireAdmin, asyncHandler(async (req, res) => {
   res.json({ ...rows[0], cash: Number(rows[0].cash) });
 }));
 
+// 重設隊伍 PIN。現場一定會有隊伍把 PIN 忘掉或打錯記錯，沒有這支就只能請人
+// 去翻資料庫。PIN 本來就是明碼存的（主辦看得到是刻意的設計），這裡只是把
+// 「要用 psql 改」搬到後台頁面上。
+router.patch('/teams/:id/pin', requireAdmin, asyncHandler(async (req, res) => {
+  const { pin } = req.body || {};
+  if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+    return res.status(400).json({ error: 'PIN 要剛好 4 碼數字' });
+  }
+  const { rows: before } = await db.query('SELECT pin FROM teams WHERE id = $1', [req.params.id]);
+  if (before.length === 0) return res.status(404).json({ error: '找不到這支隊伍' });
+
+  const { rows } = await db.query(
+    'UPDATE teams SET pin = $1 WHERE id = $2 RETURNING id, display_name, pin, cash',
+    [pin, req.params.id]
+  );
+  await audit(req.admin.sub, 'reset_team_pin', 'team', req.params.id, { pin: before[0].pin }, { pin });
+  res.json({ ...rows[0], cash: Number(rows[0].cash) });
+}));
+
+// 刪除隊伍。
+//
+// 已經有存款申報或成交紀錄的隊伍預設擋下來——刪掉會讓總資產排行榜的分母無聲
+// 改變，銀行那邊也對不上帳。要真的刪就帶 ?force=1，連同持股、成交、申報一起
+// 走（deposits/holdings/trades 都是 ON DELETE CASCADE，所以只要一句 DELETE）。
+router.delete('/teams/:id', requireAdmin, asyncHandler(async (req, res) => {
+  const { rows: existing } = await db.query(
+    'SELECT id, display_name FROM teams WHERE id = $1', [req.params.id]
+  );
+  if (existing.length === 0) return res.status(404).json({ error: '找不到這支隊伍' });
+
+  const { rows: used } = await db.query(
+    `SELECT (SELECT COUNT(*)::int FROM trades WHERE team_id = $1) AS trades,
+            (SELECT COUNT(*)::int FROM deposits WHERE team_id = $1) AS deposits`,
+    [req.params.id]
+  );
+  const u = used[0];
+  const force = req.query.force === '1';
+  if ((u.trades > 0 || u.deposits > 0) && !force) {
+    return res.status(409).json({
+      error: `這支隊伍已經有 ${u.trades} 筆成交、${u.deposits} 筆存款申報，刪除會連同這些紀錄一起消失。`,
+      needsForce: true,
+      records: u
+    });
+  }
+
+  await db.query('DELETE FROM teams WHERE id = $1', [req.params.id]);
+  await audit(req.admin.sub, 'delete_team', 'team', req.params.id,
+    { displayName: existing[0].display_name, forced: force, records: u }, null);
+  res.status(204).end();
+}));
+
+/* ---------------- 管理端帳號 ---------------- */
+
+// 之前新增管理端帳號只有 scripts/create-admin.js 這條路，等於現場要開一個銀行
+// 關主帳號就得有人 SSH 進伺服器。銀行攤位臨時多開一個、關主換人，都是活動當天
+// 會發生的事，所以補上後台入口。
+//
+// 全部掛 requireAdmin：banker 不能開帳號，也不能把自己升成 admin。
+router.get('/admins', requireAdmin, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, email, display_name, role, created_at FROM admin_users ORDER BY id'
+  );
+  res.json(rows);
+}));
+
+router.post('/admins', requireAdmin, asyncHandler(async (req, res) => {
+  const { email, password, displayName, role } = req.body || {};
+  const mail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!mail || !mail.includes('@')) return res.status(400).json({ error: '請填寫有效的 email' });
+  if (typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: '密碼至少 8 個字元' });
+  }
+  if (role !== undefined && !['admin', 'banker'].includes(role)) {
+    return res.status(400).json({ error: "role 只能是 'admin' 或 'banker'" });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO admin_users (email, password_hash, display_name, role)
+       VALUES ($1,$2,$3,$4) RETURNING id, email, display_name, role, created_at`,
+      [mail, passwordHash, (displayName || '').trim() || null, role || 'banker']
+    );
+    await audit(req.admin.sub, 'create_admin', 'admin_user', rows[0].id, null,
+      { email: mail, role: rows[0].role });
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: '這個 email 已經有帳號了' });
+    throw err;
+  }
+}));
+
+router.patch('/admins/:id/password', requireAdmin, asyncHandler(async (req, res) => {
+  const { password } = req.body || {};
+  if (typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: '密碼至少 8 個字元' });
+  }
+  const { rows } = await db.query(
+    'UPDATE admin_users SET password_hash = $1 WHERE id = $2 RETURNING id, email, role',
+    [await bcrypt.hash(password, 12), req.params.id]
+  );
+  if (rows.length === 0) return res.status(404).json({ error: '找不到這個帳號' });
+  await audit(req.admin.sub, 'reset_admin_password', 'admin_user', req.params.id, null, null);
+  res.json(rows[0]);
+}));
+
+router.delete('/admins/:id', requireAdmin, asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+
+  // 不能刪自己：刪完就沒有人能登入後台了（而且刪的人當下也會被自己的 token 卡住）。
+  if (id === req.admin.sub) {
+    return res.status(400).json({ error: '不能刪除自己正在使用的帳號' });
+  }
+
+  const { rows: target } = await db.query(
+    'SELECT id, email, role FROM admin_users WHERE id = $1', [id]
+  );
+  if (target.length === 0) return res.status(404).json({ error: '找不到這個帳號' });
+
+  // 最後一個 admin 不能刪。banker 開不了帳號也改不了股價，全刪光等於整個後台鎖死，
+  // 只能重新 SSH 進去跑 create-admin.js——活動進行到一半沒有人有空做這件事。
+  if (target[0].role === 'admin') {
+    const { rows: cnt } = await db.query(
+      `SELECT COUNT(*)::int AS n FROM admin_users WHERE role = 'admin'`
+    );
+    if (cnt[0].n <= 1) {
+      return res.status(409).json({ error: '這是最後一個管理員帳號，刪掉就沒有人能管理後台了' });
+    }
+  }
+
+  // admin_actions.admin_user_id 是 nullable 的外鍵，稽核紀錄要留著（誰做了什麼
+  // 不該因為帳號被刪就消失），所以先把關聯解開再刪帳號。
+  await db.query('UPDATE admin_actions SET admin_user_id = NULL WHERE admin_user_id = $1', [id]);
+  await db.query('UPDATE deposits SET reviewed_by = NULL WHERE reviewed_by = $1', [id]);
+  await db.query('DELETE FROM admin_users WHERE id = $1', [id]);
+  await audit(req.admin.sub, 'delete_admin', 'admin_user', id,
+    { email: target[0].email, role: target[0].role }, null);
+  res.status(204).end();
+}));
+
 /* ---------------- 交易監控與總覽 ---------------- */
 
 router.get('/trades', asyncHandler(async (req, res) => {

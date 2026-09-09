@@ -66,6 +66,18 @@ function remove(roomCode) {
   }
 }
 
+// 重啟遊戲時把等待中的房間全部清掉。
+//
+// 只清資料庫是不夠的：這張表活在記憶體裡，房號逾時的計時器也掛在上面。不清的話
+// 重啟後舊房號還查得到（lookup 命中記憶體，根本不會回 DB），玩家會加入一場
+// 資料已經被刪掉的對戰，然後在 session 建立時炸掉。
+function clearAll() {
+  rooms.forEach(entry => clearTimeout(entry.timeout));
+  const n = rooms.size;
+  rooms.clear();
+  return n;
+}
+
 function generateRoomCode() {
   let code;
   do {
@@ -74,4 +86,4 @@ function generateRoomCode() {
   return code;
 }
 
-module.exports = { register, lookup, lookupInDb, remove, generateRoomCode, ROOM_TIMEOUT_MS };
+module.exports = { register, lookup, lookupInDb, remove, clearAll, generateRoomCode, ROOM_TIMEOUT_MS };

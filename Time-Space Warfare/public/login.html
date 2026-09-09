@@ -31,8 +31,12 @@ if (existing && existingPlayer) {
 function showLoggedIn(info) {
   document.getElementById('loginCard').style.display = 'none';
   document.getElementById('loggedInCard').style.display = '';
+
+  // 陣營在「開始遊戲」時才抽，抽完會在首頁彈窗公布，這一頁不重複顯示——
+  // 這裡拿到的 info 是登入當下的快照，抽籤之後就過期了。
+  const teamNo = info.team.teamNumber ?? info.team.id;
   document.getElementById('who').textContent =
-    `${info.player.displayName}（${info.team.faction === 'repair' ? '時空修復者' : '時空破壞者'}，隊伍 #${info.team.id}）`;
+    `${info.player.displayName}（隊伍 #${teamNo}）`;
 }
 
 // PIN 輸入當下就擋掉非數字字元（不管是打字還是貼上），不是等送出才檢查格式。

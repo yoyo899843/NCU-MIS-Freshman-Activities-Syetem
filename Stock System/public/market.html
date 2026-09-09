@@ -5,30 +5,46 @@
 <body>
 <h1>個股查詢</h1>
 <p><a href="index.html">&laquo; 回首頁</a>　目前第 <strong id="wave"></strong> 波</p>
+
+<h2>四檔走勢比較</h2>
+<div id="chart"></div>
+
+<h2>個股明細</h2>
 <div id="list"></div>
+
 <script src="app.js"></script>
 <script>
-// 趨勢圖先用純文字的走勢列（每一波一格）表示，不畫圖：美編之後再處理，
-// 這裡先確保「歷史每一波的價格與漲跌幅」資料是完整、看得懂的。
-function trend(history) {
-  if (!history.length) return '—';
-  return history.map(h =>
-    `第${h.wave}波 ${money(h.price)}（${pctText(h.changePct)}）`).join('　→　');
-}
-
 async function load() {
   const { ok, body } = await api('/api/market/stocks');
   if (!ok) return;
   $('wave').textContent = body.wave;
-  $('list').innerHTML = body.stocks.map(s => `
-    <article>
-      <h3>${esc(s.name)}</h3>
-      <p>最新股價：<strong>${s.price === null ? '尚未開盤' : money(s.price)}</strong>　
+
+  // 疊在同一張圖上：玩家要判斷的是「這則新聞讓哪一檔比較有利」，
+  // 四張各自獨立的圖沒辦法直接比較，一張疊起來的可以。
+  $('chart').innerHTML = trendChart(
+    body.stocks.filter(s => s.history.length).map(s => ({ name: s.name, history: s.history }))
+  );
+
+  $('list').innerHTML = body.stocks.map((s, i) => {
+    const color = CHART_COLORS[i % CHART_COLORS.length];
+    return `
+    <article style="margin-bottom:18px">
+      <h3><span style="display:inline-block;width:11px;height:11px;background:${color}"></span>
+          ${esc(s.name)}</h3>
+      <p>最新股價：<strong>${s.price === null ? '尚未開盤' : money(s.price)}</strong>
          本波漲跌：<strong>${pctText(s.changePct)}</strong></p>
-      <p>走勢：${trend(s.history)}</p>
-    </article><hr>`).join('');
+      <p>各波漲跌幅：</p>
+      ${changeBars(s.history)}
+      <p style="font-size:0.9em;color:#444">
+        ${s.history.length
+          ? s.history.map(h => `第${h.wave}波 ${money(h.price)}（${pctText(h.changePct)}）`).join('　→　')
+          : '尚無歷史價格'}
+      </p>
+    </article><hr>`;
+  }).join('');
 }
 load();
+// 股價是主辦在後台每波開盤時更新的，玩家端沒有別的方式知道
 setInterval(load, 5000);
 </script>
 </body></html>

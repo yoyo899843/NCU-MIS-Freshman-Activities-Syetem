@@ -54,15 +54,11 @@
 </div>
 
 <div class="card">
-  <h3>手動增減分數</h3>
-  <p class="hint">掃碼答題以外的補救手段（現場判定爭議、關主代為記分）。負數就是扣分，扣到 0 為止。</p>
+  <h3>手動設定修復進度</h3>
+  <p class="hint">關主現場操作以外的補救手段（判定爭議、關主代為記錄）。直接填最終的進度百分比 0～100，不是增減值。</p>
   <div class="form-row">
     <select id="ovCheckpoint"></select>
-    <select id="ovFaction">
-      <option value="repair">修復值</option>
-      <option value="disrupt">破壞值</option>
-    </select>
-    <input id="ovDelta" placeholder="增減分數（可負）" inputmode="numeric">
+    <input id="ovProgress" type="number" min="0" max="100" placeholder="修復進度 %（0～100）" inputmode="numeric">
     <input id="ovNote" placeholder="備註（選填，會記進稽核）">
   </div>
   <button id="ovBtn">送出</button>
@@ -116,7 +112,7 @@ async function load() {
       ? '<span class="error">尚未設定</span>'
       : `${cp.map_lat}, ${cp.map_lng}`;
     return `
-    <tr>
+    <tr id="row-${cp.id}">
       <td>${escapeHtml(cp.name)}</td>
       <td>${coords}</td>
       <td class="n">
@@ -154,20 +150,63 @@ $('createBtn').addEventListener('click', async () => {
   await load();
 });
 
-window.editCp = async function (id) {
+// 編輯改成直接在表格列上填欄位，不再用三個連續的 prompt()。
+//
+// prompt 那版有兩個現場很致命的問題：一是三個對話框只要中途按取消就整筆放棄、
+// 前面打的白費；二是手機/平板上 prompt 的輸入框看不到目前地圖長怎樣，也沒辦法
+// 貼上「24.968, 121.191」這種從 Google 地圖複製來的格式。
+window.editCp = function (id) {
   const cp = (window.__checkpoints || []).find(c => c.id === id);
-  if (!cp) return;
-  const name = prompt('名稱：', cp.name);
-  if (name === null) return;
-  const lat = prompt('緯度 lat：', cp.map_lat ?? '');
-  if (lat === null) return;
-  const lng = prompt('經度 lng：', cp.map_lng ?? '');
-  if (lng === null) return;
+  const row = document.getElementById('row-' + id);
+  if (!cp || !row) return;
+
+  row.innerHTML = `
+    <td><input id="e-name-${id}" value="${escapeHtml(cp.name)}" style="width:100%"></td>
+    <td>
+      <div class="form-row">
+        <input id="e-lat-${id}" value="${cp.map_lat ?? ''}" placeholder="緯度 lat" inputmode="decimal">
+        <input id="e-lng-${id}" value="${cp.map_lng ?? ''}" placeholder="經度 lng" inputmode="decimal">
+      </div>
+      <p class="hint" style="margin:4px 0 0">可以直接把 Google 地圖的「24.968, 121.191」貼進緯度欄，會自動拆開。</p>
+    </td>
+    <td class="n">${progressOf(cp).pct}%</td>
+    <td class="row-actions">
+      <button onclick="saveCp(${id})">儲存</button>
+      <button class="ghost" onclick="load()">取消</button>
+    </td>`;
+
+  // 貼上「lat, lng」一次填好兩格：現場設點就是從地圖複製一整組座標，
+  // 要人手動拆成兩半再貼兩次，很容易貼錯欄位（經緯度顛倒的話點會跑到別的國家）。
+  const latEl = document.getElementById(`e-lat-${id}`);
+  latEl.addEventListener('input', () => {
+    const m = latEl.value.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (m) {
+      latEl.value = m[1];
+      document.getElementById(`e-lng-${id}`).value = m[2];
+    }
+  });
+  latEl.focus();
+};
+
+window.saveCp = async function (id) {
+  $('result').className = 'error';
+  const name = document.getElementById(`e-name-${id}`).value.trim();
+  const lat = document.getElementById(`e-lat-${id}`).value.trim();
+  const lng = document.getElementById(`e-lng-${id}`).value.trim();
+
+  if (!name) { $('result').textContent = '名稱不能空白'; return; }
+  // 經緯度要嘛兩個都填、要嘛兩個都不填。只填一個的話後端的 COALESCE 會保留
+  // 另一半的舊值，存出來是一組「新緯度配舊經度」的座標——點會落在完全錯的地方，
+  // 而且畫面上看起來像是存成功了。
+  if ((lat === '') !== (lng === '')) {
+    $('result').textContent = '經度和緯度要一起填（或一起留空）';
+    return;
+  }
 
   const res = await api(`/checkpoints/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name.trim(), mapLat: lat.trim(), mapLng: lng.trim() })
+    body: JSON.stringify({ name, mapLat: lat, mapLng: lng })
   });
   const data = await res.json();
   if (!res.ok) { $('result').textContent = data.error || `失敗 (${res.status})`; return; }
@@ -192,21 +231,29 @@ window.deleteCp = async function (id) {
   $('result').textContent = data.error || `失敗 (${res.status})`;
 };
 
+// 這張表單原本打的是 /overrides/score 並送 { faction, delta }，那是舊的雙分數
+// 模型留下來的——後端在改成單一 0~100 進度時就換成 /overrides/progress 了，
+// 這一支早就 404（而且被 app.js 的 API 404 handler 接住，只回一句 not found）。
 $('ovBtn').addEventListener('click', async () => {
+  $('ovResult').className = 'error';
   $('ovResult').textContent = '';
-  const res = await api('/overrides/score', {
+  const raw = $('ovProgress').value.trim();
+  if (raw === '') { $('ovResult').textContent = '請填修復進度（0～100）'; return; }
+
+  const res = await api('/overrides/progress', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       checkpointId: Number($('ovCheckpoint').value),
-      faction: $('ovFaction').value,
-      delta: Number($('ovDelta').value),
+      progress: Number(raw),
       note: $('ovNote').value.trim() || null
     })
   });
   const data = await res.json();
   if (!res.ok) { $('ovResult').textContent = data.error || `失敗 (${res.status})`; return; }
-  $('ovDelta').value = ''; $('ovNote').value = '';
+  $('ovProgress').value = ''; $('ovNote').value = '';
+  $('ovResult').className = 'hint';
+  $('ovResult').textContent = `已將「${data.name}」設為 ${data.progress}%。`;
   await load();
 });
 

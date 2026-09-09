@@ -46,13 +46,14 @@
     <input id="newName" maxlength="10" placeholder="隊伍代號（最多 10 字）">
     <input id="newPin" inputmode="numeric" maxlength="4" placeholder="4 碼 PIN">
     <select id="newFaction">
-      <option value="">陣營：自動分配</option>
-      <option value="repair">修復者</option>
-      <option value="disrupt">破壞者</option>
+      <option value="">陣營：開賽時抽籤決定</option>
+      <option value="repair">指定為時空保衛隊</option>
+      <option value="disrupt">指定為黑暗潛伏者</option>
     </select>
     <button id="createBtn">新增</button>
   </div>
-  <p class="hint">代號只能用中英文字、數字與 emoji。玩家用同一組代號＋PIN 登入。</p>
+  <p class="hint">代號只能用中英文字、數字與 emoji。玩家用同一組代號＋PIN 登入。陣營通常不用選——主辦按「開始遊戲」時會從所有隊伍中隨機抽出破壞者。只有在遊戲已經開始之後才補建的隊伍需要手動指定，因為抽籤已經過去了。</p>
+  <p id="drawNote" class="hint" style="color:var(--accent)"></p>
   <p id="createMsg" class="pin-msg"></p>
 </div>
 
@@ -93,7 +94,11 @@ async function api(path, options = {}) {
   return res;
 }
 
-const factionLabel = f => f === 'repair' ? '修復者' : f === 'disrupt' ? '破壞者' : f;
+const factionLabel = f => f === 'repair' ? '保衛隊' : f === 'disrupt' ? '潛伏者' : f;
+
+// 陣營是「開始遊戲」時才抽的（見 admin.js 的 /game/start）。抽籤之前 teams.faction
+// 全部都是 repair 佔位值，照著顯示會讓人以為已經分好了、而且全場都是好人。
+let factionDrawn = false;
 
 let players = [];
 
@@ -104,7 +109,9 @@ function renderRows() {
   document.getElementById('playersBody').innerHTML = filtered.map(p => `
     <tr>
       <td>
-        <span class="tag tag-${p.faction}">${factionLabel(p.faction)} ${p.team_number}</span>
+        ${factionDrawn
+          ? `<span class="tag tag-${p.faction}">${factionLabel(p.faction)} ${p.team_number}</span>`
+          : `<span class="tag">未抽籤 ${p.team_number}</span>`}
         ${p.is_captain ? '<span class="tag tag-captain">隊長</span>' : ''}
       </td>
       <td>${escapeHtml(p.display_name)}</td>
@@ -150,6 +157,19 @@ function escapeHtml(str) {
 }
 
 async function loadPlayers() {
+  // 先問抽籤狀態再畫，否則第一次繪製會把所有隊伍都標成「保衛隊」——
+  // 抽籤前 faction 全是佔位值，那個畫面是假的。
+  try {
+    const st = await api('/game/state');
+    if (st.ok) {
+      const s = await st.json();
+      factionDrawn = !!s.faction_drawn_at;
+      document.getElementById('drawNote').textContent = factionDrawn
+        ? ''
+        : '陣營尚未抽籤，下面顯示的陣營一律是「未抽籤」。按下管理後台的「開始遊戲」才會抽。';
+    }
+  } catch (e) { /* 關主權限拿不到遊戲狀態，就維持未抽籤的保守顯示 */ }
+
   const res = await api('/players');
   players = await res.json();
   renderRows();
@@ -210,23 +230,43 @@ window.changeFaction = async function (playerId) {
   await loadPlayers();
 };
 
-// 刪除的限制在後端（有關卡/PK/任務紀錄的隊伍會被 409 擋下，見 admin.js），
-// 這裡只負責問一次「確定嗎」並把伺服器的理由顯示出來。
-window.removePlayer = async function (playerId) {
+// 刪除分兩段。
+//
+// 第一次直接刪：還沒有任何紀錄的隊伍（報名鍵錯、多開一支）就這樣沒了，這是
+// 現場最常見的情況。有紀錄的隊伍後端會回 409 + needsForce，這時候把「會連帶
+// 刪掉什麼」講清楚再問一次，確認了才帶 force=1 重送。
+//
+// 為什麼要有 force：主辦說「每個帳號都要能刪」。單純擋住等於刪不掉，只是把
+// 問題丟回給人。但代價是真的存在——這支隊伍打過的 PK 也是對手的勝場，刪掉
+// 對手的積分會跟著少，所以不能默默做，要讓按的人知道自己在刪什麼。
+window.removePlayer = async function (playerId, force) {
   const player = players.find(p => p.id === playerId);
+  const name = player ? player.display_name : playerId;
   const msgEl = document.getElementById(`delMsg-${playerId}`);
   msgEl.textContent = '';
+  msgEl.className = 'del-msg';
 
-  if (!confirm(`確定要刪除「${player ? player.display_name : playerId}」這支隊伍嗎？此動作無法復原。`)) return;
+  if (!force && !confirm(`確定要刪除「${name}」這支隊伍嗎？此動作無法復原。`)) return;
 
-  const res = await api(`/players/${playerId}`, { method: 'DELETE' });
-  if (!res.ok && res.status !== 204) {
-    const data = await res.json().catch(() => ({}));
-    msgEl.textContent = data.error || `失敗 (${res.status})`;
-    msgEl.className = 'del-msg error';
-    return;
+  const res = await api(`/players/${playerId}${force ? '?force=1' : ''}`, { method: 'DELETE' });
+  if (res.status === 204) { await loadPlayers(); return; }
+
+  const data = await res.json().catch(() => ({}));
+
+  if (res.status === 409 && data.needsForce) {
+    const r = data.records || {};
+    const ok = confirm(
+      `「${name}」已經有比賽紀錄：\n` +
+      `　關卡挑戰 ${r.attempts} 筆\n　PK 對戰 ${r.duels} 場\n　任務 ${r.missions} 則\n\n` +
+      '連同這些紀錄一起刪除的話，對手的 PK 勝場也會跟著減少，積分與名次會改變。\n' +
+      '（如果只是要讓他們登不進來，取消後改 PIN 就好。）\n\n確定要連紀錄一起刪除嗎？'
+    );
+    if (!ok) { msgEl.textContent = '已取消。'; return; }
+    return removePlayer(playerId, true);
   }
-  await loadPlayers();
+
+  msgEl.textContent = data.error || `失敗 (${res.status})`;
+  msgEl.className = 'del-msg error';
 };
 
 document.getElementById('newPin').addEventListener('input', e => {

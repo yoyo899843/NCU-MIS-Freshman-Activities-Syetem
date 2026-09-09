@@ -57,7 +57,9 @@
 <div id="resultCard" class="card" style="display:none">
   <p id="resultMessage" style="font-weight:bold"></p>
   <p id="resultScore" class="hint"></p>
-  <p class="nav"><a href="index.html">&laquo; 回首頁</a></p>
+  <!-- 打完就回首頁，不放「再來一場」。連續對同一隊開房是規則上不該發生的事
+       （輸的一方有 3 分鐘保護期），按鈕擺在那裡只會讓人一直按到被 403 擋下。 -->
+  <button id="backHomeBtn">回首頁</button>
 </div>
 
 <script src="authFetch.js"></script>
@@ -65,6 +67,12 @@
 <script>
 const token = localStorage.getItem('playerToken');
 const playerInfo = JSON.parse(localStorage.getItem('playerInfo') || 'null');
+
+// 對戰結束的唯一出口。用 location.href 而不是 history.back()：玩家可能是從
+// 首頁點進來、也可能是重整過或直接開網址進來的，上一頁不一定是首頁。
+document.getElementById('backHomeBtn').addEventListener('click', () => {
+  location.href = 'index.html';
+});
 
 if (!token || !playerInfo) {
   document.getElementById('notLoggedIn').style.display = '';
@@ -343,9 +351,6 @@ function initPk() {
     let text = won
       ? (byForfeit ? '對方斷線超過 20 秒未回來，判你獲勝！' : '對戰勝利！')
       : (byForfeit ? '你斷線超過 20 秒未回來，判對方獲勝。' : '對戰失敗！');
-    if (!won) {
-
-    }
     document.getElementById('resultMessage').textContent = text;
 
     // 最終比分：伺服器結算時已經算好雙方的答對題數/總作答時間（見 pk:result

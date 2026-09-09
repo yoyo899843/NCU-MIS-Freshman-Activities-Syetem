@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理端帳號 - 賭大股票系統</title></head>
+<body>
+<h1>管理端帳號</h1>
+<p><a href="index.html">&laquo; 回後台</a></p>
+
+<p>兩種權限：<strong>主辦</strong>（admin）什麼都能做；<strong>銀行關主</strong>（banker）只能核准／駁回存款申報，其餘寫入操作一律被伺服器擋下。</p>
+
+<h2>新增帳號</h2>
+<p>
+  Email <input id="newEmail" type="email" placeholder="banker1@example.com">
+  密碼 <input id="newPassword" type="password" placeholder="至少 8 字元">
+  名稱 <input id="newName" placeholder="顯示名稱（選填）">
+  <select id="newRole">
+    <option value="banker">銀行關主</option>
+    <option value="admin">主辦（管理員）</option>
+  </select>
+  <button id="addBtn">新增</button>
+</p>
+<p id="addErr" style="color:#c00"></p>
+
+<h2>帳號清單</h2>
+<table border="1" cellpadding="4">
+  <thead><tr><th>Email</th><th>名稱</th><th>權限</th><th>建立時間</th><th>重設密碼</th><th>刪除</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<p id="err" style="color:#c00"></p>
+
+<script src="admin.js"></script>
+<script>
+if (requireAdminLogin()) {
+  let meId = null;
+  let admins = [];
+  const ROLE_LABEL = { admin: '主辦（管理員）', banker: '銀行關主' };
+  // onclick 只傳 id，email 從這份清單裡查。把 email 直接內嵌進 onclick 的字串
+  // 參數裡，只要值裡有個單引號整個 handler 就變成語法錯誤（esc() escape 成
+  // &#39; 也救不了——HTML 屬性會先解碼回單引號才交給 JS 解析）。
+  const emailOf = id => (admins.find(a => a.id === id) || {}).email || '';
+
+  $('addBtn').addEventListener('click', async () => {
+    $('addErr').textContent = '';
+    const { ok, body } = await api('/admins', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: $('newEmail').value,
+        password: $('newPassword').value,
+        displayName: $('newName').value,
+        role: $('newRole').value
+      })
+    });
+    if (!ok) { $('addErr').textContent = body.error || '新增失敗'; return; }
+    $('newEmail').value = ''; $('newPassword').value = ''; $('newName').value = '';
+    await load();
+  });
+
+  window.resetPassword = async function (id) {
+    const pw = prompt(`「${emailOf(id)}」的新密碼（至少 8 字元）`);
+    if (pw === null) return;
+    $('err').textContent = '';
+    const { ok, body } = await api(`/admins/${id}/password`, {
+      method: 'PATCH', body: JSON.stringify({ password: pw })
+    });
+    if (!ok) { $('err').textContent = body.error || '重設失敗'; return; }
+    $('err').textContent = '';
+    alert('密碼已更新');
+  };
+
+  window.removeAdmin = async function (id) {
+    if (!confirm(`確定要刪除「${emailOf(id)}」這個帳號嗎？此動作無法復原。\n（他做過的稽核紀錄會保留。）`)) return;
+    $('err').textContent = '';
+    const res = await api(`/admins/${id}`, { method: 'DELETE' });
+    if (!res.ok && res.status !== 204) {
+      $('err').textContent = res.body.error || `刪除失敗 (${res.status})`;
+      return;
+    }
+    await load();
+  };
+
+  async function load() {
+    const me = await api('/me');
+    if (me.ok) meId = me.body.id;
+
+    const { ok, body } = await api('/admins');
+    admins = ok ? body : [];
+    if (!ok) {
+      $('rows').innerHTML = '<tr><td colspan="6">你不是管理員，看不到帳號清單。</td></tr>';
+      return;
+    }
+    $('rows').innerHTML = body.map(a => `
+      <tr>
+        <td>${esc(a.email)}${a.id === meId ? '　<strong>（你自己）</strong>' : ''}</td>
+        <td>${esc(a.display_name || '—')}</td>
+        <td>${ROLE_LABEL[a.role] || a.role}</td>
+        <td>${new Date(a.created_at).toLocaleString()}</td>
+        <td><button onclick="resetPassword(${a.id})">重設</button></td>
+        <td>${a.id === meId
+          ? '<span style="color:#888">—</span>'
+          : `<button onclick="removeAdmin(${a.id})">刪除</button>`}</td>
+      </tr>`).join('');
+  }
+
+  load();
+}
+</script>
+</body></html>

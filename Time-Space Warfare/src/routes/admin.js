@@ -13,12 +13,25 @@ const { getIO } = require('../io');
 const { applyAction } = require('../checkpoints/progress');
 const { computeScores } = require('../scoring');
 const { validateName } = require('../displayName');
+const roomRegistry = require('../pk/roomRegistry');
+const pkSession = require('../pk/session');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
 // --- 簡單的登入失敗鎖定（見 src/loginThrottle.js：記憶體內、會定期清掉過期項目） ---
 const loginThrottle = createLoginThrottle();
+
+// game_state 的完整欄位清單。
+//
+// 每一支會改動遊戲狀態的 API 都要把整份狀態回給前端（renderState 是拿整包去
+// 重畫的），原本是十個地方各抄一份 RETURNING，加欄位就得記得十個都改。實際上
+// 也真的漏掉過：/game/start 和 /game/end 少了 pk_questions_per_duel 與
+// pk_answer_seconds，按下「開始遊戲」之後 PK 設定的兩個輸入框會被填成
+// undefined 而變空白——不會報錯，只是看起來設定不見了。
+const GAME_STATE_COLUMNS = `status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+       pk_questions_per_duel, pk_answer_seconds,
+       voting_unlocked_at, voting_closed_at, spy_vote_count, spy_team_count, faction_drawn_at`;
 
 router.post('/login', asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
@@ -234,23 +247,47 @@ router.post('/checkpoints', asyncHandler(async (req, res) => {
 }));
 
 router.patch('/checkpoints/:id', asyncHandler(async (req, res) => {
-  const { name, mapLat, mapLng } = req.body || {};
+  const body = req.body || {};
+  const { name, mapLat, mapLng } = body;
   const lat = parseCoord(mapLat, -90, 90, 'mapLat');
   if (!lat.ok) return res.status(400).json({ error: lat.error });
   const lng = parseCoord(mapLng, -180, 180, 'mapLng');
   if (!lng.ok) return res.status(400).json({ error: lng.error });
 
+  // 「有送這個欄位」和「這個欄位是空的」是兩件事。
+  //
+  // 原本三個欄位一律 COALESCE(新值, 舊值)，而 parseCoord 把空字串也算成 null，
+  // 結果是座標永遠清不掉：後台把經緯度欄位清空按儲存，回應 200、畫面重載，
+  // 座標還在原地——看起來像沒存到，其實是被 COALESCE 擋回舊值了。
+  //
+  // 改成看 key 在不在 body 裡：沒送就不動（PATCH 的語意），送了空字串就是
+  // 明確要清成 NULL（那個點會從地圖上消失，這是主辦真的會做的事——點還沒定位）。
+  const sets = [];
+  const params = [];
+  const put = (col, value) => { params.push(value); sets.push(`${col} = $${params.length}`); };
+
+  if (name !== undefined) {
+    const trimmed = typeof name === 'string' ? name.trim() : '';
+    if (!trimmed) return res.status(400).json({ error: 'name 不能是空字串' });
+    put('name', trimmed);
+  }
+  if ('mapLat' in body) put('map_lat', lat.value);
+  if ('mapLng' in body) put('map_lng', lng.value);
+
+  if (sets.length === 0) return res.status(400).json({ error: '沒有要更新的欄位' });
+
+  params.push(req.params.id);
   const { rows } = await db.query(
-    `UPDATE checkpoints
-       SET name = COALESCE($1, name),
-           map_lat = COALESCE($2, map_lat),
-           map_lng = COALESCE($3, map_lng),
-           updated_at = now()
-     WHERE id = $4
+    `UPDATE checkpoints SET ${sets.join(', ')}, updated_at = now()
+     WHERE id = $${params.length}
      RETURNING id, name, map_lat, map_lng, progress`,
-    [name?.trim() || null, lat.value, lng.value, req.params.id]
+    params
   );
   if (rows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
+
+  // 座標變了，地圖上的點就要跟著動。之前只有進度變動會廣播，改座標得靠玩家自己
+  // 重整頁面才看得到。
+  getIO().emit('checkpoint:update', rows[0]);
   res.json(numericCheckpoint(rows[0]));
 }));
 
@@ -679,10 +716,7 @@ router.post('/questions/import', upload.single('file'), asyncHandler(async (req,
 
 router.get('/game/state', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-            pk_questions_per_duel, pk_answer_seconds,
-            voting_unlocked_at, voting_closed_at, spy_vote_count
-     FROM game_state WHERE id = 1`
+    `SELECT ${GAME_STATE_COLUMNS} FROM game_state WHERE id = 1`
   );
   res.json(rows[0]);
 }));
@@ -710,9 +744,7 @@ router.patch('/game/pk-settings', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `UPDATE game_state SET pk_questions_per_duel = $1, pk_answer_seconds = $2
      WHERE id = 1
-     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               pk_questions_per_duel, pk_answer_seconds,
-               voting_unlocked_at, voting_closed_at, spy_vote_count`,
+     RETURNING ${GAME_STATE_COLUMNS}`,
     [qpd, secs]
   );
 
@@ -742,9 +774,7 @@ router.patch('/game/duration', asyncHandler(async (req, res) => {
 
   const { rows } = await db.query(
     `UPDATE game_state SET duration_minutes = $1 WHERE id = 1
-     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               pk_questions_per_duel, pk_answer_seconds,
-               voting_unlocked_at, voting_closed_at, spy_vote_count`,
+     RETURNING ${GAME_STATE_COLUMNS}`,
     [minutes]
   );
 
@@ -781,9 +811,7 @@ router.patch('/game/scale', asyncHandler(async (req, res) => {
 
   const { rows } = await db.query(
     `UPDATE game_state SET max_teams = $1, progress_step = $2 WHERE id = 1
-     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               pk_questions_per_duel, pk_answer_seconds,
-               voting_unlocked_at, voting_closed_at, spy_vote_count`,
+     RETURNING ${GAME_STATE_COLUMNS}`,
     [teams, step]
   );
 
@@ -806,9 +834,7 @@ router.post('/game/open-voting', asyncHandler(async (req, res) => {
     `UPDATE game_state
      SET voting_unlocked_at = COALESCE(voting_unlocked_at, now()), voting_closed_at = NULL
      WHERE id = 1
-     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               pk_questions_per_duel, pk_answer_seconds,
-               voting_unlocked_at, voting_closed_at, spy_vote_count`
+     RETURNING ${GAME_STATE_COLUMNS}`
   );
   await db.query(
     `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
@@ -821,9 +847,7 @@ router.post('/game/open-voting', asyncHandler(async (req, res) => {
 router.post('/game/close-voting', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `UPDATE game_state SET voting_closed_at = now() WHERE id = 1
-     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               pk_questions_per_duel, pk_answer_seconds,
-               voting_unlocked_at, voting_closed_at, spy_vote_count`
+     RETURNING ${GAME_STATE_COLUMNS}`
   );
   await db.query(
     `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
@@ -841,9 +865,7 @@ router.patch('/game/spy-vote-count', asyncHandler(async (req, res) => {
   }
   const { rows } = await db.query(
     `UPDATE game_state SET spy_vote_count = $1 WHERE id = 1
-     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               pk_questions_per_duel, pk_answer_seconds,
-               voting_unlocked_at, voting_closed_at, spy_vote_count`,
+     RETURNING ${GAME_STATE_COLUMNS}`,
     [n]
   );
   res.json(rows[0]);
@@ -886,19 +908,95 @@ router.get('/votes', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/game/start', asyncHandler(async (req, res) => {
-  const { rows: current } = await db.query('SELECT status FROM game_state WHERE id = 1');
-  if (current[0].status === 'in_progress') {
-    return res.status(409).json({ error: 'game is already in progress' });
+// 幾支破壞者（內鬼）。企劃是 3 支，但隊伍數可調，這個也跟著可調。
+router.patch('/game/spy-team-count', asyncHandler(async (req, res) => {
+  const n = Number((req.body || {}).spyTeamCount);
+  if (!Number.isInteger(n) || n < 1 || n > 20) {
+    return res.status(400).json({ error: '破壞者隊伍數必須是 1 到 20 之間的整數' });
   }
-
   const { rows } = await db.query(
-    `UPDATE game_state SET status = 'in_progress', started_at = now(), ended_at = NULL
-     WHERE id = 1 RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               voting_unlocked_at, voting_closed_at, spy_vote_count`
+    `UPDATE game_state SET spy_team_count = $1 WHERE id = 1 RETURNING ${GAME_STATE_COLUMNS}`,
+    [n]
   );
-  getIO().emit('game:state', rows[0]);
   res.json(rows[0]);
+}));
+
+// 開始遊戲，同時抽陣營。
+//
+// 抽籤放在這裡而不是登入時：登入時分配等於「報到順序決定身分」，而且新隊伍一支
+// 一支進來時只能各分一半，做不出「固定 3 支內鬼」。企劃要的是開賽當下一次決定。
+//
+// 每次開始都重抽（不是只有第一次）——主辦重跑一場、或是重啟遊戲之後再開始，
+// 身分就該重新洗牌，不然玩家上一場已經知道誰是內鬼了。
+router.post('/game/start', asyncHandler(async (req, res) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    // FOR UPDATE：兩個主辦同時按「開始遊戲」的話，沒有鎖會抽兩次，第二次的
+    // 結果覆蓋第一次，已經看過彈窗的隊伍身分會無聲換掉。
+    const { rows: current } = await client.query(
+      'SELECT status, spy_team_count FROM game_state WHERE id = 1 FOR UPDATE'
+    );
+    if (current[0].status === 'in_progress') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: '遊戲已經在進行中了' });
+    }
+
+    const spyCount = current[0].spy_team_count;
+    const { rows: teamRows } = await client.query('SELECT id FROM teams ORDER BY id');
+
+    // 至少要留一支好人：全部都是內鬼的話沒有人能投票，第三權重直接算不出來，
+    // 遊戲本身也不成立。擋在這裡並把數字講清楚，不要抽完才發現。
+    if (teamRows.length < spyCount + 1) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `目前只有 ${teamRows.length} 支隊伍，要抽 ${spyCount} 支破壞者至少需要 ${spyCount + 1} 支` +
+               '（要留下至少一支時空保衛隊）。請先讓隊伍登入，或調低破壞者隊伍數。'
+      });
+    }
+
+    // Fisher-Yates 洗牌後取前 N 支。用 crypto 而不是 Math.random：這是決定
+    // 玩家身分的抽籤，沒必要用一個可預測的 PRNG。
+    const ids = teamRows.map(r => r.id);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(i + 1);
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    const spies = ids.slice(0, spyCount);
+
+    // 先全部歸位成好人再指定內鬼，這樣重抽時上一場的內鬼一定會被清掉。
+    await client.query(`UPDATE teams SET faction = 'repair'`);
+    await client.query(
+      `UPDATE teams SET faction = 'disrupt' WHERE id = ANY($1::int[])`, [spies]
+    );
+
+    const { rows } = await client.query(
+      `UPDATE game_state
+       SET status = 'in_progress', started_at = now(), ended_at = NULL, faction_drawn_at = now()
+       WHERE id = 1 RETURNING ${GAME_STATE_COLUMNS}`
+    );
+
+    await client.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+       VALUES ($1, 'draw_factions', 'game_state', '1', NULL, $2)`,
+      [req.admin.sub, JSON.stringify({ spyTeamIds: spies, teamCount: ids.length })]
+    );
+
+    await client.query('COMMIT');
+
+    // 已經登入著的玩家不會自己知道抽籤發生了。廣播一個不帶身分的通知，讓每一台
+    // 去打自己的 /api/auth/me 拿「自己的」陣營——這裡絕對不能直接把名單廣播出去。
+    getIO().emit('game:state', rows[0]);
+    getIO().emit('faction:drawn', { drawnAt: rows[0].faction_drawn_at });
+
+    res.json({ ...rows[0], spyTeamCount: spyCount, teamCount: ids.length });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }));
 
 router.post('/game/end', asyncHandler(async (req, res) => {
@@ -909,11 +1007,103 @@ router.post('/game/end', asyncHandler(async (req, res) => {
 
   const { rows } = await db.query(
     `UPDATE game_state SET status = 'ended', ended_at = now()
-     WHERE id = 1 RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               voting_unlocked_at, voting_closed_at, spy_vote_count`
+     WHERE id = 1 RETURNING ${GAME_STATE_COLUMNS}`
   );
   getIO().emit('game:state', rows[0]);
   res.json(rows[0]);
+}));
+
+// 一鍵重啟遊戲：把整場打回開賽前的狀態。
+//
+// 刪掉的是「這一場產生的東西」——隊伍、玩家、關卡紀錄、PK、任務、筆記、投票，
+// 據點進度歸零。留下的是「設定」——據點本身、題庫、管理員/關主帳號，以及
+// admin_actions 稽核紀錄（那是誰在什麼時候做了什麼的帳，重啟不該把它抹掉，
+// 這次重啟本身也會記一筆進去）。
+//
+// 要求在 body 帶 confirm: 'RESET'：這是不可復原的操作，而且「重啟遊戲」按鈕
+// 就在「開始遊戲」旁邊，光靠瀏覽器的 confirm 對話框不夠——誤按一次就是整場資料沒了。
+router.post('/game/reset', requireFullAdmin, asyncHandler(async (req, res) => {
+  if ((req.body || {}).confirm !== 'RESET') {
+    return res.status(400).json({ error: '重啟遊戲需要確認，請在請求中帶 confirm: "RESET"' });
+  }
+
+  const client = await db.connect();
+  let stats;
+  try {
+    await client.query('BEGIN');
+
+    // 刪除順序＝外鍵的相反方向：先刪指向別人的，再刪被指的。
+    // 目前的外鍵是 spy_votes/checkpoint_notes/missions/checkpoint_attempts -> teams、
+    // pk_duel_answers -> pk_duels -> players -> teams。
+    const counts = {};
+    for (const [key, sql] of [
+      ['spy_votes', 'DELETE FROM spy_votes'],
+      ['checkpoint_notes', 'DELETE FROM checkpoint_notes'],
+      ['missions', 'DELETE FROM missions'],
+      ['pk_duel_answers', 'DELETE FROM pk_duel_answers'],
+      ['pk_duels', 'DELETE FROM pk_duels'],
+      ['checkpoint_attempts', 'DELETE FROM checkpoint_attempts'],
+      ['players', 'DELETE FROM players'],
+      ['teams', 'DELETE FROM teams']
+    ]) {
+      const { rowCount } = await client.query(sql);
+      counts[key] = rowCount;
+    }
+
+    // 刻意「不」重設 teams_id_seq / players_id_seq。
+    //
+    // 一開始有加，想讓重啟後的 id 也從 1 開始好看。實測發現那會開一個洞：舊的
+    // JWT 裡帶著 teamId=1 / sub=1，重啟後新登入的第一支隊伍剛好又拿到 id 1，
+    // 那張本該失效的 token 就直接變成新隊伍的有效憑證——測出來 /api/auth/me
+    // 回 200，顯示的是舊隊名配新隊伍的資料。兩支不同的隊伍會共用同一個身分。
+    //
+    // 不重設的話，被刪掉的 id 不會再被發出去，舊 token 查不到隊伍就會拿到 401
+    // 被踢回登入頁（見 routes/auth.js 的 /me）。
+    //
+    // 玩家看到的「隊伍 #N」用的是 team_number 不是 id，而 team_number 是
+    // MAX(team_number)+1 算出來的——表清空之後本來就會從 1 開始，不靠 sequence。
+    const { rowCount: cpCount } = await client.query(
+      'UPDATE checkpoints SET progress = 0, updated_at = now() WHERE progress <> 0'
+    );
+    counts.checkpoints_reset = cpCount;
+
+    const { rows } = await client.query(
+      `UPDATE game_state
+       SET status = 'not_started', started_at = NULL, ended_at = NULL,
+           voting_unlocked_at = NULL, voting_closed_at = NULL,
+           faction_drawn_at = NULL
+       WHERE id = 1 RETURNING ${GAME_STATE_COLUMNS}`
+    );
+
+    await client.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+       VALUES ($1, 'reset_game', 'game_state', '1', $2, NULL)`,
+      [req.admin.sub, JSON.stringify(counts)]
+    );
+
+    await client.query('COMMIT');
+    stats = { counts, state: rows[0] };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // DB 清乾淨了，記憶體裡的 PK 狀態也要跟著清——那些 session 和房號還活著的話，
+  // 會繼續指向已經被刪掉的隊伍與對戰。放在交易外面：交易一旦 rollback，這裡就
+  // 不該把還有效的對戰砍掉。
+  const cancelledSessions = pkSession.clearAll();
+  const clearedRooms = roomRegistry.clearAll();
+
+  console.log(`[reset] 重啟遊戲 by admin=${req.admin.sub}`,
+    JSON.stringify({ ...stats.counts, cancelledSessions, clearedRooms }));
+
+  // 各端的畫面都要跟著回到開賽前：據點進度、積分、玩家的登入狀態。
+  getIO().emit('game:state', stats.state);
+  getIO().emit('game:reset', {});
+
+  res.json({ ...stats.state, deleted: { ...stats.counts, cancelledSessions, clearedRooms } });
 }));
 
 // PK 對戰管理頁用的清單：帶出雙方顯示名稱、陣營，方便管理員一眼看懂誰打誰。
@@ -981,22 +1171,14 @@ router.post('/players', asyncHandler(async (req, res) => {
       return res.status(403).json({ error: `已達隊伍上限（${maxTeams} 隊），請先調高上限或刪除隊伍` });
     }
 
-    // 沒指定陣營就沿用登入時的規則：分到目前隊數少的那一邊，平手隨機。
-    let side = faction;
-    if (!side) {
-      const { rows: counts } = await client.query(
-        'SELECT faction, COUNT(*)::int AS cnt FROM teams GROUP BY faction'
-      );
-      const map = { repair: 0, disrupt: 0 };
-      counts.forEach(r => { map[r.faction] = r.cnt; });
-      side = map.repair < map.disrupt ? 'repair'
-        : map.disrupt < map.repair ? 'disrupt'
-        : (Math.random() < 0.5 ? 'repair' : 'disrupt');
-    }
+    // 沒指定陣營就先掛 repair 佔位，等主辦按「開始遊戲」時一起抽（見 /game/start）。
+    // 這裡還是留 faction 參數：遊戲已經開始之後才補建的隊伍不會被抽到，主辦得能
+    // 直接指定他是哪一邊。
+    const side = faction || 'repair';
 
+    // 編號全場唯一（見 migrations/015）
     const { rows: maxRows } = await client.query(
-      'SELECT COALESCE(MAX(team_number), 0) + 1 AS next_number FROM teams WHERE faction = $1',
-      [side]
+      'SELECT COALESCE(MAX(team_number), 0) + 1 AS next_number FROM teams'
     );
     const { rows: teamRows } = await client.query(
       'INSERT INTO teams (faction, team_number) VALUES ($1, $2) RETURNING id',
@@ -1051,19 +1233,51 @@ router.delete('/players/:id', asyncHandler(async (req, res) => {
     [player.team_id, player.id]
   );
   const u = used[0];
-  if (u.attempts > 0 || u.duels > 0 || u.missions > 0) {
+  const hasRecords = u.attempts > 0 || u.duels > 0 || u.missions > 0;
+
+  // 有紀錄的隊伍預設擋下來，但擋不是終點——主辦要真的刪得掉。
+  //
+  // 帶 ?force=1 就連紀錄一起刪。這是有代價的：這支隊伍打過的 PK 也是「對手的
+  // 勝場」，刪掉會讓對手的第四權重積分往下掉。所以預設不做，錯誤訊息把數字
+  // 講清楚，讓主辦自己決定要不要按下去（前端會再確認一次）。
+  //
+  // 正常流程其實不必用到 force：重啟遊戲會把所有紀錄清空，之後任何帳號都刪得掉。
+  const force = req.query.force === '1' || (req.body || {}).force === true;
+  if (hasRecords && !force) {
     return res.status(409).json({
       error: `這支隊伍已經有紀錄（關卡 ${u.attempts} 筆、PK ${u.duels} 場、任務 ${u.missions} 則），` +
-             '刪掉會影響其他隊伍的積分與名次。如果只是要讓他們登不進來，請改 PIN。'
+             '直接刪除會讓對手的 PK 勝場跟著減少。確定要連紀錄一起刪，請再確認一次；' +
+             '如果只是要讓他們登不進來，改 PIN 就好。',
+      needsForce: true,
+      records: { attempts: u.attempts, duels: u.duels, missions: u.missions }
     });
   }
 
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+
+    if (hasRecords) {
+      // 順序＝外鍵的相反方向，跟 /game/reset 同一套。
+      // spy_votes 兩個方向都要清：這支隊伍投出去的票，以及別人指認它的票。
+      await client.query('DELETE FROM spy_votes WHERE voter_team_id = $1 OR suspect_team_id = $1', [player.team_id]);
+      await client.query('DELETE FROM missions WHERE team_id = $1', [player.team_id]);
+      await client.query(
+        `DELETE FROM pk_duel_answers WHERE pk_duel_id IN (
+           SELECT id FROM pk_duels WHERE host_player_id = $1 OR guest_player_id = $1)`,
+        [player.id]
+      );
+      await client.query(
+        'DELETE FROM pk_duels WHERE host_player_id = $1 OR guest_player_id = $1', [player.id]
+      );
+      await client.query('DELETE FROM checkpoint_attempts WHERE team_id = $1', [player.team_id]);
+    }
+
     // 筆記沒有計分意義，跟著隊伍一起走
     await client.query('DELETE FROM checkpoint_notes WHERE team_id = $1', [player.team_id]);
-    await client.query('DELETE FROM players WHERE id = $1', [player.id]);
+    // 用 team_id 而不是 player.id 刪玩家：一組一支手機，正常情況下這支隊伍就
+    // 只有這一位玩家。萬一有第二位（舊資料），只刪一位會讓下面刪隊伍時被外鍵擋下。
+    await client.query('DELETE FROM players WHERE team_id = $1', [player.team_id]);
     await client.query('DELETE FROM teams WHERE id = $1', [player.team_id]);
     await client.query('COMMIT');
   } catch (err) {
@@ -1077,7 +1291,12 @@ router.delete('/players/:id', asyncHandler(async (req, res) => {
     `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
      VALUES ($1, 'delete_player', 'player', $2, $3, NULL)`,
     [req.admin.sub, String(player.id),
-     JSON.stringify({ displayName: player.display_name, faction: player.faction })]
+     JSON.stringify({
+       displayName: player.display_name, faction: player.faction,
+       // 連紀錄一起刪的話一定要留下刪了什麼——事後對不上帳時，這是唯一的線索
+       forced: hasRecords,
+       deletedRecords: hasRecords ? { attempts: u.attempts, duels: u.duels, missions: u.missions } : null
+     })]
   );
 
   res.status(204).end();

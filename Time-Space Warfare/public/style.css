@@ -113,6 +113,16 @@ button.ghost, button.secondary {
 }
 button.ghost:hover, button.secondary:hover { background: var(--card-3); color: var(--fg); }
 
+/* 不可復原的操作（重啟遊戲、連紀錄一起刪帳號）。刻意跟主色按鈕長得完全不一樣，
+   讓人在按下去之前先停一秒。 */
+button.danger {
+  background: transparent; color: var(--danger);
+  border-color: var(--danger); font-weight: 700;
+}
+button.danger:hover { background: var(--danger); color: #2b0006; }
+.card.danger { border-color: var(--danger); }
+.card.danger > h3 { color: var(--danger); }
+
 a:focus-visible, button:focus-visible,
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 3px solid var(--ring); outline-offset: 2px;

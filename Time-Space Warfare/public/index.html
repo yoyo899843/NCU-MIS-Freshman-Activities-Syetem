@@ -29,6 +29,15 @@
     padding: 18px; max-width: 420px; width: 100%;
   }
   .modal h3 { margin-top: 0; }
+  /* 陣營揭曉的彈窗。刻意做得比任務彈窗更醒目——這是整場只會看到一次的訊息，
+     被當成一般通知滑掉的話，玩家整場都不知道自己是哪一邊。 */
+  .modal .box.faction { text-align: center; }
+  .faction-name { font-size: 1.6rem; font-weight: 800; margin: 10px 0; }
+  .faction-repair { color: var(--repair); }
+  .faction-disrupt { color: var(--disrupt); }
+  .box.faction.repair { border-color: var(--repair); }
+  .box.faction.disrupt { border-color: var(--disrupt); }
+  .secret { font-size: 0.85rem; color: var(--accent); font-weight: 700; }
 </style>
 </head>
 <body>
@@ -78,12 +87,26 @@ const playerInfo = JSON.parse(localStorage.getItem('playerInfo') || 'null');
 const show = id => { document.getElementById(id).style.display = ''; };
 const hide = id => { document.getElementById(id).style.display = 'none'; };
 
+const FACTION_LABEL = { repair: '時空保衛隊', disrupt: '黑暗潛伏者' };
+
+// 目前這支隊伍的狀態（陣營現在是伺服器現查的，不再從 localStorage 讀——
+// 陣營會在主辦按下「開始遊戲」時整批重抽，本機那份一定是舊的）。
+let me = null;
+
 function showLoggedIn() {
   hide('loading');
   show('dashboard');
-  const faction = playerInfo.team.faction === 'repair' ? '時空修復者' : '時空破壞者';
-  document.getElementById('who').textContent =
-    `${playerInfo.player.displayName}（${faction}　隊伍 #${playerInfo.team.id}）`;
+
+  const name = playerInfo.player.displayName;
+  const teamNo = (me && me.teamNumber) || playerInfo.team.teamNumber || playerInfo.team.id;
+
+  // 還沒抽籤就講清楚「還沒公布」，不要留白讓人以為壞掉，也不要拿一個佔位值
+  // 湊數——伺服器在抽籤前根本不會回 faction。
+  const factionText = (me && me.factionRevealed)
+    ? FACTION_LABEL[me.faction]
+    : '陣營未公布';
+
+  document.getElementById('who').textContent = `${name}（${factionText}　隊伍 #${teamNo}）`;
 }
 
 if (!token || !playerInfo) {
@@ -93,22 +116,72 @@ if (!token || !playerInfo) {
   // 只看 localStorage 有沒有東西就顯示「已登入」是不夠的：token 過期不會讓
   // localStorage 自動清空，結果會一直停在已登入的畫面，要等玩家點進某個功能
   // 才被 authFetch.js 攔下 401 踢出去。這裡主動確認一次 token 還有效。
-  fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + token } })
-    .then(res => {
-      if (window.__authRedirecting) return; // authFetch.js 已經在導頁了
-      if (!res.ok) return;                  // 非 401 的偶發錯誤先不擋，交給下面的 catch 邏輯
-      showLoggedIn();
-      loadMissions();
-      refreshVoteLink();
-      // 主辦是手動派發/開投票的，不會有固定節奏，所以固定週期問一次就好
-      setInterval(loadMissions, 5000);
-      setInterval(refreshVoteLink, 5000);
-    })
-    .catch(() => {
-      if (window.__authRedirecting) return;
-      // 網路暫時不通：還是用本機存的資料顯示，不要因為一次連線失敗就把人擋在外面
-      showLoggedIn();
-    });
+  refreshMe().then(ok => {
+    if (window.__authRedirecting) return;
+    showLoggedIn();
+    if (!ok) return; // 連線問題：先用本機資料顯示，不要因為一次失敗就把人擋在外面
+    loadMissions();
+    refreshVoteLink();
+    // 主辦是手動派發/開投票/開始遊戲的，不會有固定節奏，固定週期問一次就好
+    setInterval(loadMissions, 5000);
+    setInterval(refreshVoteLink, 5000);
+    setInterval(refreshMe, 5000);
+  });
+}
+
+// 抽籤是主辦在後台按的，玩家端沒有別的方式知道。這支同時負責三件事：
+// 確認 token 還有效、拿到最新的陣營、在抽籤發生時把彈窗跳出來。
+async function refreshMe() {
+  try {
+    const res = await fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + token } });
+    if (res.status === 401) {
+      // 帳號沒了（主辦重啟遊戲會清掉所有隊伍）或 token 過期，回登入頁重來
+      localStorage.removeItem('playerToken');
+      localStorage.removeItem('playerInfo');
+      localStorage.removeItem(SEEN_KEY);
+      location.href = 'login.html';
+      return false;
+    }
+    if (!res.ok) return false;
+    me = await res.json();
+    showLoggedIn();
+    maybeShowFaction();
+    return true;
+  } catch (e) {
+    return false; // 網路暫時不通
+  }
+}
+
+// 「這一次抽籤」有沒有給這台裝置看過。用抽籤時間當記號而不是布林值：主辦重開
+// 一場就會重抽一次，時間戳跟著變，彈窗會再跳一次；同一場之內重整頁面則不會
+// 一直重複跳。
+const SEEN_FACTION_KEY = 'seenFactionDraw';
+function maybeShowFaction() {
+  if (!me || !me.factionRevealed) return;
+  const stamp = String(me.factionDrawnAt);
+  let seen = null;
+  try { seen = localStorage.getItem(SEEN_FACTION_KEY); } catch (e) { /* 無痕模式等 */ }
+  if (seen === stamp) return;
+  try { localStorage.setItem(SEEN_FACTION_KEY, stamp); } catch (e) { /* 同上 */ }
+  showFactionModal(me.faction);
+}
+
+function showFactionModal(faction) {
+  const isSpy = faction === 'disrupt';
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.innerHTML =
+    `<div class="box faction ${isSpy ? 'disrupt' : 'repair'}">` +
+      '<h3>你的陣營</h3>' +
+      `<p class="faction-name ${isSpy ? 'faction-disrupt' : 'faction-repair'}">${FACTION_LABEL[faction]}</p>` +
+      (isSpy
+        ? '<p>你們是潛伏在隊伍中的內鬼。目標是破壞據點的修復進度，並且不要被指認出來。</p>' +
+          '<p class="secret">別讓其他隊伍看到這個畫面。</p>'
+        : '<p>你們的目標是修復時空據點，並且在最終審判找出隱藏在其中的內鬼。</p>') +
+      '<button>我知道了</button>' +
+    '</div>';
+  box.querySelector('button').addEventListener('click', () => box.remove());
+  document.body.appendChild(box);
 }
 
 // 最終審判的入口平常不顯示——投票沒開放的時候點進去也只是看到「還沒開始」，

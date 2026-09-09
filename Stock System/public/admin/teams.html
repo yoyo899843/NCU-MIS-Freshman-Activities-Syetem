@@ -24,7 +24,10 @@
 
 <h2>隊伍帳號</h2>
 <table border="1" cellpadding="4">
-  <thead><tr><th>隊伍</th><th>PIN</th><th>可用現金</th><th class="admin-only" style="display:none">覆寫餘額</th></tr></thead>
+  <thead><tr><th>隊伍</th><th>PIN</th><th>可用現金</th>
+    <th class="admin-only" style="display:none">覆寫餘額</th>
+    <th class="admin-only" style="display:none">重設 PIN</th>
+    <th class="admin-only" style="display:none">刪除</th></tr></thead>
   <tbody id="teams"></tbody>
 </table>
 <p id="cashErr" style="color:#c00"></p>
@@ -39,6 +42,8 @@
 <script>
 if (requireAdminLogin()) {
   let isAdmin = false;
+  let teams = [];
+  const nameOf = id => (teams.find(t => t.id === id) || {}).display_name || '';
 
   $('addBtn').addEventListener('click', async () => {
     $('addErr').textContent = '';
@@ -62,6 +67,40 @@ if (requireAdminLogin()) {
     await load();
   };
 
+  // 現場一定會有隊伍把 PIN 忘掉。沒有這顆按鈕就只能去翻資料庫。
+  window.resetPin = async function (id) {
+    const pin = prompt(`「${nameOf(id)}」的新 PIN（4 碼數字）`);
+    if (pin === null) return;
+    $('cashErr').textContent = '';
+    const { ok, body } = await api(`/teams/${id}/pin`, {
+      method: 'PATCH', body: JSON.stringify({ pin: pin.trim() })
+    });
+    if (!ok) { $('cashErr').textContent = body.error || '重設失敗'; return; }
+    await load();
+  };
+
+  // 刪除分兩段：沒有交易/申報紀錄的直接刪；有紀錄的後端會回 409 + needsForce，
+  // 講清楚會連帶刪掉什麼再問一次，確認了才帶 force=1 重送。
+  window.removeTeam = async function (id, force) {
+    const name = nameOf(id);
+    if (!force && !confirm(`確定要刪除「${name}」這支隊伍嗎？此動作無法復原。`)) return;
+    $('cashErr').textContent = '';
+
+    const res = await api(`/teams/${id}${force ? '?force=1' : ''}`, { method: 'DELETE' });
+    if (res.status === 204) { await load(); return; }
+
+    if (res.status === 409 && res.body.needsForce) {
+      const r = res.body.records || {};
+      const ok = confirm(
+        `「${name}」已經有 ${r.trades} 筆成交、${r.deposits} 筆存款申報。\n` +
+        '連同這些紀錄一起刪除的話，排行榜與帳目都會跟著變動。\n\n確定要刪嗎？'
+      );
+      if (!ok) return;
+      return removeTeam(id, true);
+    }
+    $('cashErr').textContent = res.body.error || `刪除失敗 (${res.status})`;
+  };
+
   async function load() {
     const lb = await api('/leaderboard');
     if (lb.ok) {
@@ -73,10 +112,13 @@ if (requireAdminLogin()) {
 
     const ts = await api('/teams');
     if (ts.ok) {
+      teams = ts.body;
       $('teams').innerHTML = ts.body.map(t => `
         <tr><td>${esc(t.display_name)}</td><td>${esc(t.pin)}</td><td>${money(t.cash)}</td>
-        ${isAdmin ? `<td><button onclick="overrideCash(${t.id})">覆寫</button></td>` : ''}</tr>`).join('')
-        || '<tr><td colspan="4">還沒有隊伍</td></tr>';
+        ${isAdmin ? `<td><button onclick="overrideCash(${t.id})">覆寫</button></td>
+                     <td><button onclick="resetPin(${t.id})">重設</button></td>
+                     <td><button onclick="removeTeam(${t.id})">刪除</button></td>` : ''}</tr>`).join('')
+        || '<tr><td colspan="6">還沒有隊伍</td></tr>';
     }
 
     const tr = await api('/trades');

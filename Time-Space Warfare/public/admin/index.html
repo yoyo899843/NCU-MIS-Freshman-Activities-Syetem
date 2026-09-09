@@ -42,9 +42,16 @@
   <h3>遊戲進程控制</h3>
   <p>目前狀態：<span id="statusBadge" class="status-badge">載入中...</span></p>
   <p id="timestamps" style="font-size:0.85rem;color:var(--dim)"></p>
-  <button id="startBtn">開始遊戲</button>
+  <button id="startBtn">開始遊戲（同時抽陣營）</button>
   <button id="endBtn">強制結束遊戲</button>
   <p id="controlResult" class="error"></p>
+  <p id="factionState" style="font-size:0.85rem;color:var(--dim)"></p>
+  <hr>
+  <label for="spyTeamCount">破壞者（內鬼）隊伍數（1～20）</label>
+  <input id="spyTeamCount" type="number" min="1" max="20" inputmode="numeric">
+  <button id="spyTeamBtn">儲存</button>
+  <p class="hint">按下「開始遊戲」的當下，系統會從所有已登入的隊伍中隨機抽出這麼多支當破壞者，其餘都是時空保衛隊。玩家會在自己的手機上跳出彈窗看到身分——這一頁不會顯示是哪幾隊，要查請到<a href="votes.html">投票結果</a>。每按一次「開始遊戲」就重抽一次。</p>
+  <p id="spyTeamResult" class="error"></p>
   <hr>
   <label for="durationMinutes">遊戲時長（分鐘，5～600）</label>
   <input id="durationMinutes" type="number" min="5" max="600" inputmode="numeric">
@@ -78,6 +85,17 @@
   <button id="pkSettingsBtn">儲存設定</button>
   <p class="hint">只影響之後才開始的對戰，正在進行中的那場不會被中途換掉。</p>
   <p id="pkSettingsResult" class="error"></p>
+</div>
+
+<!-- 危險操作獨立一張卡，離「開始遊戲」遠一點。誤按的代價是整場資料沒了。 -->
+<div class="card admin-only danger" style="display:none">
+  <h3>重啟遊戲</h3>
+  <p>把整場打回開賽前：<strong>刪除所有隊伍與玩家帳號</strong>、關卡挑戰紀錄、PK 對戰、任務、隊伍筆記、投票，並把所有據點的修復進度歸零。</p>
+  <p class="hint">不會刪掉：交摺點本身、題庫、管理員與關主帳號、稽核紀錄。重啟之後所有玩家要重新登入建立隊伍，陣營也會在下次「開始遊戲」時重抽。</p>
+  <p>請輸入 <strong>RESET</strong> 以確認：</p>
+  <input id="resetConfirm" placeholder="RESET" autocomplete="off">
+  <button id="resetBtn" class="danger">重啟遊戲（不可復原）</button>
+  <p id="resetResult" class="error"></p>
 </div>
 
 <div class="card">
@@ -116,6 +134,15 @@ function renderState(state) {
 
   document.getElementById('startBtn').disabled = state.status === 'in_progress';
   document.getElementById('endBtn').disabled = state.status !== 'in_progress';
+
+  // 抽籤狀態。刻意只講「抽了沒、幾支」，不列出是哪幾隊——這一頁在現場常常是
+  // 開著投影或被玩家瞄到的，內鬼名單只放在 votes.html 並且那一頁自己有警告。
+  document.getElementById('factionState').textContent = state.faction_drawn_at
+    ? `陣營已於 ${new Date(state.faction_drawn_at).toLocaleString()} 抽出（破壞者 ${state.spy_team_count} 支）`
+    : '陣營尚未抽出，玩家端顯示「陣營未公布」。';
+  if (state.spy_team_count != null) {
+    document.getElementById('spyTeamCount').value = state.spy_team_count;
+  }
 
   renderVoting(state);
 
@@ -237,15 +264,37 @@ async function loadState() {
   renderState(await res.json());
 }
 
+document.getElementById('spyTeamBtn').addEventListener('click', async () => {
+  const el = document.getElementById('spyTeamResult');
+  el.textContent = '';
+  const res = await api('/game/spy-team-count', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ spyTeamCount: Number(document.getElementById('spyTeamCount').value) })
+  });
+  const data = await res.json();
+  if (!res.ok) { el.textContent = data.error || `失敗 (${res.status})`; return; }
+  renderState(data);
+  el.textContent = '已儲存。下次按「開始遊戲」時生效。';
+});
+
 document.getElementById('startBtn').addEventListener('click', async () => {
   const resultEl = document.getElementById('controlResult');
+  // 「開始遊戲」會重抽陣營，重開一場等於把大家的身分換掉。已經抽過就先問一次。
+  const n = document.getElementById('spyTeamCount').value;
+  const drawn = document.getElementById('factionState').textContent.includes('已於');
+  if (drawn && !confirm(`開始遊戲會重新抽一次陣營（${n} 支破壞者），所有隊伍的身分都會換掉。確定嗎？`)) return;
+
   const res = await api('/game/start', { method: 'POST' });
   const data = await res.json();
   if (!res.ok) {
+    resultEl.className = 'error';
     resultEl.textContent = data.error || `失敗 (${res.status})`;
     return;
   }
-  resultEl.textContent = '';
+  resultEl.textContent =
+    `遊戲已開始，已從 ${data.teamCount} 支隊伍中抽出 ${data.spyTeamCount} 支破壞者，玩家端會跳出彈窗。`;
+  resultEl.className = 'hint';
   renderState(data);
 });
 
@@ -260,6 +309,37 @@ document.getElementById('endBtn').addEventListener('click', async () => {
   }
   resultEl.textContent = '';
   renderState(data);
+});
+
+// 重啟遊戲。三道關卡：要打對 RESET、要按確認、伺服器還會再要一次 confirm。
+// 看起來很囉唆，但這顆按鈕按下去就是整場資料沒了，而且它離「開始遊戲」很近。
+document.getElementById('resetBtn').addEventListener('click', async () => {
+  const el = document.getElementById('resetResult');
+  el.className = 'error';
+  el.textContent = '';
+
+  if (document.getElementById('resetConfirm').value.trim() !== 'RESET') {
+    el.textContent = '請先在上面的欄位輸入 RESET（大寫）。';
+    return;
+  }
+  if (!confirm('最後確認：所有隊伍、玩家帳號、關卡紀錄、PK、任務、投票都會被刪除，據點進度歸零。\n這個動作無法復原。確定要重啟嗎？')) return;
+
+  const res = await api('/game/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: 'RESET' })
+  });
+  const data = await res.json();
+  if (!res.ok) { el.textContent = data.error || `失敗 (${res.status})`; return; }
+
+  document.getElementById('resetConfirm').value = '';
+  const d = data.deleted || {};
+  el.className = 'hint';
+  el.textContent = `已重啟：刪除 ${d.teams || 0} 支隊伍、${d.players || 0} 個帳號、` +
+    `${d.checkpoint_attempts || 0} 筆關卡紀錄、${d.pk_duels || 0} 場 PK、` +
+    `${d.missions || 0} 則任務、${d.spy_votes || 0} 張選票，${d.checkpoints_reset || 0} 個據點進度歸零。`;
+  renderState(data);
+  await loadVotingCounts();
 });
 
 document.getElementById('logoutBtn').addEventListener('click', () => {

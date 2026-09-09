@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>總資產排行榜 - 賭大股票系統</title>
+<style>
+  /* 這一頁是投影用的，不是拿手機看的：字級刻意放大到會議室最後一排也看得清楚。
+     其餘頁面照企劃說的先不做美編。 */
+  body { font-family: system-ui, "PingFang TC", sans-serif; margin: 24px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; }
+  .meta { color: #555; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 1.5rem; }
+  th, td { padding: 10px 12px; border-bottom: 2px solid #ddd; text-align: right; }
+  th:nth-child(1), td:nth-child(1) { width: 3.5em; text-align: center; }
+  th:nth-child(2), td:nth-child(2) { text-align: left; }
+  tbody tr:nth-child(1) { background: #fff6d6; font-weight: 700; }
+  tbody tr:nth-child(2) { background: #f2f2f2; }
+  tbody tr:nth-child(3) { background: #f7ece2; }
+  .total { font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>總資產排行榜</h1>
+<p class="meta">第 <strong id="wave"></strong> / <span id="totalWaves"></span> 波　<span id="phase"></span>
+   <span id="updated"></span>　<a href="index.html">回首頁</a></p>
+
+<table>
+  <thead><tr><th>名次</th><th>隊伍</th><th>現金</th><th>股票現值</th><th>總資產</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<script src="app.js"></script>
+<script>
+// 這一頁不需要登入：大螢幕那台電腦沒有隊伍帳號，而名次本來就是要公開投影的。
+// 用的是 /api/market/leaderboard（公開），不是管理端那支。
+async function load() {
+  const { ok, body } = await api('/api/market/leaderboard');
+  if (!ok) return;
+  $('wave').textContent = body.wave;
+  $('totalWaves').textContent = body.total_waves;
+  $('phase').textContent = PHASE_LABEL[body.phase] || body.phase;
+  $('updated').textContent = '更新於 ' + new Date().toLocaleTimeString();
+
+  $('rows').innerHTML = body.teams.map(t => `
+    <tr>
+      <td>${t.rank}</td>
+      <td>${esc(t.name)}</td>
+      <td>${money(t.cash)}</td>
+      <td>${money(t.stockValue)}</td>
+      <td class="total">${money(t.total)}</td>
+    </tr>`).join('') || '<tr><td colspan="5">還沒有隊伍</td></tr>';
+}
+load();
+setInterval(load, 5000);
+</script>
+</body></html>
