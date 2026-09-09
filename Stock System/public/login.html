@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>隊伍登入 - 賭大股票系統</title></head>
+<body>
+<h1>賭大股票系統</h1>
+<div id="loginBox">
+  <p><input id="name" placeholder="隊伍名稱"></p>
+  <p><input id="pin" placeholder="4 碼 PIN" maxlength="4" inputmode="numeric"></p>
+  <p><button id="loginBtn">登入</button></p>
+  <p id="err" style="color:#c00"></p>
+</div>
+<script src="app.js"></script>
+<script>
+if (teamToken()) location.href = 'index.html';
+
+$('pin').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
+
+$('loginBtn').addEventListener('click', async () => {
+  $('err').textContent = '';
+  const { ok, body } = await api('/api/team/login', {
+    method: 'POST',
+    body: JSON.stringify({ displayName: $('name').value.trim(), pin: $('pin').value })
+  });
+  if (!ok) { $('err').textContent = body.error || '登入失敗'; return; }
+  localStorage.setItem('teamToken', body.token);
+  localStorage.setItem('teamInfo', JSON.stringify(body.team));
+  location.href = 'index.html';
+});
+</script>
+</body></html>

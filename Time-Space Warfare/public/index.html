@@ -154,7 +154,26 @@ function renderMissions(list) {
     return;
   }
 
-  document.getElementById('missionList').innerHTML = list.map(m => {
+  // 這一段每 5 秒會被輪詢呼叫一次。整塊 innerHTML 重畫會把使用者正在輸入解鎖碼
+  // 的那個 input 換成新的元素，焦點跟著沒了——手機/平板的鍵盤就會收起來，打到
+  // 一半根本輸入不完。
+  //
+  // 所以先比對「畫面真的有變嗎」，沒變就整段不動。任務內容不會自己改，會變的只有
+  // 清單本身（新任務、結案、取消），用這些欄位組一個簽章比對就夠。
+  const sig = list.map(m => `${m.id}:${m.status}`).join('|');
+  const listEl = document.getElementById('missionList');
+  if (listEl.dataset.sig === sig) return;
+
+  // 真的有變才重畫（例如剛收到新任務）。這種時候還是會掉焦點，所以把使用者已經
+  // 打到一半的內容和游標位置記下來，重畫後補回去。
+  const active = document.activeElement;
+  const keepId = active && active.id && active.id.startsWith('code-') ? active.id : null;
+  const typed = {};
+  listEl.querySelectorAll('input[id^="code-"]').forEach(i => { if (i.value) typed[i.id] = i.value; });
+  const caret = keepId ? [active.selectionStart, active.selectionEnd] : null;
+
+  listEl.dataset.sig = sig;
+  listEl.innerHTML = list.map(m => {
     const done = m.status !== 'open';
     return `<div class="mission ${done ? 'done' : ''}">
       <div class="meta">${new Date(m.created_at).toLocaleString()}` +
@@ -168,6 +187,19 @@ function renderMissions(list) {
            </div>`) +
     `</div>`;
   }).join('');
+
+  // 把剛才記下來的輸入內容補回去，再把焦點還給原本那一格。
+  Object.entries(typed).forEach(([id, v]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = v;
+  });
+  if (keepId) {
+    const el = document.getElementById(keepId);
+    if (el) {
+      el.focus();
+      try { el.setSelectionRange(caret[0], caret[1]); } catch (e) { /* 某些瀏覽器不支援 */ }
+    }
+  }
 }
 
 window.completeMission = async function (id) {

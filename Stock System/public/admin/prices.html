@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>股價控管 - 賭大股票系統</title></head>
+<body>
+<h1>股價控管</h1>
+<p><a href="index.html">&laquo; 回後台</a></p>
+<p>設定第 <input id="wave" type="number" min="1" style="width:4em"> 波的股價。
+每檔可以「直接填價格」或「填漲跌百分比」（以前一波為基準換算），兩欄擇一填即可，都留空表示不改。</p>
+<table border="1" cellpadding="4">
+  <thead><tr><th>股票</th><th>前一波價格</th><th>新價格</th><th>漲跌 %</th></tr></thead>
+  <tbody id="form"></tbody>
+</table>
+<p><button id="btn">套用</button></p>
+<p id="err" style="color:#c00"></p>
+
+<h2>歷史股價</h2>
+<table border="1" cellpadding="4">
+  <thead><tr><th>波</th><th>股票</th><th>價格</th><th>漲跌</th></tr></thead>
+  <tbody id="hist"></tbody>
+</table>
+
+<script src="admin.js"></script>
+<script>
+if (requireAdminLogin()) {
+  let stocks = [];
+
+  $('btn').addEventListener('click', async () => {
+    $('err').textContent = '';
+    const prices = stocks.map(s => ({
+      stockId: s.id,
+      price: $('p-' + s.id).value,
+      changePct: $('c-' + s.id).value
+    }));
+    const { ok, body } = await api('/prices/' + Number($('wave').value), {
+      method: 'PUT',
+      body: JSON.stringify({ prices })
+    });
+    if (!ok) { $('err').textContent = body.error || '套用失敗'; return; }
+    stocks.forEach(s => { $('p-' + s.id).value = ''; $('c-' + s.id).value = ''; });
+    await load();
+  });
+
+  async function load() {
+    const st = await api('/state');
+    if (st.ok && !$('wave').value) $('wave').value = st.body.wave;
+
+    const m = await fetch('/api/market/stocks').then(r => r.json());
+    stocks = m.stocks;
+
+    const hist = await api('/prices');
+    const rows = hist.ok ? hist.body : [];
+    // 目標波次的前一波價格，讓主辦知道換算基準是多少
+    const target = Number($('wave').value);
+    const prevOf = {};
+    rows.filter(r => r.wave < target).forEach(r => { prevOf[r.stockId] = r.price; });
+
+    $('form').innerHTML = stocks.map(s => `
+      <tr><td>${esc(s.name)}</td>
+      <td>${prevOf[s.id] === undefined ? '—' : money(prevOf[s.id])}</td>
+      <td><input id="p-${s.id}" type="number" step="0.01" min="0.01" style="width:8em"></td>
+      <td><input id="c-${s.id}" type="number" step="0.01" style="width:8em"></td></tr>`).join('');
+
+    $('hist').innerHTML = rows.slice().reverse().map(r => `
+      <tr><td>${r.wave}</td><td>${esc(r.name)}</td><td>${money(r.price)}</td>
+      <td>${pctText(r.changePct)}</td></tr>`).join('') || '<tr><td colspan="4">尚無資料</td></tr>';
+  }
+
+  $('wave').addEventListener('change', load);
+  load();
+}
+</script>
+</body></html>

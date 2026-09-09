@@ -1,0 +1,346 @@
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const db = require('../db');
+const adminAuth = require('../middleware/adminAuth');
+const { bankerGuard, requireAdmin } = require('../middleware/bankerGuard');
+const asyncHandler = require('../middleware/asyncHandler');
+const { createLoginThrottle } = require('../loginThrottle');
+const { leaderboard, effectivePrices, portfolio } = require('../portfolio');
+
+const router = express.Router();
+const loginThrottle = createLoginThrottle();
+
+const PHASES = ['news', 'gambling', 'deposit', 'trading', 'closed'];
+
+async function audit(adminId, type, targetType, targetId, before, after) {
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [adminId, type, targetType, targetId == null ? null : String(targetId),
+     before == null ? null : JSON.stringify(before),
+     after == null ? null : JSON.stringify(after)]
+  );
+}
+
+router.post('/login', asyncHandler(async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'email 與密碼都要填' });
+  if (loginThrottle.isLocked(email)) {
+    return res.status(429).json({ error: '嘗試太多次，請稍後再試' });
+  }
+
+  const { rows } = await db.query('SELECT * FROM admin_users WHERE email = $1', [email]);
+  const user = rows[0];
+  const fail = () => {
+    loginThrottle.recordFailure(email);
+    return res.status(401).json({ error: 'email 或密碼不正確' });
+  };
+  if (!user) return fail();
+  if (!(await bcrypt.compare(password, user.password_hash))) return fail();
+  loginThrottle.clear(email);
+
+  // role: 'admin' 代表「這是一張管理端 token」（跟隊伍端的 'team' 區分），
+  // adminRole 才是權限層級（管理員/銀行關主），兩個不要混在同一個欄位。
+  const token = jwt.sign(
+    { sub: user.id, email: user.email, displayName: user.display_name,
+      role: 'admin', adminRole: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: '12h' }
+  );
+  res.json({ token, adminRole: user.role });
+}));
+
+router.use(adminAuth);
+router.use(bankerGuard);
+
+router.get('/me', (req, res) => {
+  res.json({
+    id: req.admin.sub, email: req.admin.email,
+    displayName: req.admin.displayName, adminRole: req.admin.adminRole || 'admin'
+  });
+});
+
+/* ---------------- 遊戲進程 ---------------- */
+
+router.get('/state', asyncHandler(async (req, res) => {
+  const { rows } = await db.query('SELECT wave, total_waves, phase FROM game_state WHERE id = 1');
+  res.json(rows[0]);
+}));
+
+// 切換階段/波次。四階段的順序是企劃定死的，這裡不強制照順序推進——
+// 現場常常要倒回上一階段（例如新聞打錯字要重發），寫死順序反而卡住主辦。
+router.patch('/state', requireAdmin, asyncHandler(async (req, res) => {
+  const { wave, phase } = req.body || {};
+  const { rows: before } = await db.query('SELECT wave, total_waves, phase FROM game_state WHERE id = 1');
+
+  const nextWave = wave === undefined ? before[0].wave : Number(wave);
+  const nextPhase = phase === undefined ? before[0].phase : phase;
+
+  if (!Number.isInteger(nextWave) || nextWave < 1 || nextWave > before[0].total_waves) {
+    return res.status(400).json({ error: `波次必須是 1 到 ${before[0].total_waves}` });
+  }
+  if (!PHASES.includes(nextPhase)) {
+    return res.status(400).json({ error: '階段不正確' });
+  }
+
+  const { rows } = await db.query(
+    'UPDATE game_state SET wave = $1, phase = $2 WHERE id = 1 RETURNING wave, total_waves, phase',
+    [nextWave, nextPhase]
+  );
+  await audit(req.admin.sub, 'update_state', 'game_state', 1, before[0], rows[0]);
+  res.json(rows[0]);
+}));
+
+/* ---------------- 新聞 ---------------- */
+
+router.get('/news', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, wave, title, body, published_at FROM news ORDER BY wave DESC, id DESC'
+  );
+  res.json(rows);
+}));
+
+router.post('/news', requireAdmin, asyncHandler(async (req, res) => {
+  const { wave, title, body } = req.body || {};
+  const t = typeof title === 'string' ? title.trim() : '';
+  if (!t) return res.status(400).json({ error: '請填寫新聞標題' });
+
+  const { rows: st } = await db.query('SELECT wave, total_waves FROM game_state WHERE id = 1');
+  const w = wave === undefined ? st[0].wave : Number(wave);
+  if (!Number.isInteger(w) || w < 1 || w > st[0].total_waves) {
+    return res.status(400).json({ error: `波次必須是 1 到 ${st[0].total_waves}` });
+  }
+
+  const { rows } = await db.query(
+    'INSERT INTO news (wave, title, body) VALUES ($1,$2,$3) RETURNING id, wave, title, body, published_at',
+    [w, t, typeof body === 'string' ? body.trim() : '']
+  );
+  await audit(req.admin.sub, 'create_news', 'news', rows[0].id, null, { wave: w, title: t });
+  res.status(201).json(rows[0]);
+}));
+
+router.delete('/news/:id', requireAdmin, asyncHandler(async (req, res) => {
+  const { rowCount } = await db.query('DELETE FROM news WHERE id = $1', [req.params.id]);
+  if (rowCount === 0) return res.status(404).json({ error: '找不到這則新聞' });
+  await audit(req.admin.sub, 'delete_news', 'news', req.params.id, null, null);
+  res.status(204).end();
+}));
+
+/* ---------------- 股價 ---------------- */
+
+router.get('/prices', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT p.stock_id, s.name, p.wave, p.price, p.change_pct
+     FROM stock_prices p JOIN stocks s ON s.id = p.stock_id
+     ORDER BY p.wave, s.display_order`
+  );
+  res.json(rows.map(r => ({
+    stockId: r.stock_id, name: r.name, wave: r.wave,
+    price: Number(r.price), changePct: r.change_pct === null ? null : Number(r.change_pct)
+  })));
+}));
+
+// 設定某一波的股價。可以直接給價格，也可以給漲跌百分比（以前一波為基準換算）。
+// 現場兩種都會用到：新聞寫「大跌 20%」時給百分比最快，臨時要喬數字時給價格最直接。
+router.put('/prices/:wave', requireAdmin, asyncHandler(async (req, res) => {
+  const wave = Number(req.params.wave);
+  const { rows: st } = await db.query('SELECT total_waves FROM game_state WHERE id = 1');
+  if (!Number.isInteger(wave) || wave < 1 || wave > st[0].total_waves) {
+    return res.status(400).json({ error: `波次必須是 1 到 ${st[0].total_waves}` });
+  }
+
+  const entries = (req.body || {}).prices;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return res.status(400).json({ error: 'prices 必須是陣列' });
+  }
+
+  // 前一波的價格：算漲跌幅要用，給百分比時也要用它當基準。
+  const prev = wave > 1 ? await effectivePrices(wave - 1) : [];
+  const prevPrice = Object.fromEntries(prev.map(s => [s.id, s.price]));
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const out = [];
+    for (const e of entries) {
+      const stockId = Number(e.stockId);
+      const base = prevPrice[stockId];
+
+      let price, changePct;
+      if (e.price !== undefined && e.price !== null && e.price !== '') {
+        price = Number(e.price);
+        if (!Number.isFinite(price) || price <= 0) throw Object.assign(new Error('價格必須大於 0'), { bad: true });
+        changePct = base ? Number((((price - base) / base) * 100).toFixed(2)) : null;
+      } else if (e.changePct !== undefined && e.changePct !== null && e.changePct !== '') {
+        changePct = Number(e.changePct);
+        if (!Number.isFinite(changePct)) throw Object.assign(new Error('漲跌幅不正確'), { bad: true });
+        if (!base) throw Object.assign(new Error('第一波沒有前一波可以換算，請直接輸入價格'), { bad: true });
+        price = Number((base * (1 + changePct / 100)).toFixed(2));
+        if (price <= 0) throw Object.assign(new Error('換算後的價格必須大於 0'), { bad: true });
+      } else {
+        continue; // 這一檔沒填，跳過
+      }
+
+      const { rows } = await client.query(
+        `INSERT INTO stock_prices (stock_id, wave, price, change_pct) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (stock_id, wave) DO UPDATE SET price = EXCLUDED.price, change_pct = EXCLUDED.change_pct
+         RETURNING stock_id, wave, price, change_pct`,
+        [stockId, wave, price, changePct]
+      );
+      out.push({
+        stockId: rows[0].stock_id, wave: rows[0].wave,
+        price: Number(rows[0].price),
+        changePct: rows[0].change_pct === null ? null : Number(rows[0].change_pct)
+      });
+    }
+    await client.query('COMMIT');
+    await audit(req.admin.sub, 'set_prices', 'stock_prices', wave, null, out);
+    res.json(out);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.bad) return res.status(400).json({ error: err.message });
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
+/* ---------------- 實體銀行對帳 ---------------- */
+
+// 本波所有隊伍的申報狀況。銀行關主看的就是這張表。
+router.get('/deposits', asyncHandler(async (req, res) => {
+  const wave = req.query.wave ? Number(req.query.wave)
+    : (await db.query('SELECT wave FROM game_state WHERE id = 1')).rows[0].wave;
+
+  const { rows } = await db.query(
+    `SELECT d.id, d.team_id, t.display_name, d.wave, d.amount, d.status,
+            d.created_at, d.reviewed_at, t.cash
+     FROM deposits d JOIN teams t ON t.id = d.team_id
+     WHERE d.wave = $1 ORDER BY d.created_at`,
+    [wave]
+  );
+  res.json({ wave, deposits: rows.map(r => ({ ...r, amount: Number(r.amount), cash: Number(r.cash) })) });
+}));
+
+// 核准入帳：金額計入該隊可用餘額。
+router.post('/deposits/:id/approve', asyncHandler(async (req, res) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    // 狀態條件放進 UPDATE 的 WHERE：先查再改的話，兩位關主同時按核准會入帳兩次。
+    const { rows } = await client.query(
+      `UPDATE deposits SET status = 'approved', reviewed_by = $1, reviewed_at = now()
+       WHERE id = $2 AND status = 'pending'
+       RETURNING team_id, amount, wave`,
+      [req.admin.sub, req.params.id]
+    );
+    if (rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: '這筆申報不存在，或已經審核過了' });
+    }
+    await client.query('UPDATE teams SET cash = cash + $1 WHERE id = $2',
+      [rows[0].amount, rows[0].team_id]);
+    await client.query('COMMIT');
+
+    await audit(req.admin.sub, 'approve_deposit', 'deposit', req.params.id, null,
+      { teamId: rows[0].team_id, amount: Number(rows[0].amount), wave: rows[0].wave });
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
+// 駁回作廢：不入帳，而且該隊本波不能交易（下單時會檢查這個狀態）。
+router.post('/deposits/:id/reject', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `UPDATE deposits SET status = 'rejected', reviewed_by = $1, reviewed_at = now()
+     WHERE id = $2 AND status = 'pending'
+     RETURNING team_id, amount, wave`,
+    [req.admin.sub, req.params.id]
+  );
+  if (rows.length === 0) {
+    return res.status(409).json({ error: '這筆申報不存在，或已經審核過了' });
+  }
+  await audit(req.admin.sub, 'reject_deposit', 'deposit', req.params.id, null,
+    { teamId: rows[0].team_id, amount: Number(rows[0].amount), wave: rows[0].wave });
+  res.json({ ok: true });
+}));
+
+/* ---------------- 隊伍 ---------------- */
+
+router.get('/teams', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, display_name, pin, cash, created_at FROM teams ORDER BY id'
+  );
+  res.json(rows.map(r => ({ ...r, cash: Number(r.cash) })));
+}));
+
+router.post('/teams', requireAdmin, asyncHandler(async (req, res) => {
+  const { displayName, pin } = req.body || {};
+  const name = typeof displayName === 'string' ? displayName.trim() : '';
+  if (!name) return res.status(400).json({ error: '請填寫隊伍名稱' });
+  if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+    return res.status(400).json({ error: 'PIN 要剛好 4 碼數字' });
+  }
+  try {
+    const { rows } = await db.query(
+      'INSERT INTO teams (display_name, pin) VALUES ($1,$2) RETURNING id, display_name, pin, cash',
+      [name, pin]
+    );
+    await audit(req.admin.sub, 'create_team', 'team', rows[0].id, null, { displayName: name });
+    res.status(201).json({ ...rows[0], cash: Number(rows[0].cash) });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: '這個隊伍名稱已經存在' });
+    throw err;
+  }
+}));
+
+// 手動覆寫可用餘額（企劃：處理突發狀況或補償）。
+router.patch('/teams/:id/cash', requireAdmin, asyncHandler(async (req, res) => {
+  const cash = Number((req.body || {}).cash);
+  if (!Number.isFinite(cash) || cash < 0) {
+    return res.status(400).json({ error: '餘額必須是 0 或正數' });
+  }
+  const { rows: before } = await db.query('SELECT cash FROM teams WHERE id = $1', [req.params.id]);
+  if (before.length === 0) return res.status(404).json({ error: '找不到這支隊伍' });
+
+  const { rows } = await db.query(
+    'UPDATE teams SET cash = $1 WHERE id = $2 RETURNING id, display_name, cash',
+    [cash, req.params.id]
+  );
+  await audit(req.admin.sub, 'override_cash', 'team', req.params.id,
+    { cash: Number(before[0].cash) }, { cash, note: (req.body || {}).note || null });
+  res.json({ ...rows[0], cash: Number(rows[0].cash) });
+}));
+
+/* ---------------- 交易監控與總覽 ---------------- */
+
+router.get('/trades', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT tr.id, tr.wave, tr.side, tr.shares, tr.price, tr.total, tr.created_at,
+            t.display_name AS team_name, s.name AS stock_name
+     FROM trades tr JOIN teams t ON t.id = tr.team_id JOIN stocks s ON s.id = tr.stock_id
+     ORDER BY tr.id DESC LIMIT 200`
+  );
+  res.json(rows.map(r => ({ ...r, price: Number(r.price), total: Number(r.total) })));
+}));
+
+// 全場總資產排行榜（現金 + 股票現值），最後公布名次用。
+router.get('/leaderboard', asyncHandler(async (req, res) => {
+  const { rows: st } = await db.query('SELECT wave FROM game_state WHERE id = 1');
+  res.json({ wave: st[0].wave, teams: await leaderboard(st[0].wave) });
+}));
+
+// 單一隊伍的完整持股明細（現場有爭議時查帳用）。
+router.get('/teams/:id/portfolio', asyncHandler(async (req, res) => {
+  const { rows: st } = await db.query('SELECT wave FROM game_state WHERE id = 1');
+  const p = await portfolio(Number(req.params.id), st[0].wave);
+  if (!p) return res.status(404).json({ error: '找不到這支隊伍' });
+  res.json(p);
+}));
+
+module.exports = router;

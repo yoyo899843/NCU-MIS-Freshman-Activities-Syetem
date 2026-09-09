@@ -114,14 +114,12 @@ router.post('/join', requireGameInProgress, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'cannot join your own duel' });
   }
 
-  const { rows: hostRows } = await db.query(
-    `SELECT p.id, t.faction FROM players p JOIN teams t ON t.id = p.team_id WHERE p.id = $1`,
-    [duel.host_player_id]
-  );
-  const hostFaction = hostRows[0].faction;
-  if (hostFaction === req.player.faction) {
-    return res.status(400).json({ error: 'PK duels are only between opposing factions' });
-  }
+  // PK 不限制陣營，任何兩支隊伍都能打。
+  //
+  // 原本擋同陣營，但那條規則在內鬼機制下是行不通的：陣營是秘密，而「你們不能
+  // PK」這個錯誤訊息等於直接告訴對方「我跟你同一邊」——一次就能確認一支隊伍的
+  // 身分，抓內鬼整個機制就破了。企劃寫的也是「在移動過程中若遭遇其他小隊，可
+  // 主動發起 PK 戰」，沒有陣營條件。
 
   await db.query(
     `UPDATE pk_duels SET guest_player_id = $1, status = 'active' WHERE id = $2`,

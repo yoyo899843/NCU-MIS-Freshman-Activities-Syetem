@@ -20,20 +20,23 @@ jobs:
           cd "$DEPLOY_DIR"
           git pull --ff-only
 
-      # 根目錄沒有 compose.yml，四個系統各自一個 compose 專案，要分開起。
-      # PgAdmin 放最後：它的 compose 以 external:true 引用 timewarfare-internal
-      # 和 rpg-internal，這兩個網路是前面兩個系統建立的。
+      # 根目錄沒有 compose.yml，每個系統各自一個 compose 專案，要分開起。
+      #
+      # 順序有意義：PgAdmin 一定要放最後。它的 compose 以 external:true 引用
+      # timewarfare-internal / rpg-internal / stock-internal，這三個網路是前面
+      # 那三個系統的 compose 建立的，不先起就會找不到網路而失敗。
       - name: Compose up
         run: |
           cd "$DEPLOY_DIR"
-          for d in "Time-Space Warfare" "RPG System" Portal PgAdmin; do
+          for d in "Time-Space Warfare" "RPG System" "Stock System" Portal Mods PgAdmin; do
             (cd "$d" && docker compose up -d --build --remove-orphans)
           done
 
       # 已套用過的會自己跳過，重複執行是安全的。-T 是因為 CI 沒有 TTY。
+      # 只有帶資料庫的系統需要（Portal 和 Mods 是純靜態 nginx）。
       - name: Migrate
         run: |
           cd "$DEPLOY_DIR"
-          for d in "Time-Space Warfare" "RPG System"; do
+          for d in "Time-Space Warfare" "RPG System" "Stock System"; do
             (cd "$d" && docker compose exec -T app node migrations/migrate.js)
           done

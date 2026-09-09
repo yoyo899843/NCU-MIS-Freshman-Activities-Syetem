@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理後台登入 - 賭大股票系統</title></head>
+<body>
+<h1>管理後台登入</h1>
+<p><input id="email" placeholder="email"></p>
+<p><input id="password" type="password" placeholder="密碼"></p>
+<p><button id="btn">登入</button></p>
+<p id="err" style="color:#c00"></p>
+<script src="admin.js"></script>
+<script>
+if (adminToken()) location.href = 'index.html';
+$('btn').addEventListener('click', async () => {
+  $('err').textContent = '';
+  const { ok, body } = await api('/login', {
+    method: 'POST',
+    body: JSON.stringify({ email: $('email').value.trim(), password: $('password').value })
+  });
+  if (!ok) { $('err').textContent = body.error || '登入失敗'; return; }
+  localStorage.setItem('stockAdminToken', body.token);
+  location.href = 'index.html';
+});
+</script>
+</body></html>

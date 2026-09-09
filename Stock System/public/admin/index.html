@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理後台 - 賭大股票系統</title></head>
+<body>
+<h1>賭大股票系統 · 管理後台</h1>
+<p>身分：<strong id="role">載入中</strong>　<button id="logoutBtn">登出</button></p>
+<p id="bankerNote" style="display:none;color:#a60">你是銀行關主：只能審核存款申報，其餘功能會被伺服器擋下。</p>
+
+<h2>遊戲進程</h2>
+<p>目前：第 <strong id="curWave"></strong> / <span id="totalWaves"></span> 波　<strong id="curPhase"></strong></p>
+<div class="admin-only" style="display:none">
+  <p>
+    波次 <input id="waveInput" type="number" min="1" style="width:4em">
+    階段
+    <select id="phaseSel">
+      <option value="news">階段一 · 新聞發布</option>
+      <option value="gambling">階段二 · 賭博賺錢</option>
+      <option value="deposit">階段三 · 資產申報與審核</option>
+      <option value="trading">階段四 · 股票交易</option>
+      <option value="closed">已收盤</option>
+    </select>
+    <button id="stateBtn">套用</button>
+  </p>
+  <p id="stateErr" style="color:#c00"></p>
+</div>
+
+<h2>功能</h2>
+<p>
+  <a href="bank.html">實體銀行對帳</a> |
+  <a href="news.html" class="admin-only" style="display:none">新聞發布</a> |
+  <a href="prices.html" class="admin-only" style="display:none">股價控管</a> |
+  <a href="teams.html">隊伍與結算總覽</a>
+</p>
+
+<script src="admin.js"></script>
+<script>
+if (requireAdminLogin()) {
+  $('logoutBtn').addEventListener('click', () => {
+    localStorage.removeItem('stockAdminToken');
+    location.href = 'login.html';
+  });
+
+  $('stateBtn').addEventListener('click', async () => {
+    $('stateErr').textContent = '';
+    const { ok, body } = await api('/state', {
+      method: 'PATCH',
+      body: JSON.stringify({ wave: Number($('waveInput').value), phase: $('phaseSel').value })
+    });
+    if (!ok) { $('stateErr').textContent = body.error || '失敗'; return; }
+    render(body);
+  });
+
+  function render(s) {
+    $('curWave').textContent = s.wave;
+    $('totalWaves').textContent = s.total_waves;
+    $('curPhase').textContent = PHASE_LABEL[s.phase] || s.phase;
+    $('waveInput').value = s.wave;
+    $('phaseSel').value = s.phase;
+  }
+
+  (async () => {
+    const me = await api('/me');
+    const isAdmin = me.body.adminRole === 'admin';
+    $('role').textContent = isAdmin ? '主辦（管理員）' : '銀行關主';
+    $('bankerNote').style.display = isAdmin ? 'none' : '';
+    document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+
+    const s = await api('/state');
+    if (s.ok) render(s.body);
+  })();
+}
+</script>
+</body></html>

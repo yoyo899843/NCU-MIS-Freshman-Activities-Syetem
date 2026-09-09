@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>個股查詢 - 賭大股票系統</title></head>
+<body>
+<h1>個股查詢</h1>
+<p><a href="index.html">&laquo; 回首頁</a>　目前第 <strong id="wave"></strong> 波</p>
+<div id="list"></div>
+<script src="app.js"></script>
+<script>
+// 趨勢圖先用純文字的走勢列（每一波一格）表示，不畫圖：美編之後再處理，
+// 這裡先確保「歷史每一波的價格與漲跌幅」資料是完整、看得懂的。
+function trend(history) {
+  if (!history.length) return '—';
+  return history.map(h =>
+    `第${h.wave}波 ${money(h.price)}（${pctText(h.changePct)}）`).join('　→　');
+}
+
+async function load() {
+  const { ok, body } = await api('/api/market/stocks');
+  if (!ok) return;
+  $('wave').textContent = body.wave;
+  $('list').innerHTML = body.stocks.map(s => `
+    <article>
+      <h3>${esc(s.name)}</h3>
+      <p>最新股價：<strong>${s.price === null ? '尚未開盤' : money(s.price)}</strong>　
+         本波漲跌：<strong>${pctText(s.changePct)}</strong></p>
+      <p>走勢：${trend(s.history)}</p>
+    </article><hr>`).join('');
+}
+load();
+setInterval(load, 5000);
+</script>
+</body></html>

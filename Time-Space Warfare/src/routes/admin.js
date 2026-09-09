@@ -12,6 +12,7 @@ const { createLoginThrottle } = require('../loginThrottle');
 const { getIO } = require('../io');
 const { applyAction } = require('../checkpoints/progress');
 const { computeScores } = require('../scoring');
+const { validateName } = require('../displayName');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -679,7 +680,8 @@ router.post('/questions/import', upload.single('file'), asyncHandler(async (req,
 router.get('/game/state', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-            pk_questions_per_duel, pk_answer_seconds
+            pk_questions_per_duel, pk_answer_seconds,
+            voting_unlocked_at, voting_closed_at, spy_vote_count
      FROM game_state WHERE id = 1`
   );
   res.json(rows[0]);
@@ -709,7 +711,8 @@ router.patch('/game/pk-settings', asyncHandler(async (req, res) => {
     `UPDATE game_state SET pk_questions_per_duel = $1, pk_answer_seconds = $2
      WHERE id = 1
      RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               pk_questions_per_duel, pk_answer_seconds`,
+               pk_questions_per_duel, pk_answer_seconds,
+               voting_unlocked_at, voting_closed_at, spy_vote_count`,
     [qpd, secs]
   );
 
@@ -740,7 +743,8 @@ router.patch('/game/duration', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `UPDATE game_state SET duration_minutes = $1 WHERE id = 1
      RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               pk_questions_per_duel, pk_answer_seconds`,
+               pk_questions_per_duel, pk_answer_seconds,
+               voting_unlocked_at, voting_closed_at, spy_vote_count`,
     [minutes]
   );
 
@@ -778,7 +782,8 @@ router.patch('/game/scale', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `UPDATE game_state SET max_teams = $1, progress_step = $2 WHERE id = 1
      RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
-               pk_questions_per_duel, pk_answer_seconds`,
+               pk_questions_per_duel, pk_answer_seconds,
+               voting_unlocked_at, voting_closed_at, spy_vote_count`,
     [teams, step]
   );
 
@@ -792,6 +797,95 @@ router.patch('/game/scale', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
+// 最終審判階段：開放/關閉內鬼指認投票。
+//
+// 跟「遊戲結束」是分開的兩件事——企劃寫「遊戲結束前進入最終審判階段」，
+// 所以投票是在遊戲還沒收掉之前開的，主辦要能各自控制。
+router.post('/game/open-voting', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `UPDATE game_state
+     SET voting_unlocked_at = COALESCE(voting_unlocked_at, now()), voting_closed_at = NULL
+     WHERE id = 1
+     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+               pk_questions_per_duel, pk_answer_seconds,
+               voting_unlocked_at, voting_closed_at, spy_vote_count`
+  );
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'open_voting', 'game_state', '1', NULL, NULL)`, [req.admin.sub]
+  );
+  getIO().emit('game:state', rows[0]);
+  res.json(rows[0]);
+}));
+
+router.post('/game/close-voting', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `UPDATE game_state SET voting_closed_at = now() WHERE id = 1
+     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+               pk_questions_per_duel, pk_answer_seconds,
+               voting_unlocked_at, voting_closed_at, spy_vote_count`
+  );
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'close_voting', 'game_state', '1', NULL, NULL)`, [req.admin.sub]
+  );
+  getIO().emit('game:state', rows[0]);
+  res.json(rows[0]);
+}));
+
+// 要指認幾支。企劃是 3，但隊伍數本來就可調，這個也跟著可調。
+router.patch('/game/spy-vote-count', asyncHandler(async (req, res) => {
+  const n = Number((req.body || {}).spyVoteCount);
+  if (!Number.isInteger(n) || n < 1 || n > 20) {
+    return res.status(400).json({ error: '指認數量必須是 1 到 20 之間的整數' });
+  }
+  const { rows } = await db.query(
+    `UPDATE game_state SET spy_vote_count = $1 WHERE id = 1
+     RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+               pk_questions_per_duel, pk_answer_seconds,
+               voting_unlocked_at, voting_closed_at, spy_vote_count`,
+    [n]
+  );
+  res.json(rows[0]);
+}));
+
+// 投票結果：誰投了誰、猜中幾支、還有哪幾隊沒投。
+// 這支只有管理端看得到——投票還開著的時候公開票數等於互相通風報信。
+router.get('/votes', asyncHandler(async (req, res) => {
+  const { rows: teams } = await db.query(
+    `SELECT t.id, t.faction, t.team_number,
+            (SELECT p.display_name FROM players p WHERE p.team_id = t.id ORDER BY p.id LIMIT 1) AS name
+     FROM teams t ORDER BY t.id`
+  );
+  const { rows: votes } = await db.query(
+    `SELECT v.voter_team_id, v.suspect_team_id, s.faction AS suspect_faction
+     FROM spy_votes v JOIN teams s ON s.id = v.suspect_team_id`
+  );
+  const nameOf = Object.fromEntries(teams.map(t => [t.id, t.name || ('#' + t.team_number)]));
+
+  const byVoter = {};
+  votes.forEach(v => {
+    (byVoter[v.voter_team_id] = byVoter[v.voter_team_id] || []).push({
+      teamId: v.suspect_team_id, name: nameOf[v.suspect_team_id], correct: v.suspect_faction === 'disrupt'
+    });
+  });
+
+  const suspicion = {};
+  votes.forEach(v => { suspicion[v.suspect_team_id] = (suspicion[v.suspect_team_id] || 0) + 1; });
+
+  res.json({
+    // 這裡回傳真實陣營：投票結束後主辦要據此公布內鬼身分。
+    teams: teams.map(t => ({
+      teamId: t.id, name: nameOf[t.id], faction: t.faction,
+      isSpy: t.faction === 'disrupt',
+      votesReceived: suspicion[t.id] || 0,
+      voted: (byVoter[t.id] || []).length > 0,
+      picks: byVoter[t.id] || [],
+      correctCount: (byVoter[t.id] || []).filter(p => p.correct).length
+    }))
+  });
+}));
+
 router.post('/game/start', asyncHandler(async (req, res) => {
   const { rows: current } = await db.query('SELECT status FROM game_state WHERE id = 1');
   if (current[0].status === 'in_progress') {
@@ -800,7 +894,8 @@ router.post('/game/start', asyncHandler(async (req, res) => {
 
   const { rows } = await db.query(
     `UPDATE game_state SET status = 'in_progress', started_at = now(), ended_at = NULL
-     WHERE id = 1 RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step`
+     WHERE id = 1 RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+               voting_unlocked_at, voting_closed_at, spy_vote_count`
   );
   getIO().emit('game:state', rows[0]);
   res.json(rows[0]);
@@ -814,7 +909,8 @@ router.post('/game/end', asyncHandler(async (req, res) => {
 
   const { rows } = await db.query(
     `UPDATE game_state SET status = 'ended', ended_at = now()
-     WHERE id = 1 RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step`
+     WHERE id = 1 RETURNING status, started_at, ended_at, duration_minutes, max_teams, progress_step,
+               voting_unlocked_at, voting_closed_at, spy_vote_count`
   );
   getIO().emit('game:state', rows[0]);
   res.json(rows[0]);
@@ -850,6 +946,141 @@ router.get('/players', asyncHandler(async (req, res) => {
     ORDER BY t.faction, t.team_number, p.is_captain DESC, p.id
   `);
   res.json(rows);
+}));
+
+// 後台直接開一支隊伍。玩家端的 /api/auth/join 是「自己登入就開隊」，但現場常
+// 需要先建好（報名名單先鍵入、或某隊手機壞掉要重開一支），所以這裡補一個入口。
+//
+// 一支隊伍就是一位玩家（一組一支手機），所以 teams 和 players 一起建，包在同一
+// 個交易裡——只建到一半的隊伍會變成登入時查得到隊伍卻沒有玩家的孤兒資料。
+router.post('/players', asyncHandler(async (req, res) => {
+  const { displayName, pin, faction } = req.body || {};
+  const validated = validateName(typeof displayName === 'string' ? displayName : '');
+  if (validated.error) return res.status(400).json({ error: validated.error });
+  if (Array.from(validated.name).length > 10) {
+    return res.status(400).json({ error: '代號最多 10 個字' });
+  }
+  if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+    return res.status(400).json({ error: 'PIN 必須是 4 位數字' });
+  }
+  if (faction !== undefined && faction !== null && !['repair', 'disrupt'].includes(faction)) {
+    return res.status(400).json({ error: 'faction must be repair or disrupt' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 隊伍上限跟玩家自己登入時是同一個限制，不能從後台繞過去——否則後台建的
+    // 隊伍會讓場上隊數超過設定，積分與陣營分配都會失衡。
+    const { rows: limitRows } = await client.query('SELECT max_teams FROM game_state WHERE id = 1');
+    const maxTeams = limitRows[0]?.max_teams ?? 10;
+    const { rows: countRows } = await client.query('SELECT COUNT(*)::int AS cnt FROM teams');
+    if (countRows[0].cnt >= maxTeams) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: `已達隊伍上限（${maxTeams} 隊），請先調高上限或刪除隊伍` });
+    }
+
+    // 沒指定陣營就沿用登入時的規則：分到目前隊數少的那一邊，平手隨機。
+    let side = faction;
+    if (!side) {
+      const { rows: counts } = await client.query(
+        'SELECT faction, COUNT(*)::int AS cnt FROM teams GROUP BY faction'
+      );
+      const map = { repair: 0, disrupt: 0 };
+      counts.forEach(r => { map[r.faction] = r.cnt; });
+      side = map.repair < map.disrupt ? 'repair'
+        : map.disrupt < map.repair ? 'disrupt'
+        : (Math.random() < 0.5 ? 'repair' : 'disrupt');
+    }
+
+    const { rows: maxRows } = await client.query(
+      'SELECT COALESCE(MAX(team_number), 0) + 1 AS next_number FROM teams WHERE faction = $1',
+      [side]
+    );
+    const { rows: teamRows } = await client.query(
+      'INSERT INTO teams (faction, team_number) VALUES ($1, $2) RETURNING id',
+      [side, maxRows[0].next_number]
+    );
+    const { rows: playerRows } = await client.query(
+      `INSERT INTO players (team_id, display_name, is_captain, pin) VALUES ($1, $2, true, $3)
+       RETURNING id, display_name, is_captain, pin, created_at, team_id`,
+      [teamRows[0].id, validated.name, pin]
+    );
+
+    await client.query('COMMIT');
+
+    await db.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+       VALUES ($1, 'create_player', 'player', $2, NULL, $3)`,
+      [req.admin.sub, String(playerRows[0].id),
+       JSON.stringify({ displayName: validated.name, faction: side })]
+    );
+
+    res.status(201).json({ ...playerRows[0], faction: side, team_number: maxRows[0].next_number });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // display_name 有 UNIQUE：重複的代號就是重複，不要建出兩支同名隊伍。
+    if (err.code === '23505') return res.status(409).json({ error: '這個代號已經有人用了' });
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
+// 刪除一支隊伍（連同它唯一的那位玩家）。
+//
+// 刻意不做成 ON DELETE CASCADE：這支隊伍可能已經打過關卡、打過 PK，那些是別隊
+// 的積分與名次依據（例如「PK 勝場最多」要數對戰紀錄）。連鎖刪掉會讓別隊的分數
+// 無聲改變，事後也查不出為什麼。所以有留下紀錄的隊伍一律擋下來，只允許刪掉還
+// 沒動作過的——現場真正會用到刪除的情境，就是「報名名單鍵錯」「多開了一支」。
+router.delete('/players/:id', asyncHandler(async (req, res) => {
+  const { rows: existing } = await db.query(
+    `SELECT p.id, p.display_name, p.team_id, t.faction
+     FROM players p JOIN teams t ON t.id = p.team_id WHERE p.id = $1`,
+    [req.params.id]
+  );
+  if (existing.length === 0) return res.status(404).json({ error: 'player not found' });
+  const player = existing[0];
+
+  const { rows: used } = await db.query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM checkpoint_attempts WHERE team_id = $1) AS attempts,
+       (SELECT COUNT(*)::int FROM pk_duels WHERE host_player_id = $2 OR guest_player_id = $2) AS duels,
+       (SELECT COUNT(*)::int FROM missions WHERE team_id = $1) AS missions`,
+    [player.team_id, player.id]
+  );
+  const u = used[0];
+  if (u.attempts > 0 || u.duels > 0 || u.missions > 0) {
+    return res.status(409).json({
+      error: `這支隊伍已經有紀錄（關卡 ${u.attempts} 筆、PK ${u.duels} 場、任務 ${u.missions} 則），` +
+             '刪掉會影響其他隊伍的積分與名次。如果只是要讓他們登不進來，請改 PIN。'
+    });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    // 筆記沒有計分意義，跟著隊伍一起走
+    await client.query('DELETE FROM checkpoint_notes WHERE team_id = $1', [player.team_id]);
+    await client.query('DELETE FROM players WHERE id = $1', [player.id]);
+    await client.query('DELETE FROM teams WHERE id = $1', [player.team_id]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, 'delete_player', 'player', $2, $3, NULL)`,
+    [req.admin.sub, String(player.id),
+     JSON.stringify({ displayName: player.display_name, faction: player.faction })]
+  );
+
+  res.status(204).end();
 }));
 
 // 用新 PIN 直接覆蓋掉舊 PIN——給隊輔忘記/打錯 PIN 卡住登入時，管理員在後台直接

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>賭大股票系統</title></head>
+<body>
+<h1>賭大股票系統</h1>
+<p id="who"></p>
+<p>目前：第 <strong id="wave"></strong> 波　<strong id="phase"></strong></p>
+<p>
+  <a href="news.html">新聞情報中心</a> |
+  <a href="market.html">個股查詢</a> |
+  <a href="trade.html">交易與帳戶</a> |
+  <a href="admin/login.html">管理後台</a>
+</p>
+<p><button id="logoutBtn">登出</button></p>
+
+<h2>資產總覽</h2>
+<p>可用現金：<strong id="cash">—</strong>　股票現值：<strong id="stockValue">—</strong>　總資產：<strong id="total">—</strong></p>
+<table border="1" cellpadding="4">
+  <thead><tr><th>股票</th><th>股價</th><th>漲跌</th><th>持有張數</th><th>市值</th></tr></thead>
+  <tbody id="positions"></tbody>
+</table>
+
+<h2>本波申報狀態</h2>
+<p id="depositState">—</p>
+
+<script src="app.js"></script>
+<script>
+if (requireLogin()) {
+  const info = JSON.parse(localStorage.getItem('teamInfo') || 'null');
+  if (info) $('who').textContent = `隊伍：${info.displayName}`;
+
+  $('logoutBtn').addEventListener('click', () => {
+    localStorage.removeItem('teamToken');
+    localStorage.removeItem('teamInfo');
+    location.href = 'login.html';
+  });
+
+  async function load() {
+    const { ok, body } = await api('/api/team/portfolio');
+    if (!ok) return;
+    $('wave').textContent = body.wave;
+    $('phase').textContent = PHASE_LABEL[body.phase] || body.phase;
+    $('cash').textContent = money(body.cash);
+    $('stockValue').textContent = money(body.stockValue);
+    $('total').textContent = money(body.total);
+    $('positions').innerHTML = body.positions.map(p => `
+      <tr>
+        <td>${esc(p.name)}</td>
+        <td>${p.price === null ? '—' : money(p.price)}</td>
+        <td>${pctText(p.changePct)}</td>
+        <td>${p.shares}</td>
+        <td>${money(p.value)}</td>
+      </tr>`).join('');
+
+    const d = await api('/api/team/deposit');
+    if (d.ok) {
+      $('depositState').textContent = d.body.deposit
+        ? `申報 ${money(d.body.deposit.amount)} 元　狀態：${DEPOSIT_LABEL[d.body.deposit.status]}`
+        : '本波尚未申報';
+    }
+  }
+
+  load();
+  // 股價與審核結果都是主辦在後台改的，玩家端沒有別的方式知道，固定週期問一次
+  setInterval(load, 5000);
+}
+</script>
+</body></html>

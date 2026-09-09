@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新聞發布 - 賭大股票系統</title></head>
+<body>
+<h1>新聞發布</h1>
+<p><a href="index.html">&laquo; 回後台</a></p>
+<p>
+  波次 <input id="wave" type="number" min="1" style="width:4em"><br>
+  標題 <input id="title" size="50"><br>
+  內文 <textarea id="body" rows="4" cols="60"></textarea><br>
+  <button id="btn">發布</button>
+</p>
+<p id="err" style="color:#c00"></p>
+<h2>已發布</h2>
+<table border="1" cellpadding="4">
+  <thead><tr><th>波</th><th>標題</th><th>內文</th><th>時間</th><th></th></tr></thead>
+  <tbody id="tbody"></tbody>
+</table>
+<script src="admin.js"></script>
+<script>
+if (requireAdminLogin()) {
+  $('btn').addEventListener('click', async () => {
+    $('err').textContent = '';
+    const { ok, body } = await api('/news', {
+      method: 'POST',
+      body: JSON.stringify({ wave: Number($('wave').value), title: $('title').value, body: $('body').value })
+    });
+    if (!ok) { $('err').textContent = body.error || '發布失敗'; return; }
+    $('title').value = ''; $('body').value = '';
+    await load();
+  });
+
+  window.del = async function (id) {
+    if (!confirm('確定要刪除這則新聞嗎？')) return;
+    await api('/news/' + id, { method: 'DELETE' });
+    await load();
+  };
+
+  async function load() {
+    const st = await api('/state');
+    if (st.ok && !$('wave').value) $('wave').value = st.body.wave;
+    const { ok, body } = await api('/news');
+    if (!ok) return;
+    $('tbody').innerHTML = body.map(n => `
+      <tr><td>${n.wave}</td><td>${esc(n.title)}</td>
+      <td style="white-space:pre-wrap">${esc(n.body)}</td>
+      <td>${new Date(n.published_at).toLocaleString()}</td>
+      <td><button onclick="del(${n.id})">刪除</button></td></tr>`).join('')
+      || '<tr><td colspan="5">尚未發布任何新聞</td></tr>';
+  }
+  load();
+}
+</script>
+</body></html>

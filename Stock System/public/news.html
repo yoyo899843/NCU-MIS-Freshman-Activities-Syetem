@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新聞情報中心 - 賭大股票系統</title></head>
+<body>
+<h1>新聞情報中心</h1>
+<p><a href="index.html">&laquo; 回首頁</a>　<label><input type="checkbox" id="all"> 顯示歷來所有波次</label></p>
+<div id="list"></div>
+<script src="app.js"></script>
+<script>
+async function load() {
+  const { ok, body } = await api('/api/market/news' + ($('all').checked ? '?all=1' : ''));
+  if (!ok) return;
+  $('list').innerHTML = body.length
+    ? body.map(n => `
+        <article>
+          <h3>第 ${n.wave} 波：${esc(n.title)}</h3>
+          ${n.body ? `<p style="white-space:pre-wrap">${esc(n.body)}</p>` : ''}
+          <p><small>${new Date(n.published_at).toLocaleString()}</small></p>
+        </article><hr>`).join('')
+    : '<p>本波還沒有新聞。</p>';
+}
+$('all').addEventListener('change', load);
+load();
+setInterval(load, 5000);
+</script>
+</body></html>

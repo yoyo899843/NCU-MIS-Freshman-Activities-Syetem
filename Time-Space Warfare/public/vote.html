@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>最終審判 - 時空戰爭</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .cand {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px;
+  }
+  .cand.picked { border-color: var(--disrupt); background: var(--card-3); }
+  .cand input { width: auto; margin: 0; }
+  .cand label { flex: 1; margin: 0; font-size: 1rem; color: var(--fg); cursor: pointer; }
+  .counter { font-weight: 700; }
+  .counter.ready { color: var(--repair); }
+</style>
+</head>
+<body>
+<h1>最終審判</h1>
+<p class="nav"><a href="index.html">&laquo; 回首頁</a></p>
+
+<div id="notLoggedIn" class="card" style="display:none">
+  <p>請先<a href="login.html">登入</a>。</p>
+</div>
+
+<div id="closed" class="card" style="display:none">
+  <p id="closedMsg"></p>
+</div>
+
+<div id="notEligible" class="card" style="display:none">
+  <p>最終審判是時空保衛隊指認內鬼的階段，你們這隊不需要投票。</p>
+</div>
+
+<div id="voteCard" class="card" style="display:none">
+  <p>指認你們認為是<strong>黑暗潛伏者</strong>的隊伍，必須剛好選 <strong id="need"></strong> 支。</p>
+  <p>已選 <span class="counter" id="counter">0</span> / <span id="need2"></span></p>
+  <div id="candidates"></div>
+  <button id="submitBtn">送出指認</button>
+  <p class="hint">投票關閉前都可以改，改完再送出一次即可。</p>
+  <p id="result" class="error"></p>
+</div>
+
+<script src="authFetch.js"></script>
+<script>
+const token = localStorage.getItem('playerToken');
+const playerInfo = JSON.parse(localStorage.getItem('playerInfo') || 'null');
+
+const $ = id => document.getElementById(id);
+const show = id => { $(id).style.display = ''; };
+const hide = id => { $(id).style.display = 'none'; };
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+if (!token || !playerInfo) {
+  show('notLoggedIn');
+} else {
+  let need = 3;
+  let picked = new Set();
+
+  function renderCounter() {
+    $('counter').textContent = picked.size;
+    $('counter').className = 'counter' + (picked.size === need ? ' ready' : '');
+    document.querySelectorAll('.cand').forEach(el => {
+      el.classList.toggle('picked', picked.has(Number(el.dataset.id)));
+    });
+  }
+
+  function onToggle(id, checked) {
+    // 選滿之後把其餘選項關掉，比讓人選了第四個再跳錯誤好——現場是拿平板點的，
+    // 錯誤訊息很容易被忽略。
+    if (checked) picked.add(id); else picked.delete(id);
+    renderCounter();
+    document.querySelectorAll('.cand input').forEach(input => {
+      const cid = Number(input.dataset.id);
+      input.disabled = picked.size >= need && !picked.has(cid);
+    });
+  }
+
+  $('submitBtn').addEventListener('click', async () => {
+    $('result').textContent = '';
+    if (picked.size !== need) {
+      $('result').textContent = `必須剛好選 ${need} 支`;
+      return;
+    }
+    const res = await fetch('/api/votes', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ suspectTeamIds: [...picked] })
+    });
+    const data = await res.json();
+    if (!res.ok) { $('result').textContent = data.error || `失敗 (${res.status})`; return; }
+    $('result').textContent = '已送出。投票關閉前都可以再改。';
+    $('result').className = 'hint';
+  });
+
+  async function load() {
+    const res = await fetch('/api/votes', { headers: { Authorization: 'Bearer ' + token } });
+    if (!res.ok) return;
+    const data = await res.json();
+
+    need = data.voteCount;
+    $('need').textContent = need;
+    $('need2').textContent = need;
+
+    if (!data.open) {
+      hide('voteCard'); hide('notEligible'); show('closed');
+      $('closedMsg').textContent = data.closedAt
+        ? '最終審判已經結束，指認結果將於結算時公布。'
+        : '最終審判還沒開始，請等待主持人宣布。';
+      return;
+    }
+    hide('closed');
+    if (!data.canVote) { hide('voteCard'); show('notEligible'); return; }
+
+    hide('notEligible'); show('voteCard');
+
+    // 只在第一次（或候選名單真的變了）才重畫，否則每次輪詢會把使用者勾到一半的
+    // 選擇洗掉。
+    const sig = data.candidates.map(c => c.id).join(',');
+    if ($('candidates').dataset.sig !== sig) {
+      $('candidates').dataset.sig = sig;
+      picked = new Set(data.myVotes);
+      $('candidates').innerHTML = data.candidates.map(c => `
+        <div class="cand" data-id="${c.id}">
+          <input type="checkbox" id="c-${c.id}" data-id="${c.id}" ${picked.has(c.id) ? 'checked' : ''}>
+          <label for="c-${c.id}">${esc(c.name || ('#' + c.team_number))}</label>
+        </div>`).join('');
+      document.querySelectorAll('.cand input').forEach(input => {
+        input.addEventListener('change', e => onToggle(Number(input.dataset.id), e.target.checked));
+      });
+      renderCounter();
+      document.querySelectorAll('.cand input').forEach(input => {
+        const cid = Number(input.dataset.id);
+        input.disabled = picked.size >= need && !picked.has(cid);
+      });
+    }
+  }
+
+  load();
+  // 投票的開/關是主辦在後台按的，玩家端沒有別的方式知道
+  setInterval(load, 5000);
+}
+</script>
+</body>
+</html>

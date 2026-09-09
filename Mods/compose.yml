@@ -2,7 +2,9 @@
 # 跟正式的四個系統無關（沒有 DB、沒有後端、關掉也不影響活動）。
 #
 #   docker compose up -d      啟動後開 http://<主機>:9004
-#   docker compose down       看完就可以收掉
+#   docker compose down       手動收掉
+#
+# 已納入 .github/workflows/deploy.yml，推上 main 就會跟其他系統一起部署。
 #
 # port 9004：9000 Portal / 9001 Time-Space Warfare / 9002 PgAdmin / 9003 RPG System 已佔用。
 services:
@@ -16,6 +18,8 @@ services:
     # 改完模板存檔重整瀏覽器就會看到，不用重啟容器。
     volumes:
       - .:/usr/share/nginx/html:ro
+      # 擋掉 compose.yml 之類的非網頁檔案，見 nginx.conf 裡的說明
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - ncumis-camp
     healthcheck:

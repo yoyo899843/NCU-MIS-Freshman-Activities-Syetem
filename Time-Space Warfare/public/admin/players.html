@@ -26,11 +26,35 @@
   .faction-msg { font-size: 0.75rem; }
   .faction-msg.ok { color: var(--repair); }
   .faction-msg.error { color: var(--disrupt); }
+  .new-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .new-form input { width: 200px; margin: 0; }
+  .new-form input#newPin { width: 100px; }
+  .new-form select { width: auto; margin: 0; }
+  .new-form button { width: auto; margin: 0; }
+  .del-btn { width: auto; padding: 4px 8px; background: var(--disrupt); color: #2b0006; }
+  .del-msg { font-size: 0.75rem; }
+  .del-msg.error { color: var(--disrupt); }
 </style>
 </head>
 <body>
 <h1>玩家帳號管理</h1>
 <p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <h3>新增隊伍</h3>
+  <div class="new-form">
+    <input id="newName" maxlength="10" placeholder="隊伍代號（最多 10 字）">
+    <input id="newPin" inputmode="numeric" maxlength="4" placeholder="4 碼 PIN">
+    <select id="newFaction">
+      <option value="">陣營：自動分配</option>
+      <option value="repair">修復者</option>
+      <option value="disrupt">破壞者</option>
+    </select>
+    <button id="createBtn">新增</button>
+  </div>
+  <p class="hint">代號只能用中英文字、數字與 emoji。玩家用同一組代號＋PIN 登入。</p>
+  <p id="createMsg" class="pin-msg"></p>
+</div>
 
 <div class="card">
   <input id="searchInput" placeholder="搜尋代號...">
@@ -44,6 +68,7 @@
         <th>加入時間</th>
         <th>重設 PIN</th>
         <th>調整陣營</th>
+        <th>刪除</th>
       </tr>
     </thead>
     <tbody id="playersBody"></tbody>
@@ -102,8 +127,12 @@ function renderRows() {
         </div>
         <div class="faction-msg" id="factionMsg-${p.id}"></div>
       </td>
+      <td>
+        <button class="del-btn" onclick="removePlayer(${p.id})">刪除</button>
+        <div class="del-msg" id="delMsg-${p.id}"></div>
+      </td>
     </tr>
-  `).join('') || '<tr><td colspan="6">目前沒有任何玩家</td></tr>';
+  `).join('') || '<tr><td colspan="7">目前沒有任何玩家</td></tr>';
 
   // 只允許輸入數字，跟玩家登入頁的 PIN 輸入限制一致。
   filtered.forEach(p => {
@@ -180,6 +209,58 @@ window.changeFaction = async function (playerId) {
   msgEl.className = 'faction-msg ok';
   await loadPlayers();
 };
+
+// 刪除的限制在後端（有關卡/PK/任務紀錄的隊伍會被 409 擋下，見 admin.js），
+// 這裡只負責問一次「確定嗎」並把伺服器的理由顯示出來。
+window.removePlayer = async function (playerId) {
+  const player = players.find(p => p.id === playerId);
+  const msgEl = document.getElementById(`delMsg-${playerId}`);
+  msgEl.textContent = '';
+
+  if (!confirm(`確定要刪除「${player ? player.display_name : playerId}」這支隊伍嗎？此動作無法復原。`)) return;
+
+  const res = await api(`/players/${playerId}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) {
+    const data = await res.json().catch(() => ({}));
+    msgEl.textContent = data.error || `失敗 (${res.status})`;
+    msgEl.className = 'del-msg error';
+    return;
+  }
+  await loadPlayers();
+};
+
+document.getElementById('newPin').addEventListener('input', e => {
+  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
+});
+
+document.getElementById('createBtn').addEventListener('click', async () => {
+  const msgEl = document.getElementById('createMsg');
+  msgEl.textContent = '';
+  msgEl.className = 'pin-msg';
+
+  const body = {
+    displayName: document.getElementById('newName').value.trim(),
+    pin: document.getElementById('newPin').value,
+    faction: document.getElementById('newFaction').value || undefined
+  };
+
+  const res = await api('/players', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    msgEl.textContent = data.error || `失敗 (${res.status})`;
+    msgEl.className = 'pin-msg error';
+    return;
+  }
+  msgEl.textContent = `已新增「${data.display_name}」（${factionLabel(data.faction)} ${data.team_number}）`;
+  msgEl.className = 'pin-msg ok';
+  document.getElementById('newName').value = '';
+  document.getElementById('newPin').value = '';
+  await loadPlayers();
+});
 
 document.getElementById('refreshBtn').addEventListener('click', loadPlayers);
 document.getElementById('searchInput').addEventListener('input', renderRows);

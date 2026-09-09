@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>隊伍與結算總覽 - 賭大股票系統</title></head>
+<body>
+<h1>隊伍與結算總覽</h1>
+<p><a href="index.html">&laquo; 回後台</a></p>
+
+<div class="admin-only" style="display:none">
+  <h2>新增隊伍</h2>
+  <p>
+    隊伍名稱 <input id="newName">
+    PIN <input id="newPin" maxlength="4" style="width:5em">
+    <button id="addBtn">新增</button>
+  </p>
+  <p id="addErr" style="color:#c00"></p>
+</div>
+
+<h2>總資產排行榜（現金 + 股票現值）</h2>
+<table border="1" cellpadding="4">
+  <thead><tr><th>名次</th><th>隊伍</th><th>現金</th><th>股票現值</th><th>總資產</th></tr></thead>
+  <tbody id="lb"></tbody>
+</table>
+
+<h2>隊伍帳號</h2>
+<table border="1" cellpadding="4">
+  <thead><tr><th>隊伍</th><th>PIN</th><th>可用現金</th><th class="admin-only" style="display:none">覆寫餘額</th></tr></thead>
+  <tbody id="teams"></tbody>
+</table>
+<p id="cashErr" style="color:#c00"></p>
+
+<h2>最近成交</h2>
+<table border="1" cellpadding="4">
+  <thead><tr><th>時間</th><th>波</th><th>隊伍</th><th>股票</th><th>買賣</th><th>張數</th><th>價格</th><th>總額</th></tr></thead>
+  <tbody id="trades"></tbody>
+</table>
+
+<script src="admin.js"></script>
+<script>
+if (requireAdminLogin()) {
+  let isAdmin = false;
+
+  $('addBtn').addEventListener('click', async () => {
+    $('addErr').textContent = '';
+    const { ok, body } = await api('/teams', {
+      method: 'POST',
+      body: JSON.stringify({ displayName: $('newName').value, pin: $('newPin').value })
+    });
+    if (!ok) { $('addErr').textContent = body.error || '新增失敗'; return; }
+    $('newName').value = ''; $('newPin').value = '';
+    await load();
+  });
+
+  window.overrideCash = async function (id) {
+    const v = prompt('新的可用現金餘額');
+    if (v === null) return;
+    $('cashErr').textContent = '';
+    const { ok, body } = await api(`/teams/${id}/cash`, {
+      method: 'PATCH', body: JSON.stringify({ cash: Number(v) })
+    });
+    if (!ok) { $('cashErr').textContent = body.error || '覆寫失敗'; return; }
+    await load();
+  };
+
+  async function load() {
+    const lb = await api('/leaderboard');
+    if (lb.ok) {
+      $('lb').innerHTML = lb.body.teams.map(t => `
+        <tr><td>${t.rank}</td><td>${esc(t.name)}</td><td>${money(t.cash)}</td>
+        <td>${money(t.stockValue)}</td><td><strong>${money(t.total)}</strong></td></tr>`).join('')
+        || '<tr><td colspan="5">還沒有隊伍</td></tr>';
+    }
+
+    const ts = await api('/teams');
+    if (ts.ok) {
+      $('teams').innerHTML = ts.body.map(t => `
+        <tr><td>${esc(t.display_name)}</td><td>${esc(t.pin)}</td><td>${money(t.cash)}</td>
+        ${isAdmin ? `<td><button onclick="overrideCash(${t.id})">覆寫</button></td>` : ''}</tr>`).join('')
+        || '<tr><td colspan="4">還沒有隊伍</td></tr>';
+    }
+
+    const tr = await api('/trades');
+    if (tr.ok) {
+      $('trades').innerHTML = tr.body.map(x => `
+        <tr><td>${new Date(x.created_at).toLocaleString()}</td><td>${x.wave}</td>
+        <td>${esc(x.team_name)}</td><td>${esc(x.stock_name)}</td>
+        <td>${x.side === 'buy' ? '買進' : '賣出'}</td><td>${x.shares}</td>
+        <td>${money(x.price)}</td><td>${money(x.total)}</td></tr>`).join('')
+        || '<tr><td colspan="8">尚無成交</td></tr>';
+    }
+  }
+
+  (async () => {
+    const me = await api('/me');
+    isAdmin = me.body.adminRole === 'admin';
+    document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+    await load();
+    setInterval(load, 5000);
+  })();
+}
+</script>
+</body></html>

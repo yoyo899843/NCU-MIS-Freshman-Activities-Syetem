@@ -77,6 +77,22 @@ async function computeScores() {
   teams.forEach(t => { pkWins[t.id] = 0; });
   pkWinRows.forEach(r => { pkWins[r.team_id] = r.n; });
 
+  // --- 第三權重：抓內鬼 ---
+  // 好人隊伍每猜中一支內鬼隊伍得一份，最多 spy_vote_count 份。
+  // 「猜中」＝被指認的那支隊伍現在的 faction 是 disrupt。用現在的陣營判定而不是
+  // 投票當下的快照：陣營中途被後台調整過的話，以最終身分為準才符合直覺。
+  const { rows: voteRows } = await db.query(
+    `SELECT v.voter_team_id, count(*)::int AS n
+     FROM spy_votes v JOIN teams s ON s.id = v.suspect_team_id
+     WHERE s.faction = 'disrupt'
+     GROUP BY v.voter_team_id`
+  );
+  const { rows: voteCfg } = await db.query('SELECT spy_vote_count FROM game_state WHERE id = 1');
+  const maxGuess = voteCfg[0]?.spy_vote_count ?? 3;
+  const correctGuesses = {};
+  teams.forEach(t => { correctGuesses[t.id] = 0; });
+  voteRows.forEach(r => { correctGuesses[r.voter_team_id] = Math.min(r.n, maxGuess); });
+
   const { rows: missionRows } = await db.query(
     `SELECT team_id, count(*)::int AS n FROM missions
      WHERE status = 'completed' GROUP BY team_id`
@@ -99,7 +115,7 @@ async function computeScores() {
 
     const w1 = winningFaction && t.faction === winningFaction ? w.w1_faction_win : 0;
     const w2 = (aligned[t.id] || 0) * w.w2_aligned_action;
-    const w3 = 0; // 內鬼指認投票尚未實作
+    const w3 = (correctGuesses[t.id] || 0) * w.w3_spy_guess;
     const w4 = achievements.length * w.w4_achievement;
     const w5 = (missions[t.id] || 0) * w.w5_mission;
     const w6 = t.pk_points * w.w6_pk_point;
@@ -119,6 +135,7 @@ async function computeScores() {
       },
       detail: {
         alignedCount: aligned[t.id] || 0,
+        correctGuesses: correctGuesses[t.id] || 0,
         missionCount: missions[t.id] || 0,
         repairCount: repairs[t.id] || 0,
         disruptCount: disrupts[t.id] || 0,
@@ -144,8 +161,7 @@ async function computeScores() {
     weights: w,
     checkpoints: { total: cpRows[0].total, done, notDone },
     winningFaction,
-    // 還沒接上資料來源的權重，明白標出來，免得大螢幕上一排 0 分讓人以為算錯了
-    pending: ['第三權重（抓內鬼）尚未實作'],
+    pending: [],
     teams: rows
   };
 }
