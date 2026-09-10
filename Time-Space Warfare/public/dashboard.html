@@ -67,12 +67,12 @@
   }
 
   /* --- 各隊積分 --- */
-  /* 每列壓成一行、並且允許排成兩欄。隊伍數是會變的（後台可調），單欄的話十隊
-     就已經頂到底、再多就被裁掉——投影畫面被裁掉的那幾隊等於不存在。 */
+  /* 積分榜固定一隊一列。原本的雙欄雖然能塞更多隊，但每欄太窄，六個中文字以上
+     的隊名會被省略；現場辨識隊伍比多塞幾列更重要。 */
   .rank {
     flex: 1; min-height: 0; overflow: hidden;
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(16vw, 1fr));
-    gap: 0 1.2vw; align-content: start;
+    display: grid; grid-template-columns: 1fr;
+    align-content: start;
   }
   .rank .row {
     display: flex; align-items: baseline; gap: .6vw;
