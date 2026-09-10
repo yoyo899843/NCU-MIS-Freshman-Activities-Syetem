@@ -155,6 +155,62 @@
     font-size: 1.8vh; font-weight: 700; color: #1a0f00; background: var(--accent);
     padding: .6vh 1.2vw; border-radius: 4px;
   }
+
+  /* 平板通常以直向使用。投影版的左右雙欄在 768-1024px 寬度會讓據點卡與隊伍列
+     過窄，因此改成由上而下的清單；同時允許頁面垂直捲動，避免隊伍或據點被裁掉。 */
+  @media (max-width: 1024px) {
+    body {
+      height: auto; min-height: 100vh;
+      overflow-x: hidden; overflow-y: auto;
+    }
+
+    .top {
+      align-items: center; gap: .7rem; padding: .8rem 1rem;
+    }
+    .top .brand { font-size: clamp(1rem, 2.2vh, 1.35rem); }
+    .top .status { font-size: clamp(.9rem, 1.9vh, 1.1rem); }
+    .top .clock-label { font-size: clamp(.8rem, 1.7vh, 1rem); }
+    .top .clock { font-size: clamp(2.1rem, 5vh, 3rem); }
+
+    .totals { padding: 1.25rem 1rem .75rem; }
+    .totals .headline { font-size: clamp(1rem, 2.6vh, 1.3rem); }
+    .totals .num { font-size: clamp(5rem, 13vh, 7rem); }
+    .totals .num .of { font-size: clamp(2rem, 5vh, 2.8rem); }
+    .totals .unit { font-size: clamp(1rem, 3vh, 1.35rem); }
+    .totalbar { margin-top: .9rem; height: .85rem; }
+    .lead-line { margin-top: .65rem; font-size: clamp(1rem, 2.2vh, 1.25rem); }
+
+    .lower {
+      display: block; padding: .75rem 1rem 1.5rem;
+    }
+    .lower > section { display: block; }
+    .lower .col-rank { margin-top: 1.5rem; }
+    .col-title { font-size: clamp(1rem, 2vh, 1.2rem); margin-bottom: .6rem; }
+
+    /* 據點改為單欄直列，卡片不再在窄寬度中被壓縮。 */
+    .cps {
+      display: flex; flex-direction: column; gap: .6rem;
+      overflow: visible; align-content: initial;
+    }
+    .cp { border-left-width: 5px; padding: .75rem .9rem; }
+    .cp .nm { font-size: clamp(1rem, 2.1vh, 1.2rem); }
+    .cp .bar { margin: .55rem 0 .45rem; height: .55rem; }
+    .cp .vals { font-size: clamp(.95rem, 1.9vh, 1.1rem); }
+
+    /* 隊伍積分同樣一隊一列，保留完整的名次、隊名、細節與分數。 */
+    .rank {
+      display: flex; flex-direction: column; gap: 0;
+      overflow: visible;
+    }
+    .rank .row { gap: .55rem; padding: .65rem .4rem; }
+    .rank .no { font-size: clamp(1rem, 2vh, 1.2rem); }
+    .rank .nm { font-size: clamp(1rem, 2vh, 1.2rem); }
+    .rank .sub { font-size: clamp(.78rem, 1.4vh, .95rem); }
+    .rank .pts { font-size: clamp(1.2rem, 2.4vh, 1.45rem); }
+    .rank-note { font-size: clamp(.78rem, 1.4vh, .95rem); margin-top: .5rem; }
+
+    .offline { right: 1rem; bottom: 1rem; font-size: .9rem; padding: .45rem .75rem; }
+  }
 </style>
 </head>
 <body>

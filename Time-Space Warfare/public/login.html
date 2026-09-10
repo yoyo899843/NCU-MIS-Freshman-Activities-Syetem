@@ -11,7 +11,8 @@
 <div class="card" id="loginCard">
   <input id="displayName" placeholder="輸入你的代號/姓名（最多 10 個字）" maxlength="10">
   <p class="hint">代號只能用中英文字、數字與 emoji，不能有空白或標點符號。</p>
-  <input id="pin" placeholder="設定 4 碼 PIN（掉線/換手機用同一組代號+PIN 找回身份）" maxlength="4" inputmode="numeric" pattern="[0-9]*">
+  <input id="pin" type="tel" placeholder="設定 4 碼 PIN（掉線/換手機用同一組代號+PIN 找回身份）" maxlength="4" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" aria-label="設定 4 碼數字 PIN">
+  <p class="hint">PIN 僅限數字；請記得切換輸入法為英文／數字鍵盤。</p>
   <button id="joinBtn">加入時空戰爭</button>
   <p id="result" class="error"></p>
 </div>

@@ -1,6 +1,6 @@
 [
   {
     "title": "歡迎來到 NCUMIS Camp",
-    "content": "活動當天請依序選擇你要參加的系統。公告內容由系統管理員直接編輯此檔案後重啟 Portal container 更新。"
+    "content": "活動當天請依關主指示選擇要參加的系統。這一則公告可以直接編輯 Portal/public/announcements.json，存檔重整就會更新，不用重啟 container。"
   }
 ]

@@ -1,17 +1,23 @@
 [
   {
-    "name": "時空戰爭 Time-Space Warfare",
-    "description": "時空修復者 vs 時空破壞者，校園大地對抗遊戲。",
+    "key": "timewarfare",
+    "name": "時空戰爭",
+    "subtitle": "Time-Space Warfare",
+    "description": "校園大地對抗遊戲。修復時空據點、找出潛伏的內鬼，路上遇到別隊還能發起 PK 對戰。",
     "url": "https://時空戰爭.佑佑.台灣"
   },
   {
+    "key": "rpg",
     "name": "資管皇家學院數位探查儀",
-    "description": "五大學派推理解謎競賽，探索校園關卡、蒐集線索、破解真相。",
+    "subtitle": "RPG System",
+    "description": "五大學派推理解謎競賽。探索校園關卡、蒐集線索、破解真相。",
     "url": "https://rpg.佑佑.台灣"
   },
   {
+    "key": "stock",
     "name": "賭大股票系統",
-    "description": "尚未開放。",
-    "url": null
+    "subtitle": "Stock System",
+    "description": "三波制虛擬股市。判讀新聞、實體關卡賺現金、存進銀行後買賣四檔股票。",
+    "url": "https://賭大股票.佑佑.台灣"
   }
 ]
