@@ -168,3 +168,74 @@ td.n.d, .v-disrupt { color: var(--disrupt); }
     transition-duration: .01ms !important; scroll-behavior: auto !important;
   }
 }
+
+/* ---------- 全站頁尾 ---------- */
+/* 結構由 public/footer.js 注入，這裡只管樣式。 */
+
+.site-footer {
+  /* flex: none 是給 map.html 和 dashboard.html 用的：那兩頁的 body 是
+     flex column（地圖/戰況要吃滿整個畫面），沒有這行頁尾會被壓扁成 0 高度。 */
+  flex: none;
+  margin-top: 28px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.site-footer .made { font-weight: 700; letter-spacing: .02em; }
+
+.site-footer .links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;   /* 名字靠左、連結靠右；窄螢幕換行後仍然各據一邊 */
+}
+
+.site-footer .flink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* 44px 高的點擊目標。這是走在路上單手拿手機點的，小連結會一直點不到。 */
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--card-2);
+  color: var(--dim);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.site-footer .flink:hover,
+.site-footer .flink:active {
+  border-color: var(--accent);
+  background: var(--card-3);
+  color: var(--accent);
+}
+
+/* map.html 的地圖要吃滿畫面，頁尾在那裡壓到最薄；
+   它上面已經有一條 top-bar 的分隔線了，不用再多一條。 */
+body > #map ~ .site-footer {
+  margin-top: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+body > #map ~ .site-footer .flink {
+  min-height: 34px;
+  padding: 4px 9px;
+}
+
+/* dashboard.html 是投影用的，尺寸全部跟著 vh 走（1024x768 到 4K 都不用調），
+   頁尾用固定 px 在 4K 上會小到看不見。 */
+body.projection .site-footer {
+  margin-top: 0;
+  padding: .8vh 2vw;
+  font-size: 1.1vh;
+}
+body.projection .site-footer svg { width: 1.6vh; height: 1.6vh; }
+body.projection .site-footer .flink { min-height: 0; padding: .4vh 1vw; }
