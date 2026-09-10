@@ -1241,12 +1241,13 @@ router.post('/game/reset', requireFullAdmin, asyncHandler(async (req, res) => {
     await client.query('BEGIN');
 
     // 刪除順序＝外鍵的相反方向：先刪指向別人的，再刪被指的。
-    // 目前的外鍵是 spy_votes/checkpoint_notes/missions/checkpoint_attempts -> teams、
+    // 目前的外鍵是 spy_votes/checkpoint_notes/team_notes/missions/checkpoint_attempts -> teams、
     // pk_duel_answers -> pk_duels -> players -> teams。
     const counts = {};
     for (const [key, sql] of [
       ['spy_votes', 'DELETE FROM spy_votes'],
       ['checkpoint_notes', 'DELETE FROM checkpoint_notes'],
+      ['team_notes', 'DELETE FROM team_notes'],
       ['missions', 'DELETE FROM missions'],
       ['pk_duel_answers', 'DELETE FROM pk_duel_answers'],
       ['pk_duels', 'DELETE FROM pk_duels'],
@@ -1481,8 +1482,9 @@ router.delete('/players/:id', asyncHandler(async (req, res) => {
       await client.query('DELETE FROM checkpoint_attempts WHERE team_id = $1', [player.team_id]);
     }
 
-    // 筆記沒有計分意義，跟著隊伍一起走
+    // 筆記沒有計分意義，跟著隊伍一起走（自己的筆記與別隊對它的筆記都清掉）。
     await client.query('DELETE FROM checkpoint_notes WHERE team_id = $1', [player.team_id]);
+    await client.query('DELETE FROM team_notes WHERE owner_team_id = $1 OR target_team_id = $1', [player.team_id]);
     // 用 team_id 而不是 player.id 刪玩家：一組一支手機，正常情況下這支隊伍就
     // 只有這一位玩家。萬一有第二位（舊資料），只刪一位會讓下面刪隊伍時被外鍵擋下。
     await client.query('DELETE FROM players WHERE team_id = $1', [player.team_id]);

@@ -8,9 +8,8 @@
 --   第五權重  2分  任務          → 突發任務系統（尚未實作）
 --   第六權重  1分  PK 積分庫     → 需要存，見下
 --
--- 只有第六權重非存不可：企劃寫「勝者可直接奪取敗者擁有的第六權重（PK 積分）」，
--- 這是一個會在隊伍之間轉移的存量，不是「贏幾場就幾分」那種可以事後從對戰紀錄
--- 重算的東西——同一份對戰紀錄，依結算順序不同會得出不同的持有量。
+-- 第六權重存放各隊已獲得的 PK 勝利分。每場 PK 勝利固定加 1 分；保留欄位而不
+-- 直接以對戰紀錄計算，讓排行榜能以同一套資料來源顯示目前的 PK 積分庫。
 ALTER TABLE teams ADD COLUMN pk_points INT NOT NULL DEFAULT 0;
 ALTER TABLE teams ADD CONSTRAINT teams_pk_points_nonneg CHECK (pk_points >= 0);
 

@@ -1,5 +1,7 @@
 const express = require('express');
+const db = require('../db');
 const playerAuth = require('../middleware/playerAuth');
+const asyncHandler = require('../middleware/asyncHandler');
 const { setLocation, getAllLocations } = require('../playerLocations');
 const { isPlausibleCampusCoord } = require('../campusBounds');
 
@@ -21,7 +23,7 @@ router.post('/', (req, res) => {
   }
   // 只存座標。代號跟陣營刻意不存進來——地圖是匿名的，存了就遲早會從某個
   // 回應漏出去（見 src/playerLocations.js 的說明）。
-  setLocation(req.player.sub, { lat, lng });
+  setLocation(req.player.sub, { teamId: req.player.teamId, lat, lng });
   res.status(204).end();
 });
 
@@ -30,8 +32,25 @@ router.post('/', (req, res) => {
 // 關掉瀏覽器/斷線也不會從清單消失——每一筆多帶 live（是否仍在連線中）跟
 // updatedAt（最後上傳時間），前端據此顯示「現在」或「X 分鐘前」。
 // 玩家端每 2 秒 poll 一次，不用 Socket.IO 推播。
-router.get('/', (req, res) => {
-  res.json(getAllLocations(req.player.sub));
-});
+router.get('/', asyncHandler(async (req, res) => {
+  // getAllLocations 內部帶著 teamId，僅供這裡把「自己隊寫給該隊的筆記」接上；
+  // 回 JSON 前一定拆掉，地圖仍然只有匿名 id，沒有隊名、陣營或真實隊伍編號。
+  const locations = getAllLocations(req.player.sub);
+  const teamIds = [...new Set(locations.map(p => p.teamId).filter(Number.isInteger))];
+  const notesByTeam = {};
+  if (teamIds.length) {
+    const { rows } = await db.query(
+      `SELECT target_team_id, note FROM team_notes
+       WHERE owner_team_id = $1 AND target_team_id = ANY($2::int[])`,
+      [req.player.teamId, teamIds]
+    );
+    rows.forEach(r => { notesByTeam[r.target_team_id] = r.note; });
+  }
+
+  res.json(locations.map(({ teamId, ...location }) => ({
+    ...location,
+    note: notesByTeam[teamId] || null
+  })));
+}));
 
 module.exports = router;

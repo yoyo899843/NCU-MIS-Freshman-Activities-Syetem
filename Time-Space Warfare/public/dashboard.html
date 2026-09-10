@@ -435,16 +435,14 @@ function renderFinal() {
   }
   const { total, done, notDone } = summary();
   const winner = document.getElementById('finalWinner');
-  // 第一權重：已修復完成的據點數 > 未修復完成的 → 好人陣營獲勝，反之內鬼陣營獲勝。
+  // 第一權重：結算時，已修復完成的據點數 > 未修復完成的 → 好人陣營獲勝；反之
+  // （包含平手）內鬼陣營獲勝。
   if (done > notDone) {
     winner.className = 'winner repair';
     winner.textContent = '時空保衛隊 獲勝';
-  } else if (notDone > done) {
+  } else {
     winner.className = 'winner disrupt';
     winner.textContent = '黑暗潛伏者 獲勝';
-  } else {
-    winner.className = 'winner tie';
-    winner.textContent = '平手';
   }
   document.getElementById('finalRepair').textContent = done;
   document.getElementById('finalDisrupt').textContent = notDone;

@@ -38,7 +38,9 @@ async function computeScores() {
   );
 
   // --- 第一權重：陣營勝負 ---
-  // 已修復完成的據點數 > 未修復完成的 → 好人陣營（repair）勝，反之內鬼陣營（disrupt）勝。
+  // 這是「結算」積分：進行中即使局勢已經分出高下，也不能提前把 20 分放進排行榜。
+  // 遊戲 ended 後，已修復完成的據點數 > 未完成數 → 好人陣營（repair）勝；反之
+  // （包含平手）內鬼陣營（disrupt）勝。
   const { rows: cpRows } = await db.query(
     `SELECT count(*)::int AS total,
             count(*) FILTER (WHERE progress >= 100)::int AS done
@@ -46,9 +48,11 @@ async function computeScores() {
   );
   const done = cpRows[0].done;
   const notDone = cpRows[0].total - done;
+  const { rows: stateRows } = await db.query('SELECT status FROM game_state WHERE id = 1');
   let winningFaction = null;
-  if (done > notDone) winningFaction = 'repair';
-  else if (notDone > done) winningFaction = 'disrupt';
+  if (stateRows[0]?.status === 'ended') {
+    winningFaction = done > notDone ? 'repair' : 'disrupt';
+  }
 
   // --- 第二權重：符合陣營意向的動作次數 ---
   const { rows: alignedRows } = await db.query(
@@ -83,8 +87,10 @@ async function computeScores() {
   // 投票當下的快照：陣營中途被後台調整過的話，以最終身分為準才符合直覺。
   const { rows: voteRows } = await db.query(
     `SELECT v.voter_team_id, count(*)::int AS n
-     FROM spy_votes v JOIN teams s ON s.id = v.suspect_team_id
-     WHERE s.faction = 'disrupt'
+     FROM spy_votes v
+     JOIN teams voter ON voter.id = v.voter_team_id
+     JOIN teams suspect ON suspect.id = v.suspect_team_id
+     WHERE voter.faction = 'repair' AND suspect.faction = 'disrupt'
      GROUP BY v.voter_team_id`
   );
   const { rows: voteCfg } = await db.query('SELECT spy_vote_count FROM game_state WHERE id = 1');

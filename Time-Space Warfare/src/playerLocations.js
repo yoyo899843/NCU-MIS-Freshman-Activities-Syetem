@@ -12,7 +12,7 @@
 
 const crypto = require('crypto');
 
-const locations = new Map(); // playerId -> { lat, lng, updatedAt }
+const locations = new Map(); // playerId -> { teamId, lat, lng, updatedAt }
 
 // 地圖上的圓點是「匿名」的（見 溫馨周企劃.pdf：玩家要靠「某據點進度驟降」＋
 // 「當時停留在那裡的匿名圓點」自己推理內鬼身分）。所以對外一律不給代號、不給
@@ -48,6 +48,8 @@ function getAllLocations(excludePlayerId) {
     if (playerId === excludePlayerId) continue;
     result.push({
       id: aliasOf(playerId),
+      // teamId 只供 locations route 在伺服器端查詢該隊的筆記；絕不能直接回給玩家。
+      teamId: data.teamId,
       lat: data.lat,
       lng: data.lng,
       updatedAt: data.updatedAt,
@@ -57,4 +59,14 @@ function getAllLocations(excludePlayerId) {
   return result;
 }
 
-module.exports = { setLocation, getAllLocations };
+// 玩家端寫筆記時只會帶匿名 id。這裡在伺服器記憶體中還原為隊伍 id，前端從頭到尾
+// 都拿不到真實 teamId，避免筆記功能意外破壞地圖的匿名推理機制。
+function teamIdForAlias(alias) {
+  for (const [playerId, candidate] of aliases) {
+    if (candidate !== alias) continue;
+    return locations.get(playerId)?.teamId || null;
+  }
+  return null;
+}
+
+module.exports = { setLocation, getAllLocations, teamIdForAlias };

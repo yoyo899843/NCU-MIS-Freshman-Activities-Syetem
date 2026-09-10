@@ -437,17 +437,10 @@ async function persistResult(io, duelId, session, winnerId, loserId, { hostSumma
       [duelId, session.guestPlayerId, guestSummary.correctCount, guestSummary.totalTimeMs]
     );
 
-    // PK 不動據點進度，只影響第六權重的 PK 積分庫。
+    // PK 不動據點進度，只影響第六權重的 PK 積分庫。每場勝利固定加 1 分；不會
+    // 奪走敗方已累積的 PK 分，否則「一場只有一分」會被對手原有分數放大。
     //
-    // 企劃：「勝者可直接奪取敗者擁有的第六權重（PK 積分）」。所以這裡是把敗方
-    // 手上的積分整包轉給勝方，再加一分給這場勝利本身——如果只有轉移沒有新增，
-    // 大家都從 0 開始，搶來搶去永遠是 0，這個權重形同不存在。
-    //
-    // 因為是「轉移」，這個數字沒辦法事後從對戰紀錄重算（同一批對戰，依結算順序
-    // 不同會得出不同的持有量），所以存在 teams.pk_points。
-    //
-    // 落敗方的三分鐘保護期保留：它擋的是「同一支隊伍被反覆挑戰洗積分」，在會
-    // 轉移積分的規則下更重要——沒有它，贏家可以連續挑同一支把分數刷到滿。
+    // 落敗方仍有三分鐘保護期，避免同一隊被連續挑戰而影響遊戲體驗。
     const { rows: loserPlayerRows } = await client.query(
       'SELECT team_id FROM players WHERE id = $1', [loserId]
     );
@@ -457,22 +450,16 @@ async function persistResult(io, duelId, session, winnerId, loserId, { hostSumma
     const loserTeamId = loserPlayerRows[0].team_id;
     const winnerTeamId = winnerPlayerRows[0].team_id;
 
-    // 先鎖住敗方那一列再讀，否則兩場同時結算、敗方剛好是同一隊時會重複轉移。
-    const { rows: loserTeamRows } = await client.query(
-      'SELECT pk_points FROM teams WHERE id = $1 FOR UPDATE', [loserTeamId]
-    );
-    const stolen = loserTeamRows[0].pk_points;
-
     await client.query(
-      `UPDATE teams SET pk_points = 0, pk_protected_until = now() + interval '3 minutes'
+      `UPDATE teams SET pk_protected_until = now() + interval '3 minutes'
        WHERE id = $1`,
       [loserTeamId]
     );
     await client.query(
-      'UPDATE teams SET pk_points = pk_points + $1 WHERE id = $2',
-      [stolen + 1, winnerTeamId]
+      'UPDATE teams SET pk_points = pk_points + 1 WHERE id = $1',
+      [winnerTeamId]
     );
-    pkLog(duelId, 'PK 積分結算', { winnerTeamId, loserTeamId, 奪取: stolen, 本場: 1 });
+    pkLog(duelId, 'PK 積分結算', { winnerTeamId, loserTeamId, 本場: 1 });
 
     await client.query(
       `UPDATE pk_duels
