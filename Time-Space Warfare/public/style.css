@@ -173,8 +173,9 @@ td.n.d, .v-disrupt { color: var(--disrupt); }
 /* 結構由 public/footer.js 注入，這裡只管樣式。 */
 
 .site-footer {
-  /* flex: none 是給 map.html 和 dashboard.html 用的：那兩頁的 body 是
-     flex column（地圖/戰況要吃滿整個畫面），沒有這行頁尾會被壓扁成 0 高度。 */
+  /* flex: none 是給 dashboard.html 用的：那頁的 body 是 flex column
+     （戰況要吃滿整個畫面），沒有這行頁尾會被壓扁成 0 高度。
+     map.html 不放頁尾——那頁是邊走邊看的，垂直空間要全部留給地圖。 */
   flex: none;
   margin-top: 28px;
   padding: 14px 16px;
@@ -223,18 +224,6 @@ td.n.d, .v-disrupt { color: var(--disrupt); }
   border-color: var(--accent);
   background: var(--card-3);
   color: var(--accent);
-}
-
-/* map.html 的地圖要吃滿畫面，頁尾在那裡壓到最薄；
-   它上面已經有一條 top-bar 的分隔線了，不用再多一條。 */
-body > #map ~ .site-footer {
-  margin-top: 0;
-  padding: 6px 12px;
-  font-size: 12px;
-}
-body > #map ~ .site-footer .flink {
-  min-height: 34px;
-  padding: 4px 9px;
 }
 
 /* dashboard.html 是投影用的，尺寸全部跟著 vh 走（1024x768 到 4K 都不用調），
