@@ -13,6 +13,7 @@ const { getIO } = require('../io');
 const { applyAction } = require('../checkpoints/progress');
 const { computeScores } = require('../scoring');
 const { validateName } = require('../displayName');
+const { CHECKPOINT_BOUNDS, isInsideMapArea, looksSwapped } = require('../campusBounds');
 const roomRegistry = require('../pk/roomRegistry');
 const pkSession = require('../pk/session');
 
@@ -215,20 +216,84 @@ function parseCoord(value, min, max, label) {
   if (value === undefined || value === null || value === '') return { ok: true, value: null };
   const n = Number(value);
   if (!Number.isFinite(n) || n < min || n > max) {
-    return { ok: false, error: `${label} must be a number between ${min} and ${max}` };
+    return { ok: false, error: `${label} 必須是 ${min} 到 ${max} 之間的數字` };
   }
   return { ok: true, value: n };
 }
+
+const B = CHECKPOINT_BOUNDS;
+const f = n => n.toFixed(6);
+
+// 經緯度打反要在「-90~90」那層之前先判斷。
+//
+// 本來寫在後面，結果那段提示永遠不會出現：這個場地的經度是 121，打反之後
+// 121 被當成緯度，parseCoord 的 -90~90 直接就擋掉了，回的是「mapLat 必須是
+// -90 到 90 之間的數字」。技術上沒錯，但對「我只是把兩欄貼反」的人完全沒幫助，
+// 而那是最常見的一種打錯（Google 地圖複製出來是「緯度, 經度」，GeoJSON 之類
+// 的工具卻是相反的順序）。
+//
+// 所以先拿原始數字問一次「對調之後是不是就對了」，是的話直接講。
+function swapHint(mapLat, mapLng) {
+  const a = Number(mapLat), b = Number(mapLng);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  if (isInsideMapArea(a, b)) return null;           // 本來就對，不用管
+  if (!looksSwapped(a, b)) return null;
+  return `緯度和經度好像對調了。你填的是 緯度 ${a}、經度 ${b}，` +
+         `對調之後（緯度 ${b}、經度 ${a}）剛好落在校園範圍內。`;
+}
+
+// 交摺點座標必須落在有圖磚的那一塊範圍內。
+//
+// -90~90 / -180~180 那層只擋得掉「整個世界以外」的值，擋不掉真正會發生的錯：
+// 少打一位數、小數點位置跑掉、經緯度貼反。這些都是合法的地球座標，存進去也不會
+// 報錯，但那個點在玩家的地圖上永遠不會出現——超出 Leaflet 的 maxBounds 拖都拖
+// 不過去。等到活動當天有人說「怎麼少一個點」才發現，就來不及了。
+//
+// 回傳 { ok } 或 { ok:false, error }；跟 parseCoord 一樣不用 throw，
+// 因為錯誤處理中介層會把例外一律當成 500。
+function checkInsideMap(lat, lng) {
+  if (lat === null || lng === null) return { ok: true };   // 兩個都沒填＝還沒定位，允許
+  if (isInsideMapArea(lat, lng)) return { ok: true };
+
+  // 打反的情況已經在更前面用 swapHint 擋掉了（要趕在 -90~90 那層之前），
+  // 走到這裡的就是單純超出範圍。
+  const outLat = lat < B.minLat || lat > B.maxLat;
+  const outLng = lng < B.minLng || lng > B.maxLng;
+  const which = outLat && outLng ? '緯度和經度都' : outLat ? '緯度' : '經度';
+  return {
+    ok: false,
+    error: `${which}超出地圖範圍，這個點在玩家的地圖上會看不到。` +
+           `有效範圍：緯度 ${f(B.minLat)}～${f(B.maxLat)}、經度 ${f(B.minLng)}～${f(B.maxLng)}。` +
+           `（你填的是 緯度 ${lat}、經度 ${lng}）`
+  };
+}
+
+// 給後台的表單顯示有效範圍用。寫死在 HTML 裡的話，之後換場地重抓圖磚就會變成
+// 一個沒人記得要改、而且看起來很像真的的錯誤提示。
+router.get('/checkpoint-bounds', asyncHandler(async (req, res) => {
+  res.json(CHECKPOINT_BOUNDS);
+}));
 
 router.post('/checkpoints', asyncHandler(async (req, res) => {
   const { name, mapLat, mapLng } = req.body || {};
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: 'name is required' });
   }
+  const swapped = swapHint(mapLat, mapLng);
+  if (swapped) return res.status(400).json({ error: swapped });
+
   const lat = parseCoord(mapLat, -90, 90, 'mapLat');
   if (!lat.ok) return res.status(400).json({ error: lat.error });
   const lng = parseCoord(mapLng, -180, 180, 'mapLng');
   if (!lng.ok) return res.status(400).json({ error: lng.error });
+
+  // 只填一個座標等於一組沒有意義的位置：地圖需要成對的經緯度才畫得出點，
+  // 存進去只會變成一個永遠不顯示、但後台看起來「有填」的交摺點。
+  if ((lat.value === null) !== (lng.value === null)) {
+    return res.status(400).json({ error: '經度和緯度要一起填（或都留空）' });
+  }
+  const inside = checkInsideMap(lat.value, lng.value);
+  if (!inside.ok) return res.status(400).json({ error: inside.error });
 
   const { rows } = await db.query(
     `INSERT INTO checkpoints (name, map_lat, map_lng)
@@ -249,6 +314,14 @@ router.post('/checkpoints', asyncHandler(async (req, res) => {
 router.patch('/checkpoints/:id', asyncHandler(async (req, res) => {
   const body = req.body || {};
   const { name, mapLat, mapLng } = body;
+
+  // 同 POST：打反要趕在 -90~90 的範圍檢查之前判斷，否則會回一句沒有幫助的
+  // 「mapLat 必須是 -90 到 90 之間的數字」。只有兩個都送來才問得出對調。
+  if ('mapLat' in body && 'mapLng' in body) {
+    const swapped = swapHint(mapLat, mapLng);
+    if (swapped) return res.status(400).json({ error: swapped });
+  }
+
   const lat = parseCoord(mapLat, -90, 90, 'mapLat');
   if (!lat.ok) return res.status(400).json({ error: lat.error });
   const lng = parseCoord(mapLng, -180, 180, 'mapLng');
@@ -275,6 +348,27 @@ router.patch('/checkpoints/:id', asyncHandler(async (req, res) => {
   if ('mapLng' in body) put('map_lng', lng.value);
 
   if (sets.length === 0) return res.status(400).json({ error: '沒有要更新的欄位' });
+
+  // 驗的是「改完之後」的那組座標，不是這次送來的那半邊。
+  //
+  // PATCH 可以只送 mapLat，這時最終座標是「新緯度 ＋ 資料庫裡原本的經度」。
+  // 只檢查送來的那一個的話，單獨把緯度改成離譜的值會整個檢查不到——而那正是
+  // 後台「編輯」最常見的用法（只想微調一個數字）。
+  if ('mapLat' in body || 'mapLng' in body) {
+    const { rows: cur } = await db.query(
+      'SELECT map_lat, map_lng FROM checkpoints WHERE id = $1', [req.params.id]
+    );
+    if (cur.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
+
+    const finalLat = 'mapLat' in body ? lat.value : (cur[0].map_lat === null ? null : Number(cur[0].map_lat));
+    const finalLng = 'mapLng' in body ? lng.value : (cur[0].map_lng === null ? null : Number(cur[0].map_lng));
+
+    if ((finalLat === null) !== (finalLng === null)) {
+      return res.status(400).json({ error: '經度和緯度要一起填（或都留空）' });
+    }
+    const inside = checkInsideMap(finalLat, finalLng);
+    if (!inside.ok) return res.status(400).json({ error: inside.error });
+  }
 
   params.push(req.params.id);
   const { rows } = await db.query(

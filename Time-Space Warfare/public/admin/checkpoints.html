@@ -39,6 +39,7 @@
   </div>
   <button id="createBtn">新增</button>
   <p class="hint">關卡由關主在現場主持，過關後到「關主現場操作」記錄結果，玩家端沒有掃碼流程。</p>
+  <p class="hint" id="boundsHint">座標有效範圍載入中...</p>
   <p id="createResult" class="error"></p>
 </div>
 
@@ -98,6 +99,41 @@ function progressOf(cp) {
   return { pct, cls: 'tie', text: '尚未修復' };
 }
 
+// 有效範圍由伺服器給（src/campusBounds.js 的 CHECKPOINT_BOUNDS），不寫死在這頁。
+// 寫死的話，之後換場地重抓圖磚就會留下一個沒人記得要改、看起來又很像真的的提示。
+let bounds = null;
+
+async function loadBounds() {
+  try {
+    const res = await api('/checkpoint-bounds');
+    if (!res.ok) return;
+    bounds = await res.json();
+    $('boundsHint').textContent =
+      `座標必須在地圖範圍內：緯度 ${bounds.minLat}～${bounds.maxLat}、` +
+      `經度 ${bounds.minLng}～${bounds.maxLng}。超出範圍的點玩家在地圖上看不到。`;
+  } catch (e) {
+    $('boundsHint').textContent = '';
+  }
+}
+
+// 送出前先在本機擋一次，只是為了少一次來回並且立刻給回饋；
+// 真正說了算的是伺服器（見 admin.js 的 checkInsideMap）。
+// 回傳錯誤訊息字串，沒問題就回 null。
+function coordProblem(latRaw, lngRaw) {
+  if (latRaw === '' && lngRaw === '') return null;          // 都不填＝還沒定位
+  if ((latRaw === '') !== (lngRaw === '')) return '經度和緯度要一起填（或一起留空）';
+
+  const lat = Number(latRaw), lng = Number(lngRaw);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '經緯度必須是數字';
+  if (!bounds) return null;                                  // 範圍還沒載到就交給伺服器擋
+
+  const inside = (a, b) =>
+    a >= bounds.minLat && a <= bounds.maxLat && b >= bounds.minLng && b <= bounds.maxLng;
+  if (inside(lat, lng)) return null;
+  if (inside(lng, lat)) return `緯度和經度好像對調了——把 ${lng} 填緯度、${lat} 填經度試試。`;
+  return `座標超出地圖範圍，這個點玩家會看不到。有效範圍：緯度 ${bounds.minLat}～${bounds.maxLat}、經度 ${bounds.minLng}～${bounds.maxLng}。`;
+}
+
 async function load() {
   const res = await api('/checkpoints');
   if (res.status === 403) {
@@ -134,7 +170,12 @@ async function load() {
 }
 
 $('createBtn').addEventListener('click', async () => {
+  $('createResult').className = 'error';
   $('createResult').textContent = '';
+
+  const problem = coordProblem($('newLat').value.trim(), $('newLng').value.trim());
+  if (problem) { $('createResult').textContent = problem; return; }
+
   const res = await api('/checkpoints', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -195,13 +236,11 @@ window.saveCp = async function (id) {
   const lng = document.getElementById(`e-lng-${id}`).value.trim();
 
   if (!name) { $('result').textContent = '名稱不能空白'; return; }
-  // 經緯度要嘛兩個都填、要嘛兩個都不填。只填一個的話後端的 COALESCE 會保留
-  // 另一半的舊值，存出來是一組「新緯度配舊經度」的座標——點會落在完全錯的地方，
-  // 而且畫面上看起來像是存成功了。
-  if ((lat === '') !== (lng === '')) {
-    $('result').textContent = '經度和緯度要一起填（或一起留空）';
-    return;
-  }
+
+  // 只填一個的話，存出來會是「新緯度配舊經度」，點會落在完全錯的地方，而且畫面
+  // 上看起來像存成功了。範圍檢查同理——打錯一位數存得進去，但玩家的地圖拖不到。
+  const problem = coordProblem(lat, lng);
+  if (problem) { $('result').textContent = problem; return; }
 
   const res = await api(`/checkpoints/${id}`, {
     method: 'PATCH',
@@ -257,7 +296,7 @@ $('ovBtn').addEventListener('click', async () => {
   await load();
 });
 
-load();
+loadBounds().then(load);
 </script>
 </body>
 </html>

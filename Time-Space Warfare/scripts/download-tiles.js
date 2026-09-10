@@ -13,12 +13,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const BBOX = {
-  minLat: 24.964764,
-  maxLat: 24.972425,
-  minLng: 121.184735,
-  maxLng: 121.197936
-};
+// 從 src/campusBounds.js 讀，不要在這裡再抄一份座標。
+//
+// 這個範圍同時決定三件事：抓哪些圖磚、玩家地圖能拖到哪、以及後台新增交摺點時
+// 座標的有效範圍。抄成三份的話，改場地時漏改任何一份都會壞掉，而且壞的方式很
+// 安靜（例如圖磚抓新的、驗證還用舊的，於是新場地的點全被擋下來）。
+const { CAMPUS_BOUNDS: BBOX } = require('../src/campusBounds');
 
 const ZOOM_RANGE = [15, 19]; // [minZoom, maxZoom]
 const OUTPUT_DIR = path.join(__dirname, '..', 'public', 'tiles');

@@ -30,15 +30,30 @@
 <h1>PK 對戰管理</h1>
 <p class="nav">
   <a href="index.html">&laquo; 回管理後台</a>
+  <a href="#bank">跳到題庫</a>
   <a href="#duels">跳到對戰紀錄</a>
   <a href="questions.html">交摺點／通用題庫</a>
 </p>
 
-<!-- PK 題庫先、對戰紀錄後：題庫是賽前要準備好的東西，對戰紀錄是賽中/賽後才看的。 -->
+<!-- 設定 → 題庫 → 對戰紀錄。
+     設定放最前面是因為下面「題庫夠不夠」的判斷就是拿「一場抽幾題」當基準算的，
+     兩者放在一起才看得出關聯（原本設定在後台首頁、題庫在這頁，改一個要跳兩頁）。 -->
+<div class="card admin-only" id="settings" style="display:none">
+  <h2>PK 對戰設定</h2>
+  <label for="pkQuestions">一場抽幾題（1～20）</label>
+  <input id="pkQuestions" type="number" min="1" max="20" inputmode="numeric">
+  <label for="pkSeconds">每題作答時間（秒，3～120）</label>
+  <input id="pkSeconds" type="number" min="3" max="120" inputmode="numeric">
+  <button id="pkSettingsBtn">儲存設定</button>
+  <p class="hint">只影響之後才開始的對戰。正在進行中的那場是開場時就把題目和秒數決定好放在記憶體裡的，不會被中途換掉。</p>
+  <p class="hint">秒數是統一的，不是逐題設定：PK 是兩個人同步比快慢，每題長度必須一致才公平——照各題自己的秒數跑的話，抽到哪幾題會直接影響整場長度。</p>
+  <p id="pkSettingsResult" class="error"></p>
+</div>
+
 <div class="card" id="bank">
   <h2>PK 題庫</h2>
   <p id="bankStatus" class="bank-status">載入中...</p>
-  <p class="hint">PK 只會從這裡的題目抽題，不會抽到通用題庫或交摺點專屬題目。一場抽幾題、每題幾秒是統一設定，在<a href="index.html">管理後台首頁</a>的「PK 對戰設定」調整——所以這一頁的表單不用（也不能）逐題設定秒數。</p>
+  <p class="hint">PK 只會從這裡的題目抽題，不會抽到通用題庫或交摺點專屬題目。</p>
 </div>
 
 <div class="card">
@@ -98,26 +113,8 @@
 </div>
 
 <script src="../authFetch.js"></script>
+<script src="adminApi.js"></script>
 <script>
-const token = localStorage.getItem('adminToken');
-if (!token) location.href = 'login.html';
-
-async function api(path, options = {}) {
-  const res = await fetch('/admin/api' + path, {
-    ...options,
-    headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
-  });
-  if (res.status === 401) {
-    localStorage.removeItem('adminToken');
-    location.href = 'login.html';
-    throw new Error('unauthorized');
-  }
-  return res;
-}
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
 
 /* ---------------- PK 題庫 ---------------- */
 
@@ -153,11 +150,34 @@ async function loadPkSettings() {
     const res = await api('/game/state');
     if (!res.ok) return;
     const state = await res.json();
-    if (state.pk_questions_per_duel != null) questionsPerDuel = Number(state.pk_questions_per_duel);
+    if (state.pk_questions_per_duel != null) {
+      questionsPerDuel = Number(state.pk_questions_per_duel);
+      document.getElementById('pkQuestions').value = state.pk_questions_per_duel;
+    }
+    if (state.pk_answer_seconds != null) {
+      document.getElementById('pkSeconds').value = state.pk_answer_seconds;
+    }
   } catch (err) {
-    /* 忽略：這只是輔助資訊 */
+    /* 忽略：關主讀不到 game/state，只是少顯示輔助資訊，不擋整頁 */
   }
 }
+
+document.getElementById('pkSettingsBtn').addEventListener('click', async () => {
+  const res = await apiJson('/game/pk-settings', 'PATCH', {
+    questionsPerDuel: Number(document.getElementById('pkQuestions').value),
+    answerSeconds: Number(document.getElementById('pkSeconds').value)
+  });
+  const data = await res.json();
+  if (!res.ok) { showMsg('pkSettingsResult', data.error || `失敗 (${res.status})`, false); return; }
+
+  // 改完立刻重算題庫夠不夠。把「一場抽幾題」從 5 調到 15 而題庫只有 8 題的話，
+  // 上面那行警告必須馬上跟著變——不然會以為存好了、其實對戰會打成短局。
+  questionsPerDuel = Number(data.pk_questions_per_duel);
+  document.getElementById('pkQuestions').value = data.pk_questions_per_duel;
+  document.getElementById('pkSeconds').value = data.pk_answer_seconds;
+  renderBankStatus();
+  showMsg('pkSettingsResult', '已儲存。', true);
+});
 
 async function loadQuestions() {
   // /questions 回傳整個題庫（通用＋交摺點＋PK），這一頁只留 PK 的。題目總數是幾百筆
@@ -316,6 +336,7 @@ async function loadDuels() {
 document.getElementById('refreshBtn').addEventListener('click', loadDuels);
 
 (async () => {
+  await loadMe();          // 決定「PK 對戰設定」那張卡要不要顯示（關主看不到）
   await loadPkSettings();
   await loadQuestions();
   await loadDuels();

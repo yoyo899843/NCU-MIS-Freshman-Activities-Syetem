@@ -129,6 +129,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
 
+/* 後台的狀態徽章（遊戲進程、最終審判兩頁共用）。顏色跟文字一起變，不只靠顏色
+   分辨——投影或色覺差異下，光看顏色分不出「進行中」和「已結束」。 */
+.status-badge {
+  display: inline-block; padding: 4px 10px; border-radius: 4px;
+  font-weight: bold; color: #fff; background: #626b75;
+}
+.status-badge.status-in_progress, .status-badge.open { background: #2a7d2a; }
+.status-badge.status-ended { background: #c00; }
+.status-badge.closed { background: #a85400; }
+
 .error { color: var(--danger); font-size: 14px; margin: 8px 0 0; }
 /* :not(button) 很重要——後台有 <button class="small"> 這種用法，
    不排除的話會把按鈕的文字色蓋成 --dim，變成淺字疊在主色按鈕上看不見。 */

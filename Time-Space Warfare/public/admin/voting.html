@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>最終審判 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<h1>最終審判（內鬼指認投票）</h1>
+<p class="nav">
+  <a href="index.html">&laquo; 回管理後台</a>
+  <a href="votes.html">查看投票結果</a>
+</p>
+
+<div id="gatekeeperBlock" class="card" style="display:none">
+  <p class="error">這一頁只有管理員可以使用。你目前的身分是「關主」。</p>
+  <p class="hint">關主的工作在<a href="gatekeeper.html">關主現場操作</a>。</p>
+</div>
+
+<div class="card admin-only" style="display:none">
+  <h3>投票開關</h3>
+  <p>投票狀態：<span id="votingBadge" class="status-badge">載入中...</span></p>
+  <p id="votingCounts" style="font-size:0.85rem;color:var(--dim)"></p>
+  <button id="openVotingBtn">開放投票</button>
+  <button id="closeVotingBtn">關閉投票</button>
+  <p id="votingResult" class="error"></p>
+  <p class="hint">投票的開關跟「遊戲結束」是分開的兩件事。企劃寫的是「<strong>遊戲結束前</strong>進入最終審判階段」，所以要在按「強制結束遊戲」之前開放投票。</p>
+  <p class="hint">開放之後，時空保衛隊的玩家首頁才會浮出「最終審判」的入口；內鬼不投票，他們看不到入口。</p>
+</div>
+
+<div class="card admin-only" style="display:none">
+  <h3>指認數量</h3>
+  <label for="spyVoteCount">每隊要指認幾支（1～20）</label>
+  <input id="spyVoteCount" type="number" min="1" max="20" inputmode="numeric">
+  <button id="spyCountBtn">儲存</button>
+  <p class="hint">企劃是 3 支（10 隊裡有 3 支內鬼）。投票開放後也能改，但已經投過的隊伍會需要重投——他們送出的票數會跟新的規定對不上。</p>
+  <p class="hint">這個數字跟<a href="game.html">遊戲進程控制</a>裡的「破壞者隊伍數」是分開的兩件事：一個是「場上實際有幾支內鬼」，一個是「每隊要指認幾支」。主辦可以宣布「場上有 3 個內鬼，但你們只要指認 2 支」。</p>
+  <p id="spyCountResult" class="error"></p>
+</div>
+
+<div class="card admin-only" style="display:none">
+  <h3>目前遊戲狀態</h3>
+  <p><span id="statusBadge" class="status-badge">載入中...</span>　<span id="stateNote" class="hint"></span></p>
+  <p class="nav"><a href="game.html">遊戲進程控制</a></p>
+</div>
+
+<script src="../authFetch.js"></script>
+<script src="adminApi.js"></script>
+<script>
+function renderState(state) {
+  const badge = $('votingBadge');
+  let label, cls;
+  if (!state.voting_unlocked_at) { label = '尚未開放'; cls = ''; }
+  else if (state.voting_closed_at) { label = '已關閉'; cls = 'closed'; }
+  else { label = '開放中'; cls = 'open'; }
+  badge.textContent = label;
+  badge.className = 'status-badge' + (cls ? ' ' + cls : '');
+
+  $('openVotingBtn').disabled = cls === 'open';
+  $('closeVotingBtn').disabled = cls !== 'open';
+
+  if (state.spy_vote_count != null) $('spyVoteCount').value = state.spy_vote_count;
+
+  const s = $('statusBadge');
+  s.textContent = STATUS_LABELS[state.status] || state.status;
+  s.className = 'status-badge status-' + state.status;
+
+  // 投票開了但遊戲還沒開始，玩家端根本不會有隊伍在投——講清楚，不要讓人以為壞了
+  $('stateNote').textContent =
+    state.status === 'not_started' ? '遊戲還沒開始，現在開放投票不會有人能投。'
+    : state.status === 'ended' ? '遊戲已結束。'
+    : '';
+}
+
+async function loadVotingCounts() {
+  const res = await api('/votes');
+  if (!res.ok) return;
+  const data = await res.json();
+  const voters = data.teams.filter(t => t.faction === 'repair');
+  const voted = voters.filter(t => t.voted).length;
+  $('votingCounts').textContent = `已投票 ${voted}/${voters.length} 支時空保衛隊`;
+}
+
+$('openVotingBtn').addEventListener('click', async () => {
+  const res = await api('/game/open-voting', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) { showMsg('votingResult', data.error || `失敗 (${res.status})`, false); return; }
+  showMsg('votingResult', '', true);
+  renderState(data);
+  await loadVotingCounts();
+});
+
+$('closeVotingBtn').addEventListener('click', async () => {
+  if (!confirm('確定要關閉投票嗎？關閉後隊伍就不能再指認或改票了。')) return;
+  const res = await api('/game/close-voting', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) { showMsg('votingResult', data.error || `失敗 (${res.status})`, false); return; }
+  showMsg('votingResult', '', true);
+  renderState(data);
+});
+
+$('spyCountBtn').addEventListener('click', async () => {
+  const res = await apiJson('/game/spy-vote-count', 'PATCH',
+    { spyVoteCount: Number($('spyVoteCount').value) });
+  const data = await res.json();
+  if (!res.ok) { showMsg('spyCountResult', data.error || `失敗 (${res.status})`, false); return; }
+  renderState(data);
+  showMsg('spyCountResult', '已儲存。', true);
+});
+
+(async () => {
+  if (!await loadMe({ wholePage: true })) return;
+  const res = await api('/game/state');
+  renderState(await res.json());
+  await loadVotingCounts();
+  // 投票期間主辦會盯著「投了幾隊」決定什麼時候關，所以這一頁自己更新
+  setInterval(loadVotingCounts, 5000);
+})();
+</script>
+</body>
+</html>
