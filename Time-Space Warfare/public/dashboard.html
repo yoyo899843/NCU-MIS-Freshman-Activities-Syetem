@@ -70,10 +70,14 @@
   /* 積分榜固定一隊一列。原本的雙欄雖然能塞更多隊，但每欄太窄，六個中文字以上
      的隊名會被省略；現場辨識隊伍比多塞幾列更重要。 */
   .rank {
-    flex: 1; min-height: 0; overflow: hidden;
+    flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto;
     display: grid; grid-template-columns: 1fr;
     align-content: start;
+    scrollbar-color: var(--line) transparent;
+    scrollbar-width: thin;
   }
+  .rank::-webkit-scrollbar { width: 7px; }
+  .rank::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
   .rank .row {
     display: flex; align-items: baseline; gap: .6vw;
     padding: .55vh .6vw; border-bottom: 1px solid var(--line);
