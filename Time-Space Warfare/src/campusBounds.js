@@ -18,6 +18,10 @@ const CAMPUS_BOUNDS = {
 // 又足以擋掉整個縣市等級的離譜座標。
 const MARGIN_DEG = 0.01;
 
+// 跟 public/geofence.js 同一個門檻。前端負責即時提示；伺服器再驗一次，避免舊版
+// 快取頁面或直接呼叫 API 把低精度座標寫進其他玩家的地圖。
+const MAX_LOCATION_ACCURACY_METERS = 100;
+
 function isPlausibleCampusCoord(lat, lng) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
   return (
@@ -65,5 +69,6 @@ function looksSwapped(lat, lng) {
 
 module.exports = {
   CAMPUS_BOUNDS, MARGIN_DEG, isPlausibleCampusCoord,
+  MAX_LOCATION_ACCURACY_METERS,
   CHECKPOINT_BOUNDS, isInsideMapArea, looksSwapped
 };

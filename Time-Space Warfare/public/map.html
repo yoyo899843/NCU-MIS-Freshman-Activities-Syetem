@@ -313,6 +313,12 @@ function updateSelfMarker(lat, lng) {
   }
 }
 
+function clearSelfMarker() {
+  if (!selfMarker) return;
+  map.removeLayer(selfMarker);
+  selfMarker = null;
+}
+
 if (token && playerInfo) {
   document.getElementById('locationStatus').textContent = '（定位分享中）';
   document.getElementById('noteHint').textContent = '點選其他隊伍圖示即可新增／修改筆記（僅你們這隊可見）';
@@ -331,9 +337,12 @@ if (token && playerInfo) {
   // 目前收到的最新一次 GPS 讀值，每 2 秒的上傳計時器讀這個變數，
   // 跟 geofence.js 實際多快收到新讀值（可能比 2 秒快很多）脫鉤。
   let latestCoords = null;
-  startGeofence((lat, lng) => {
-    latestCoords = { lat, lng };
+  startGeofence((lat, lng, accuracy) => {
+    latestCoords = { lat, lng, accuracy };
     updateSelfMarker(lat, lng);
+  }, () => {
+    latestCoords = null;
+    clearSelfMarker();
   });
 
   setInterval(() => {
@@ -379,7 +388,7 @@ if (token && playerInfo) {
   }, LOCATION_INTERVAL_MS);
 } else {
   document.getElementById('locationStatus').textContent = '（未登入，不分享/顯示其他人的定位）';
-  startGeofence(updateSelfMarker);
+  startGeofence(updateSelfMarker, clearSelfMarker);
 }
 </script>
 </body>

@@ -3,7 +3,7 @@ const db = require('../db');
 const playerAuth = require('../middleware/playerAuth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { setLocation, getAllLocations } = require('../playerLocations');
-const { isPlausibleCampusCoord } = require('../campusBounds');
+const { isPlausibleCampusCoord, MAX_LOCATION_ACCURACY_METERS } = require('../campusBounds');
 
 const router = express.Router();
 router.use(playerAuth);
@@ -11,9 +11,19 @@ router.use(playerAuth);
 // 玩家端每 2 秒呼叫一次上傳自己目前的座標（不是每次 GPS 更新就打一次，見
 // public/map.html），伺服器只更新記憶體內的一筆資料，不寫進 DB。
 router.post('/', (req, res) => {
-  const { lat, lng } = req.body || {};
-  if (typeof lat !== 'number' || typeof lng !== 'number') {
-    return res.status(400).json({ error: 'lat and lng must be numbers' });
+  const { lat, lng, accuracy } = req.body || {};
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: 'lat and lng must be finite numbers' });
+  }
+  // 緊急部署時，已開著地圖的舊版頁面還不會送 accuracy。讓它們維持上傳至使用者
+  // 重整頁面為止；新版頁面則一律送出 accuracy，並由下面的規則嚴格驗證。
+  if (accuracy !== undefined && (!Number.isFinite(accuracy) || accuracy <= 0)) {
+    return res.status(400).json({ error: 'accuracy must be a positive finite number' });
+  }
+  if (accuracy !== undefined && accuracy > MAX_LOCATION_ACCURACY_METERS) {
+    return res.status(422).json({
+      error: `定位精準度不足（目前 ±${Math.round(accuracy)} 公尺，需要 ±${MAX_LOCATION_ACCURACY_METERS} 公尺內）`
+    });
   }
   // 伺服器端只做合理性檢查，不重複前端的精確圍籬（見 src/campusBounds.js 的說明）：
   // 邊界附近的 GPS 飄移一律照收，但整個縣市等級的離譜座標不收，
