@@ -294,8 +294,14 @@ document.getElementById('importBtn').addEventListener('click', async () => {
   const res = await api('/questions/import', { method: 'POST', body: formData });
   const data = await res.json();
   if (!res.ok) {
-    resultEl.textContent = data.error || `失敗 (${res.status})`;
+    // 整份檔案解析不下去時，後端會附上 hint（怎麼修）以及在出錯之前已經寫進去
+    // 的筆數。只顯示 error 的話，使用者會以為完全沒有匯入、然後整份重傳一次，
+    // 結果前面那幾筆變成重複的題目。
+    resultEl.textContent = (data.error || `失敗 (${res.status})`) +
+      (data.hint ? '　' + data.hint : '') +
+      (data.inserted ? `　（出錯之前已成功匯入 ${data.inserted} 筆，重新上傳前請先把這幾筆從檔案裡移除，否則會重複）` : '');
     resultEl.className = 'error';
+    await loadQuestions();
     return;
   }
   resultEl.className = '';

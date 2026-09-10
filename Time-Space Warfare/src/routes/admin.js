@@ -757,13 +757,79 @@ router.post('/questions/import', upload.single('file'), asyncHandler(async (req,
     return res.status(400).json({ error: 'forceScope 目前只支援 pk' });
   }
 
+  // 先只讀第一行，確認這份檔案的欄位對不對。
+  //
+  // 不先擋的話，格式完全不同的檔案（拿錯檔、Excel 直接存成 .csv 但欄名不一樣、
+  // 甚至不是 CSV）會一路跑到逐列驗證，然後每一列都回報「題目為空」——那個訊息
+  // 是對的但完全沒有幫助，使用者只會覺得「我的題目明明有填」。真正的問題是
+  // 整份檔案的格式不對，要在這裡就講清楚。
+  let header;
+  try {
+    const headerParser = parse(req.file.buffer, {
+      to_line: 1, trim: true, bom: true, relax_column_count: true
+    });
+    header = [];
+    for await (const row of headerParser) header = row;
+  } catch (err) {
+    return res.status(400).json({
+      error: '檔案格式有誤：這份檔案無法當成 CSV 讀取。',
+      hint: '請確認上傳的是 UTF-8 編碼的 .csv 檔（Excel 請用「另存新檔 → CSV UTF-8」），不是 .xlsx 或其他格式。'
+    });
+  }
+
+  if (header.length === 0) {
+    return res.status(400).json({
+      error: '檔案格式有誤：檔案是空的，讀不到標題列。',
+      hint: '請確認上傳的檔案內容沒有被清空，第一行必須是欄位名稱。'
+    });
+  }
+
+  // 編碼不對要單獨講。
+  //
+  // Excel 繁中版另存 CSV 時很容易存成 Big5，那份檔案用 UTF-8 讀進來，每個中文字
+  // 都會變成 U+FFFD（替換字元）。這種情況下欄名當然對不上，但如果只回「缺少必要
+  // 欄位」，訊息裡還會附上一串亂碼給使用者看——他看到的是「我欄位明明就有啊」，
+  // 完全猜不到真正要做的是換一種編碼另存。
+  if (header.some(h => typeof h === 'string' && h.includes('\uFFFD'))) {
+    return res.status(400).json({
+      error: '檔案格式有誤：檔案的文字編碼不是 UTF-8（中文變成亂碼）。',
+      hint: 'Excel 請用「另存新檔 → CSV UTF-8（逗號分隔）」，不要用一般的「CSV（逗號分隔）」，' +
+            '後者在繁體中文版存出來是 Big5，中文會全部讀不出來。'
+    });
+  }
+
+  // 這六欄一定要有。關卡ID/PK 和 秒數 是選填（不填分別代表「通用題」和「10 秒」），
+  // 所以 PK 專用的範例檔只有六欄也能匯入。
+  const REQUIRED_COLUMNS = ['題目', '選項A', '選項B', '選項C', '選項D', '正確選項'];
+  const missing = REQUIRED_COLUMNS.filter(c => !header.includes(c));
+  if (missing.length > 0) {
+    return res.status(400).json({
+      error: `檔案格式有誤：缺少必要欄位「${missing.join('」「')}」。`,
+      hint: `這份檔案的第一行讀到的欄位是：${header.map(h => h || '(空白)').join('、')}。` +
+            `必要欄位為「${REQUIRED_COLUMNS.join('」「')}」，另可選填「關卡ID/PK」與「秒數」。` +
+            '可以直接下載頁面上的範例 CSV 對照。'
+    });
+  }
+
   const { rows: checkpoints } = await db.query('SELECT id FROM checkpoints');
   const checkpointIds = new Set(checkpoints.map(c => c.id));
 
   const result = { inserted: 0, failed: [] };
-  const parser = parse(req.file.buffer, { columns: true, skip_empty_lines: true, trim: true, bom: true });
 
-  let rowNumber = 1; // 第 1 列是標題列，資料從第 2 列開始
+  // relax_column_count：某一列的欄位數跟標題不一樣時，不要整份中止。
+  //
+  // 沒有這個選項的話，csv-parse 會直接丟 CSV_RECORD_INCONSISTENT_COLUMNS，例外
+  // 一路穿出這支 handler，前端只看到「500 internal server error」——完全看不出
+  // 是自己的檔案第幾列有問題。而這是最常見的匯入失敗原因：題目或選項裡打了逗號
+  // 卻沒有用雙引號括起來，那一列就會多出一欄。
+  //
+  // info: true 讓每一列附帶 info.error，這樣「哪一列格式不對」還是報得出來，
+  // 只是變成跟其他驗證錯誤一樣逐列列出，其餘正常的列照樣匯入。
+  const parser = parse(req.file.buffer, {
+    columns: true, skip_empty_lines: true, trim: true, bom: true,
+    relax_column_count: true, info: true
+  });
+
   let batch = [];
 
   const flushBatch = async () => {
@@ -789,20 +855,68 @@ router.post('/questions/import', upload.single('file'), asyncHandler(async (req,
     }
   };
 
-  for await (const record of parser) {
-    rowNumber += 1;
-    const validated = validateCsvRow(record, rowNumber, checkpointIds, forceScope);
-    if (validated.error) {
-      result.failed.push({ row: rowNumber, reason: validated.error });
-      continue;
-    }
-    batch.push(validated.data);
+  // 基準是「這份檔案自己的標題列有幾欄」，不是寫死的 8。
+  // 寫死的話，只有六欄的 PK 範例檔一旦有某列出錯，會回報「應該 8 欄」——
+  // 那個數字跟使用者手上的檔案對不起來，只會更混亂。
+  const EXPECTED_COLUMNS = header.length;
 
-    if (batch.length >= 20) {
-      await flushBatch();
-      await new Promise(resolve => setImmediate(resolve)); // 明確讓出 event loop 給玩家端的即時連線
+  try {
+    for await (const entry of parser) {
+      // info: true 之後每一項是 { record, info }，不再是 record 本身。
+      // 用 info.lines 當列號，不要自己數——欄位裡若有被雙引號包住的換行，
+      // 自己累加的計數會跟使用者在 Excel 裡看到的列號對不上。
+      const { record, info } = entry;
+      const rowNumber = info.lines;
+
+      if (info.error && info.error.code === 'CSV_RECORD_INCONSISTENT_COLUMNS') {
+        // 欄位數要從 info.error.record 這個原始陣列數，不能數 record 的 key：
+        // columns:true 會把多出來的值直接丟掉，所以多一欄的時候 Object.keys()
+        // 仍然是 8，訊息會變成沒有意義的「應該 8 欄，這一列是 8 欄」。
+        const got = Array.isArray(info.error.record)
+          ? info.error.record.length : Object.keys(record).length;
+        const extra = got > EXPECTED_COLUMNS
+          ? '最常見的原因是題目或選項裡有逗號卻沒有用雙引號「"」括起來。'
+          : '這一列的欄位少了，請對照範例檔補齊。';
+        result.failed.push({
+          row: rowNumber,
+          reason: `第 ${rowNumber} 列：欄位數不對（應該 ${EXPECTED_COLUMNS} 欄，這一列是 ${got} 欄）。${extra}`
+        });
+        continue;
+      }
+
+      const validated = validateCsvRow(record, rowNumber, checkpointIds, forceScope);
+      if (validated.error) {
+        result.failed.push({ row: rowNumber, reason: validated.error });
+        continue;
+      }
+      batch.push(validated.data);
+
+      if (batch.length >= 20) {
+        await flushBatch();
+        await new Promise(resolve => setImmediate(resolve)); // 明確讓出 event loop 給玩家端的即時連線
+      }
     }
+  } catch (err) {
+    // 走到這裡代表整份檔案在這個位置就解析不下去了（例如雙引號沒有成對關好，
+    // 剖析器無法判斷這個欄位到哪裡結束），不是某一列的資料問題。
+    //
+    // 這種情況一定要回 4xx 而不是讓它變成 500：檔案是使用者上傳的，錯在檔案，
+    // 訊息要講得出「第幾行、什麼問題」，不然對方只會拿到一句 internal server
+    // error，完全無從修起。
+    if (err && typeof err.code === 'string' && err.code.startsWith('CSV_')) {
+      await flushBatch(); // 出錯之前已經驗過的那些照樣寫進去，不要一起丟掉
+      return res.status(400).json({
+        error: `CSV 檔案解析失敗（第 ${err.lines || '?'} 行附近）：${err.message}`,
+        hint: err.code === 'CSV_QUOTE_NOT_CLOSED'
+          ? '有一個雙引號沒有成對關好。欄位內容若含逗號、換行或雙引號，整個欄位要用雙引號括起來，內容裡的雙引號則要寫成兩個（""）。'
+          : '請確認檔案是 UTF-8 編碼的標準 CSV，欄位順序與範例檔一致。',
+        inserted: result.inserted,
+        failed: result.failed
+      });
+    }
+    throw err; // 不是 CSV 的問題（例如資料庫掛了）就照原本的方式往上拋
   }
+
   await flushBatch();
 
   res.json(result);
