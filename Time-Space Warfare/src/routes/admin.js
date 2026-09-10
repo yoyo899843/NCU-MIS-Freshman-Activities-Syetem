@@ -1420,6 +1420,26 @@ router.get('/pk-duels', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
+// 各隊已完成 PK 的勝場數。從 teams 起算，讓還沒贏過（或還沒參加）的隊伍也會
+// 出現在榜上；PK 的計分仍由對戰結算流程處理，這個端點只做統計展示。
+router.get('/pk-wins', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(`
+    SELECT
+      t.id AS team_id,
+      t.team_number,
+      t.faction,
+      p.display_name,
+      COUNT(d.id)::int AS wins
+    FROM teams t
+    LEFT JOIN players p ON p.team_id = t.id
+    LEFT JOIN pk_duels d ON d.winner_player_id = p.id
+                         AND d.status = 'completed'
+    GROUP BY t.id, t.team_number, t.faction, p.id, p.display_name
+    ORDER BY wins DESC, t.team_number ASC, p.display_name ASC
+  `);
+  res.json(rows);
+}));
+
 // 玩家帳號管理：列出所有隊伍/玩家，含 PIN（明碼，見 migrations/005_player_pin_plaintext.sql
 // 的說明——主辦/隊輔本來就看得到，這裡只是把原本要用 PgAdmin 查的資料搬到後台頁面）。
 router.get('/players', asyncHandler(async (req, res) => {

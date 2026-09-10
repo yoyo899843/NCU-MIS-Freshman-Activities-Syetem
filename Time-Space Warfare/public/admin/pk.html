@@ -31,6 +31,7 @@
 <p class="nav">
   <a href="index.html">&laquo; 回管理後台</a>
   <a href="#bank">跳到題庫</a>
+  <a href="#wins">跳到勝場統計</a>
   <a href="#duels">跳到對戰紀錄</a>
   <a href="questions.html">交摺點／通用題庫</a>
 </p>
@@ -92,6 +93,17 @@
       <tr><th>題目</th><th>選項</th><th>正確答案</th><th></th></tr>
     </thead>
     <tbody id="questionsBody"></tbody>
+  </table>
+</div>
+
+<div class="card" id="wins">
+  <h2>各隊 PK 勝場</h2>
+  <p id="winsSummary" class="hint">載入中...</p>
+  <table>
+    <thead>
+      <tr><th>名次</th><th>隊伍</th><th>勝場</th></tr>
+    </thead>
+    <tbody id="winsBody"></tbody>
   </table>
 </div>
 
@@ -321,6 +333,33 @@ function renderResult(d) {
   return `勝：${escapeHtml(nameOf(d.winner_player_id))}　敗：${escapeHtml(nameOf(d.loser_player_id))}`;
 }
 
+function renderWins(teams) {
+  let previousWins = null;
+  let displayedRank = 0;
+
+  document.getElementById('winsBody').innerHTML = teams.map((team, index) => {
+    const wins = Number(team.wins) || 0;
+    if (wins !== previousWins) displayedRank = index + 1;
+    previousWins = wins;
+    return `
+      <tr>
+        <td>${displayedRank}</td>
+        <td>${escapeHtml(team.display_name || `第 ${team.team_number} 隊`)}
+          <span class="tag tag-${team.faction}">${factionLabel(team.faction)}</span></td>
+        <td>${wins}</td>
+      </tr>
+    `;
+  }).join('') || '<tr><td colspan="3">目前沒有隊伍資料</td></tr>';
+
+  const completedWins = teams.reduce((total, team) => total + (Number(team.wins) || 0), 0);
+  document.getElementById('winsSummary').textContent = `已完成 PK：${completedWins} 場；未獲勝的隊伍也會列在榜上。`;
+}
+
+async function loadWins() {
+  const res = await api('/pk-wins');
+  renderWins(await res.json());
+}
+
 async function loadDuels() {
   const res = await api('/pk-duels');
   const duels = await res.json();
@@ -339,13 +378,15 @@ async function loadDuels() {
   `).join('') || '<tr><td colspan="5">目前沒有任何 PK 對戰紀錄</td></tr>';
 }
 
-document.getElementById('refreshBtn').addEventListener('click', loadDuels);
+document.getElementById('refreshBtn').addEventListener('click', async () => {
+  await Promise.all([loadWins(), loadDuels()]);
+});
 
 (async () => {
   await loadMe();          // 決定「PK 對戰設定」那張卡要不要顯示（關主看不到）
   await loadPkSettings();
   await loadQuestions();
-  await loadDuels();
+  await Promise.all([loadWins(), loadDuels()]);
 })();
 </script>
 <script src="../footer.js"></script>
