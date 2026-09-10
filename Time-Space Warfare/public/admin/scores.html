@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手動調整隊伍分數 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 820px; }
+  .team { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .team:last-child { border-bottom: none; }
+  .summary { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .name { font-weight: 700; }
+  .score { font-size: 1.25rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .manual { font-size: .85rem; color: var(--dim); }
+  .manual.plus { color: var(--repair); }
+  .manual.minus { color: var(--disrupt); }
+  .form { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 8px; margin-top: 9px; }
+  .form input, .form button { margin: 0; }
+  .form button { width: auto; white-space: nowrap; }
+  @media (max-width: 560px) {
+    .form { grid-template-columns: 1fr auto; }
+    .form input[type="text"] { grid-column: 1 / -1; grid-row: 2; }
+  }
+</style>
+</head>
+<body>
+<h1>手動調整隊伍分數</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div id="gatekeeperBlock" class="card error" style="display:none">只有管理員能手動調整分數。</div>
+<div id="controls" class="card">
+  <p class="hint">輸入正數加分、負數扣分。每次調整都會留下管理員、時間與原因的稽核紀錄；排行榜會立即更新。</p>
+  <p id="result"></p>
+  <div id="teams"><p class="hint">載入中…</p></div>
+</div>
+
+<script src="../authFetch.js"></script>
+<script src="adminApi.js"></script>
+<script>
+let teams = [];
+
+function signed(n) { return n > 0 ? `+${n}` : String(n); }
+
+function render() {
+  $('teams').innerHTML = teams.length ? teams.map(t => {
+    const manual = Number(t.detail.manualAdjustment) || 0;
+    return `<div class="team">
+      <div class="summary">
+        <span class="name">#${t.teamNumber}　${escapeHtml(t.name || '未命名隊伍')}</span>
+        <span class="score">${t.total} 分</span>
+      </div>
+      <div class="manual ${manual > 0 ? 'plus' : manual < 0 ? 'minus' : ''}">手動調整累計：${signed(manual)} 分</div>
+      <div class="form">
+        <input id="delta-${t.teamId}" type="number" inputmode="numeric" min="-1000" max="1000" step="1" placeholder="分數，如 +5">
+        <input id="reason-${t.teamId}" type="text" maxlength="100" placeholder="調整原因（必填）">
+        <button onclick="adjust(${t.teamId})">套用</button>
+      </div>
+    </div>`;
+  }).join('') : '<p class="hint">目前沒有隊伍。</p>';
+}
+
+async function load() {
+  const res = await api('/scores');
+  if (!res.ok) { showMsg('result', '無法載入積分資料', false); return; }
+  const data = await res.json();
+  teams = data.teams;
+  render();
+}
+
+window.adjust = async function (teamId) {
+  const delta = Number($(`delta-${teamId}`).value);
+  const reason = $(`reason-${teamId}`).value.trim();
+  if (!Number.isInteger(delta) || delta === 0) { showMsg('result', '請輸入非 0 的整數分數。', false); return; }
+  if (!reason) { showMsg('result', '請填寫調整原因。', false); return; }
+  const team = teams.find(t => t.teamId === teamId);
+  if (!confirm(`確定要對「${team?.name || '#' + teamId}」${delta > 0 ? '加' : '扣'} ${Math.abs(delta)} 分嗎？\n原因：${reason}`)) return;
+
+  const res = await apiJson(`/scores/${teamId}/adjustments`, 'POST', { delta, reason });
+  const data = await res.json();
+  if (!res.ok) { showMsg('result', data.error || '調整失敗', false); return; }
+  showMsg('result', `已${delta > 0 ? '加' : '扣'} ${Math.abs(delta)} 分：${reason}`, true);
+  teams = data.scores.teams;
+  render();
+};
+
+(async () => {
+  const isAdmin = await loadMe({ wholePage: true });
+  if (!isAdmin) { $('controls').style.display = 'none'; return; }
+  load();
+})();
+</script>
+<script src="../footer.js"></script>
+</body>
+</html>

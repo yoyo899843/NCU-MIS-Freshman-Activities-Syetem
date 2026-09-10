@@ -107,6 +107,15 @@ async function computeScores() {
   teams.forEach(t => { missions[t.id] = 0; });
   missionRows.forEach(r => { missions[r.team_id] = r.n; });
 
+  // 現場補分／扣分不改動任何原始遊戲紀錄；以流水帳加到總分，重算時仍會保留。
+  const { rows: adjustmentRows } = await db.query(
+    `SELECT team_id, COALESCE(sum(delta), 0)::int AS n
+     FROM score_adjustments GROUP BY team_id`
+  );
+  const adjustments = {};
+  teams.forEach(t => { adjustments[t.id] = 0; });
+  adjustmentRows.forEach(r => { adjustments[r.team_id] = r.n; });
+
   const topRepair = topTeams(repairs);
   const topDisrupt = topTeams(disrupts);
   const topMission = topTeams(missions);
@@ -125,6 +134,7 @@ async function computeScores() {
     const w4 = achievements.length * w.w4_achievement;
     const w5 = (missions[t.id] || 0) * w.w5_mission;
     const w6 = t.pk_points * w.w6_pk_point;
+    const manual = adjustments[t.id] || 0;
 
     return {
       teamId: t.id,
@@ -137,7 +147,8 @@ async function computeScores() {
         spyGuess: w3,
         achievements: w4,
         missions: w5,
-        pkPoints: w6
+        pkPoints: w6,
+        manualAdjustment: manual
       },
       detail: {
         alignedCount: aligned[t.id] || 0,
@@ -147,9 +158,10 @@ async function computeScores() {
         disruptCount: disrupts[t.id] || 0,
         pkWins: pkWins[t.id] || 0,
         pkPoints: t.pk_points,
+        manualAdjustment: manual,
         achievements
       },
-      total: w1 + w2 + w3 + w4 + w5 + w6
+      total: w1 + w2 + w3 + w4 + w5 + w6 + manual
     };
   });
 

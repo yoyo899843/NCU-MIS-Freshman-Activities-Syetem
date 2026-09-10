@@ -522,6 +522,7 @@ socket.on('game:state', state => {
   loadCheckpoints(); // 結束的當下把據點與積分都拉到最新，結算畫面才不會用舊資料
   loadScores();
 });
+socket.on('scores:update', loadScores);
 </script>
 <script src="footer.js"></script>
 </body>

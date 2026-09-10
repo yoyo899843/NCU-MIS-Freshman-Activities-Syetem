@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理員地圖 - 時空戰爭</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html, body { height: 100%; }
+  body { max-width: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+  #map { flex: 1; min-height: 0; width: 100%; }
+  .bar { background: var(--card); border-bottom: 1px solid var(--line); padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 5px 12px; align-items: center; font-size: .9rem; }
+  .bar a { color: var(--accent); font-weight: 700; text-decoration: none; }
+  .live { color: var(--repair); } .offline { color: var(--dim); }
+  .cp { color: var(--accent); font-weight: 700; }
+  .repair { color: var(--repair); } .disrupt { color: var(--disrupt); }
+</style>
+</head>
+<body>
+<div id="gatekeeperBlock" class="card error" style="display:none">只有管理員能查看管理員地圖。</div>
+<div id="mapApp" style="display:none;flex:1;min-height:0;flex-direction:column">
+  <div class="bar">
+    <a href="index.html">&laquo; 回管理後台</a>
+    <strong>管理員地圖</strong>
+    <span id="status">載入中…</span>
+    <span class="cp">■ 據點</span><span class="repair">● 時空保衛隊</span><span class="disrupt">● 黑暗潛伏者</span>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script src="../authFetch.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="adminApi.js"></script>
+<script>
+const BOUNDS = L.latLngBounds([24.964764, 121.184735], [24.972425, 121.197936]);
+const TILE_BOUNDS = L.latLngBounds([24.964300, 121.184722], [24.972960, 121.198396]);
+const map = L.map('map', { maxZoom: 19, maxBounds: TILE_BOUNDS, maxBoundsViscosity: 1 });
+map.fitBounds(BOUNDS);
+L.tileLayer('/tiles/{z}/{x}/{y}.png', { minZoom: 15, maxZoom: 19 }).addTo(map);
+const players = new Map();
+const checkpoints = new Map();
+
+function esc(s) { return escapeHtml(s); }
+function ago(at, live) {
+  if (live) return '<span class="live">現在</span>';
+  const m = Math.floor((Date.now() - Number(at)) / 60000);
+  return `<span class="offline">${m < 1 ? '剛離線' : `${m} 分鐘前`}</span>`;
+}
+function loadLocations() {
+  return api('/map/locations').then(async res => {
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }).then(list => {
+    const seen = new Set();
+    list.forEach(p => {
+      seen.add(p.teamId);
+      const color = p.faction === 'disrupt' ? '#e05a67' : '#41d39a';
+      const popup = `<strong>#${p.teamNumber}　${esc(p.name || '未命名')}</strong><br>` +
+        `<span class="${p.faction}">${p.faction === 'disrupt' ? '黑暗潛伏者' : '時空保衛隊'}</span><br>最後定位：${ago(p.updatedAt, p.live)}`;
+      let marker = players.get(p.teamId);
+      if (!marker) {
+        marker = L.circleMarker([p.lat, p.lng], { radius: 9, color, fillColor: color, fillOpacity: p.live ? .9 : .35, weight: 2 }).addTo(map);
+        players.set(p.teamId, marker);
+      } else {
+        marker.setLatLng([p.lat, p.lng]);
+        marker.setStyle({ color, fillColor: color, fillOpacity: p.live ? .9 : .35 });
+      }
+      marker.bindTooltip(popup, { permanent: true, direction: 'top', offset: [0, -8], opacity: 1 });
+    });
+    players.forEach((marker, id) => { if (!seen.has(id)) { map.removeLayer(marker); players.delete(id); } });
+    $('status').textContent = `顯示 ${list.length} 支隊伍位置`;
+  }).catch(() => { $('status').textContent = '位置載入失敗'; });
+}
+function loadCheckpoints() {
+  return api('/checkpoints').then(res => res.json()).then(list => list.forEach(c => {
+    if (c.map_lat == null || c.map_lng == null) return;
+    const label = `${esc(c.name)}　修復 ${Number(c.progress) || 0}%`;
+    let marker = checkpoints.get(c.id);
+    if (!marker) { marker = L.marker([c.map_lat, c.map_lng]).addTo(map); checkpoints.set(c.id, marker); }
+    else marker.setLatLng([c.map_lat, c.map_lng]);
+    marker.bindTooltip(label, { permanent: true, direction: 'bottom' });
+  })).catch(() => {});
+}
+(async () => {
+  const isAdmin = await loadMe({ wholePage: true });
+  if (!isAdmin) return;
+  $('mapApp').style.display = 'flex';
+  map.invalidateSize();
+  loadLocations(); loadCheckpoints();
+  setInterval(loadLocations, 2000);
+  setInterval(loadCheckpoints, 5000);
+})();
+</script>
+</body>
+</html>

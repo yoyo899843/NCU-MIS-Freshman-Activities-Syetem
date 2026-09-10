@@ -12,6 +12,7 @@ const { createLoginThrottle } = require('../loginThrottle');
 const { getIO } = require('../io');
 const { applyAction } = require('../checkpoints/progress');
 const { computeScores } = require('../scoring');
+const { getAllLocations } = require('../playerLocations');
 const { validateName } = require('../displayName');
 const { CHECKPOINT_BOUNDS, isInsideMapArea, looksSwapped } = require('../campusBounds');
 const roomRegistry = require('../pk/roomRegistry');
@@ -592,6 +593,90 @@ router.post('/missions/:id/cancel', asyncHandler(async (req, res) => {
 // 不需要登入的版本另外掛在 app.js 上（大螢幕沒有帳號）。
 router.get('/scores', asyncHandler(async (req, res) => {
   res.json(await computeScores());
+}));
+
+// 管理員專用地圖位置。玩家端的地圖刻意匿名；主辦查現場狀況時才需要隊名與陣營，
+// 因此這支只開給完整管理員，且不共用玩家的公開／匿名 API。
+router.get('/map/locations', requireFullAdmin, asyncHandler(async (req, res) => {
+  const locations = getAllLocations();
+  const teamIds = [...new Set(locations.map(p => p.teamId).filter(Number.isInteger))];
+  if (!teamIds.length) return res.json([]);
+
+  const { rows } = await db.query(
+    `SELECT t.id, t.team_number, t.faction,
+            (SELECT p.display_name FROM players p WHERE p.team_id = t.id ORDER BY p.id LIMIT 1) AS name
+     FROM teams t WHERE t.id = ANY($1::int[])`,
+    [teamIds]
+  );
+  const teamsById = new Map(rows.map(t => [t.id, t]));
+  res.json(locations.flatMap(location => {
+    const team = teamsById.get(location.teamId);
+    return team ? [{
+      teamId: team.id,
+      teamNumber: team.team_number,
+      name: team.name,
+      faction: team.faction,
+      lat: location.lat,
+      lng: location.lng,
+      updatedAt: location.updatedAt,
+      live: location.live
+    }] : [];
+  }));
+}));
+
+// 現場人工補分／扣分。只能由完整管理員操作，且必須留下理由與稽核紀錄；分數不是
+// 直接覆寫，而是寫入流水帳，避免下一次排行榜重算時補分消失。
+router.post('/scores/:teamId/adjustments', requireFullAdmin, asyncHandler(async (req, res) => {
+  const teamId = Number(req.params.teamId);
+  const { delta, reason } = req.body || {};
+  const amount = Number(delta);
+  const note = typeof reason === 'string' ? reason.trim() : '';
+  if (!Number.isInteger(teamId) || teamId <= 0) {
+    return res.status(400).json({ error: '隊伍編號不正確' });
+  }
+  if (!Number.isInteger(amount) || amount === 0 || amount < -1000 || amount > 1000) {
+    return res.status(400).json({ error: '調整分數必須是 -1000 到 1000 之間、且不可為 0 的整數' });
+  }
+  if (Array.from(note).length < 1 || Array.from(note).length > 100) {
+    return res.status(400).json({ error: '請填寫 1 到 100 個字的調整原因' });
+  }
+
+  const client = await db.connect();
+  let adjustment;
+  try {
+    await client.query('BEGIN');
+    const { rows: teamRows } = await client.query(
+      `SELECT t.id, t.team_number,
+              (SELECT p.display_name FROM players p WHERE p.team_id = t.id ORDER BY p.id LIMIT 1) AS name
+       FROM teams t WHERE t.id = $1 FOR UPDATE`,
+      [teamId]
+    );
+    if (teamRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: '找不到這支隊伍' });
+    }
+    const { rows } = await client.query(
+      `INSERT INTO score_adjustments (team_id, delta, reason, created_by)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, team_id, delta, reason, created_at`,
+      [teamId, amount, note, req.admin.sub]
+    );
+    adjustment = { ...rows[0], teamNumber: teamRows[0].team_number, name: teamRows[0].name };
+    await client.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+       VALUES ($1, 'manual_score_adjustment', 'team', $2, NULL, $3)`,
+      [req.admin.sub, String(teamId), JSON.stringify({ delta: amount, reason: note })]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  getIO().emit('scores:update');
+  res.status(201).json({ adjustment, scores: await computeScores() });
 }));
 
 router.get('/teams', asyncHandler(async (req, res) => {
@@ -1246,6 +1331,7 @@ router.post('/game/reset', requireFullAdmin, asyncHandler(async (req, res) => {
     const counts = {};
     for (const [key, sql] of [
       ['spy_votes', 'DELETE FROM spy_votes'],
+      ['score_adjustments', 'DELETE FROM score_adjustments'],
       ['checkpoint_notes', 'DELETE FROM checkpoint_notes'],
       ['team_notes', 'DELETE FROM team_notes'],
       ['missions', 'DELETE FROM missions'],
