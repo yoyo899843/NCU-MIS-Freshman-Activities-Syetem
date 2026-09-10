@@ -138,7 +138,7 @@
     position: fixed; inset: 0; z-index: 10;
     background: rgba(7, 11, 16, .96);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 1.5vh;
+    gap: 1.5vh; padding: 2.5vh 3vw; box-sizing: border-box; overflow-y: auto;
   }
   .final .kicker { font-size: 3vh; color: var(--dim); letter-spacing: .3em; }
   .final .winner { font-size: 12vh; font-weight: 700; line-height: 1; text-align: center; }
@@ -154,6 +154,22 @@
   .final .reveal { max-width: min(88vw, 60rem); text-align: center; }
   .final .reveal-label { color: var(--dim); font-size: 2.2vh; letter-spacing: .12em; }
   .final .spy-list { margin-top: .6vh; color: var(--disrupt); font-size: 3.5vh; font-weight: 700; }
+  .final-results { width: min(88vw, 54rem); }
+  .final-results .title { color: var(--dim); font-size: 1.8vh; font-weight: 700; letter-spacing: .12em; margin: .8vh 0 .5vh; }
+  .podium { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8vw; }
+  .podium .entry { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: .7vh .7vw; text-align: center; }
+  .podium .entry.first { border-color: var(--accent); background: rgba(255, 210, 74, .1); }
+  .podium .place { color: var(--dim); font-size: 1.5vh; }
+  .podium .entry.first .place { color: var(--accent); }
+  .podium .name { margin-top: .2vh; font-size: 2.2vh; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .podium .points { margin-top: .1vh; color: var(--repair); font-size: 2.4vh; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .final-ranks { max-height: 26vh; overflow-y: auto; scrollbar-color: var(--line) transparent; scrollbar-width: thin; }
+  .final-ranks::-webkit-scrollbar { width: 7px; }
+  .final-ranks::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+  .final-ranks .entry { display: grid; grid-template-columns: 2.2em minmax(0, 1fr) auto; gap: .6vw; align-items: baseline; padding: .35vh .5vw; border-bottom: 1px solid var(--line); }
+  .final-ranks .rank { color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; }
+  .final-ranks .name { min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .final-ranks .points { color: var(--repair); font-weight: 700; font-variant-numeric: tabular-nums; }
   .final .sub { font-size: 2.2vh; color: var(--dim); }
 
   /* 連線狀況：正常時完全不顯示，斷了才浮出來。投影畫面上不該有平時就在閃的東西 */
@@ -218,6 +234,10 @@
 
     .final .reveal-label { font-size: clamp(1rem, 2.2vh, 1.25rem); }
     .final .spy-list { font-size: clamp(1.35rem, 3.5vh, 2rem); }
+    .final-results .title { font-size: .9rem; }
+    .podium .name { font-size: 1rem; }
+    .podium .points { font-size: 1.15rem; }
+    .final-ranks { max-height: none; overflow: visible; }
 
     .offline { right: 1rem; bottom: 1rem; font-size: .9rem; padding: .45rem .75rem; }
   }
@@ -260,6 +280,12 @@
     <span class="r" id="finalRepair">0</span><span class="sep">已完成　未完成</span><span class="d" id="finalDisrupt">0</span>
   </div>
   <div class="reveal" id="finalSpies"></div>
+  <div class="final-results">
+    <div class="title">積分榜前三名</div>
+    <div class="podium" id="finalTop3"></div>
+    <div class="title">最終分數榜</div>
+    <div class="final-ranks" id="finalRanks"></div>
+  </div>
   <div class="sub" id="finalSub"></div>
 </div>
 
@@ -464,11 +490,23 @@ function renderFinal() {
     ? `<div class="reveal-label">黑暗潛伏者身分揭曉</div><div class="spy-list">${spies
       .map(t => escapeHtml(t.name || '#' + t.teamNumber)).join('、')}</div>`
     : '<div class="reveal-label">正在揭曉黑暗潛伏者身分…</div>';
-  // 企劃：陣營勝負是第一權重，但總冠軍是看各隊累計總積分。兩件事都要揭曉。
-  const champ = scores && scores.teams.length ? scores.teams[0] : null;
+  const finalTeams = scores?.teams || [];
+  document.getElementById('finalTop3').innerHTML = finalTeams.slice(0, 3).map((team, i) => `
+    <div class="entry${i === 0 ? ' first' : ''}">
+      <div class="place">第 ${team.rank} 名</div>
+      <div class="name">${escapeHtml(team.name || '#' + team.teamNumber)}</div>
+      <div class="points">${team.total} 分</div>
+    </div>
+  `).join('') || '<div class="reveal-label">正在計算前三名…</div>';
+  document.getElementById('finalRanks').innerHTML = finalTeams.map(team => `
+    <div class="entry">
+      <span class="rank">${team.rank}</span>
+      <span class="name">${escapeHtml(team.name || '#' + team.teamNumber)}</span>
+      <span class="points">${team.total} 分</span>
+    </div>
+  `).join('') || '<div class="reveal-label">正在載入最終分數榜…</div>';
   document.getElementById('finalSub').innerHTML =
     `已修復完成 ${done} 個 / 未完成 ${notDone} 個（共 ${total} 個據點）<br>` +
-    (champ ? `總冠軍：<strong>${escapeHtml(champ.name || '#' + champ.teamNumber)}</strong>　${champ.total} 分<br>` : '') +
     `結束於 ${new Date(gameState.ended_at).toLocaleString()}`;
   screen.style.display = '';
 }
