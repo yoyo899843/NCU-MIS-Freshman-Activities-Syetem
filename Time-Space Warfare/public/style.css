@@ -192,8 +192,15 @@ td.n.d, .v-disrupt { color: var(--disrupt); }
 .site-footer .links {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-left: auto;   /* 名字靠左、連結靠右；窄螢幕換行後仍然各據一邊 */
+  /* 按鈕之間的間距。要調寬窄改這裡就好——不要在 footer.js 裡塞 &nbsp;，
+     那樣是 gap + nbsp + gap 疊出來的，而且最後一顆按鈕後面會多一段懸空空白。 */
+  gap: 12px;
+
+  /* 固定兩行：名字一行、按鈕一行，不管畫面多寬。
+     做法是讓這一塊的基準寬度就是整行，前面的名字擠不進來，只能換行。
+     這是 flex 容器裡唯一可靠的斷行方式——<br> 在 flex 裡不會斷行，
+     它只會變成一個什麼都不做、還多吃一個 gap 的 flex item。 */
+  flex-basis: 100%;
 }
 
 .site-footer .flink {

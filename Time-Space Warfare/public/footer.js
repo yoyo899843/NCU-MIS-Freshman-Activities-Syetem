@@ -41,6 +41,12 @@
 
   const footer = document.createElement('footer');
   footer.className = 'site-footer';
+  // 這裡不放 <br> 也不放 &nbsp;。
+  //
+  // .site-footer 是 display:flex，flex item 不參與行內排版——<br> 會被當成一個
+  // flex item，不會斷行（實測加不加完全一樣），還會多吃掉一個 gap 的寬度。
+  // 連結之間的間距也一樣，交給 CSS 的 gap；用 &nbsp; 撐的話最後一顆按鈕後面會
+  // 留下一段接不到東西的懸空空白。間距要調就改 style.css 的 .site-footer .links。
   footer.innerHTML =
     '<span class="made">Made by 施佑佑</span>' +
     '<span class="links">' +
