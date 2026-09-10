@@ -54,12 +54,17 @@ app.get('/api/game/state', async (req, res) => {
 });
 
 // 各隊積分。跟據點進度一樣是公開資訊——大螢幕沒有帳號，而且企劃裡積分本來就
-// 是要投影出來給所有人看的。回傳內容刻意不含陣營，那是內鬼機制的核心秘密。
+// 是要投影出來給所有人看的。遊戲結束前刻意不含陣營，那是內鬼機制的核心秘密；
+// 結算後才公開，讓大螢幕與玩家都能知道黑暗潛伏者是哪些隊伍。
 app.get('/api/scores', async (req, res) => {
   const result = await computeScores();
+  const { rows: stateRows } = await db.query('SELECT status FROM game_state WHERE id = 1');
+  const revealFactions = stateRows[0]?.status === 'ended';
   res.json({
     ...result,
-    teams: result.teams.map(({ faction, ...rest }) => rest)
+    teams: result.teams.map(({ faction, ...rest }) => (
+      revealFactions ? { ...rest, faction } : rest
+    ))
   });
 });
 

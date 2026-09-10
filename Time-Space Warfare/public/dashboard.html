@@ -147,6 +147,9 @@
   .final .score .r { color: var(--repair); }
   .final .score .d { color: var(--disrupt); }
   .final .score .sep { color: var(--dim); font-size: 4vh; padding: 0 1.5vw; }
+  .final .reveal { max-width: min(88vw, 60rem); text-align: center; }
+  .final .reveal-label { color: var(--dim); font-size: 2.2vh; letter-spacing: .12em; }
+  .final .spy-list { margin-top: .6vh; color: var(--disrupt); font-size: 3.5vh; font-weight: 700; }
   .final .sub { font-size: 2.2vh; color: var(--dim); }
 
   /* 連線狀況：正常時完全不顯示，斷了才浮出來。投影畫面上不該有平時就在閃的東西 */
@@ -209,6 +212,9 @@
     .rank .pts { font-size: clamp(1.2rem, 2.4vh, 1.45rem); }
     .rank-note { font-size: clamp(.78rem, 1.4vh, .95rem); margin-top: .5rem; }
 
+    .final .reveal-label { font-size: clamp(1rem, 2.2vh, 1.25rem); }
+    .final .spy-list { font-size: clamp(1.35rem, 3.5vh, 2rem); }
+
     .offline { right: 1rem; bottom: 1rem; font-size: .9rem; padding: .45rem .75rem; }
   }
 </style>
@@ -249,6 +255,7 @@
   <div class="score">
     <span class="r" id="finalRepair">0</span><span class="sep">已完成　未完成</span><span class="d" id="finalDisrupt">0</span>
   </div>
+  <div class="reveal" id="finalSpies"></div>
   <div class="sub" id="finalSub"></div>
 </div>
 
@@ -421,7 +428,7 @@ function renderRank() {
 function loadScores() {
   return fetch('/api/scores')
     .then(res => (res.ok ? res.json() : Promise.reject(res.status)))
-    .then(data => { scores = data; renderRank(); setFailing('scores', false); })
+    .then(data => { scores = data; renderRank(); renderFinal(); setFailing('scores', false); })
     .catch(() => setFailing('scores', true));
 }
 
@@ -446,6 +453,13 @@ function renderFinal() {
   }
   document.getElementById('finalRepair').textContent = done;
   document.getElementById('finalDisrupt').textContent = notDone;
+  // /api/scores 只有 ended 後才帶 faction；即使有人在進行中直接開開發者工具抓 API，
+  // 也不會提前拿到其他隊伍的身分。
+  const spies = (scores?.teams || []).filter(t => t.faction === 'disrupt');
+  document.getElementById('finalSpies').innerHTML = spies.length
+    ? `<div class="reveal-label">黑暗潛伏者身分揭曉</div><div class="spy-list">${spies
+      .map(t => escapeHtml(t.name || '#' + t.teamNumber)).join('、')}</div>`
+    : '<div class="reveal-label">正在揭曉黑暗潛伏者身分…</div>';
   // 企劃：陣營勝負是第一權重，但總冠軍是看各隊累計總積分。兩件事都要揭曉。
   const champ = scores && scores.teams.length ? scores.teams[0] : null;
   document.getElementById('finalSub').innerHTML =
