@@ -109,6 +109,7 @@ const SERIES_COLORS = ['#2a78d6', '#4a3aa7', '#c98500', '#d55181'];
 const CHART_INK = { fg: '#0b1324', dim: '#55627a', grid: '#e7ecf4', axis: '#b9c3d3',
                     up: '#c0262d', down: '#047a4b' };
 const shortName = n => Array.from(n).slice(0, 2).join('');
+const pricePointLabel = wave => wave === 0 ? '初始價格' : `第 ${wave} 波結算`;
 
 function svgEl(tag, attrs, children) {
   const a = Object.entries(attrs || {})
@@ -179,7 +180,7 @@ function trendChart(series, opts) {
     g += svgEl('text', { x: o.padL - 8, y: yy + 4, 'font-size': 12, fill: CHART_INK.dim, 'text-anchor': 'end' }, money(Math.round(v)));
   }
   waves.forEach(w => {
-    g += svgEl('text', { x: x(w), y: o.h - 10, 'font-size': 12, fill: CHART_INK.dim, 'text-anchor': 'middle' }, `第${w}波`);
+    g += svgEl('text', { x: x(w), y: o.h - 10, 'font-size': 12, fill: CHART_INK.dim, 'text-anchor': 'middle' }, w === 0 ? '初始' : `第${w}波`);
     // 十字準線：平常看不見，指到那一波才出現
     g += svgEl('line', { x1: x(w), y1: o.padT, x2: x(w), y2: o.padT + ih, stroke: CHART_INK.axis,
                          'stroke-width': 1, 'stroke-dasharray': '3 3', 'data-guide': w, style: 'opacity:0' });
@@ -220,7 +221,7 @@ function trendChart(series, opts) {
     return svgEl('rect', {
       x: Math.max(o.padL - colW / 2, x(w) - colW / 2), y: o.padT, width: colW, height: ih,
       fill: 'transparent', tabindex: 0, 'data-col': w,
-      'data-tip': `第 ${w} 波\n${rows.join('\n')}`, 'aria-label': `第 ${w} 波：${rows.join('；')}`
+      'data-tip': `${pricePointLabel(w)}\n${rows.join('\n')}`, 'aria-label': `${pricePointLabel(w)}：${rows.join('；')}`
     });
   }).join('');
 
@@ -231,7 +232,7 @@ function trendChart(series, opts) {
   // 表格：圖不是螢幕報讀器讀得懂的東西，而且顏色對比不夠亮的人也需要一個
   // 不靠圖形的看法。預設收起來，不佔版面。
   const table = `<details style="margin-top:10px"><summary class="hint" style="cursor:pointer;min-height:44px;display:flex;align-items:center">以表格檢視</summary>
-    <div class="table-wrap"><table><thead><tr><th>股票</th>${waves.map(w => `<th class="n">第${w}波</th>`).join('')}</tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>股票</th>${waves.map(w => `<th class="n">${w === 0 ? '初始價格' : `第${w}波結算`}</th>`).join('')}</tr></thead><tbody>
     ${series.map(s => `<tr><td>${esc(s.name)}</td>${waves.map(w => {
       const p = s.history.find(h => h.wave === w);
       return `<td class="n">${p ? money(p.price) : '—'}</td>`;

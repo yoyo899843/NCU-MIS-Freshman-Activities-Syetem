@@ -147,7 +147,10 @@ router.delete('/news/:id', requireAdmin, asyncHandler(async (req, res) => {
 router.get('/prices', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT p.stock_id, s.name, p.wave, p.price,
-            LAG(p.price) OVER (PARTITION BY p.stock_id ORDER BY p.wave) AS previous_price
+            COALESCE(
+              LAG(p.price) OVER (PARTITION BY p.stock_id ORDER BY p.wave),
+              s.initial_price
+            ) AS previous_price
      FROM stock_prices p JOIN stocks s ON s.id = p.stock_id
      ORDER BY p.wave, s.display_order`
   );
@@ -158,6 +161,48 @@ router.get('/prices', asyncHandler(async (req, res) => {
     changePct: r.previous_price === null ? null
       : Number((((Number(r.price) - Number(r.previous_price)) / Number(r.previous_price)) * 100).toFixed(2))
   })));
+}));
+
+// 第 1 波開始前的原始開盤價。它和第 1 波結算價是兩筆不同資料。
+router.get('/initial-prices', requireAdmin, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id AS stock_id, name, initial_price FROM stocks ORDER BY display_order, id'
+  );
+  res.json(rows.map(r => ({ stockId: r.stock_id, name: r.name, price: Number(r.initial_price) })));
+}));
+
+router.put('/initial-prices', requireAdmin, asyncHandler(async (req, res) => {
+  const entries = (req.body || {}).prices;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return res.status(400).json({ error: 'prices 必須是陣列' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const out = [];
+    for (const e of entries) {
+      const stockId = Number(e.stockId);
+      const price = Number(e.price);
+      if (!Number.isInteger(stockId)) throw Object.assign(new Error('股票編號不正確'), { bad: true });
+      if (!Number.isFinite(price) || price <= 0) throw Object.assign(new Error('初始價格必須大於 0'), { bad: true });
+      const { rows } = await client.query(
+        'UPDATE stocks SET initial_price = $1 WHERE id = $2 RETURNING id, name, initial_price',
+        [price, stockId]
+      );
+      if (rows.length === 0) throw Object.assign(new Error('找不到股票'), { bad: true });
+      out.push({ stockId: rows[0].id, name: rows[0].name, price: Number(rows[0].initial_price) });
+    }
+    await client.query('COMMIT');
+    await audit(req.admin.sub, 'set_initial_prices', 'stocks', null, null, out);
+    res.json(out);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.bad) return res.status(400).json({ error: err.message });
+    throw err;
+  } finally {
+    client.release();
+  }
 }));
 
 // 設定某一波的股價。可以直接給價格，也可以給漲跌百分比（以前一波為基準換算）。
@@ -174,8 +219,8 @@ router.put('/prices/:wave', requireAdmin, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'prices 必須是陣列' });
   }
 
-  // 前一波的價格：算漲跌幅要用，給百分比時也要用它當基準。
-  const prev = wave > 1 ? await effectivePrices(wave - 1) : [];
+  // 第 1 波以初始價格為基準；第 2 波起以前一波結算價為基準。
+  const prev = await effectivePrices(wave);
   const prevPrice = Object.fromEntries(prev.map(s => [s.id, s.price]));
 
   const client = await db.connect();
@@ -184,6 +229,7 @@ router.put('/prices/:wave', requireAdmin, asyncHandler(async (req, res) => {
     const out = [];
     for (const e of entries) {
       const stockId = Number(e.stockId);
+      if (!Number.isInteger(stockId)) throw Object.assign(new Error('股票編號不正確'), { bad: true });
       const base = prevPrice[stockId];
 
       let price, changePct;
@@ -194,7 +240,7 @@ router.put('/prices/:wave', requireAdmin, asyncHandler(async (req, res) => {
       } else if (e.changePct !== undefined && e.changePct !== null && e.changePct !== '') {
         changePct = Number(e.changePct);
         if (!Number.isFinite(changePct)) throw Object.assign(new Error('漲跌幅不正確'), { bad: true });
-        if (!base) throw Object.assign(new Error('第一波沒有前一波可以換算，請直接輸入價格'), { bad: true });
+        if (!base) throw Object.assign(new Error('找不到此波的計算基準價格'), { bad: true });
         price = Number((base * (1 + changePct / 100)).toFixed(2));
         if (price <= 0) throw Object.assign(new Error('換算後的價格必須大於 0'), { bad: true });
       } else {
@@ -500,15 +546,17 @@ router.get('/trades', asyncHandler(async (req, res) => {
 // 持股」——買賣明細看成交紀錄就有了，庫存持股要的是「現在手上有什麼」，
 // 那不是把成交紀錄一筆一筆加回去就能一眼看出來的東西。
 router.get('/leaderboard', asyncHandler(async (req, res) => {
-  const { rows: st } = await db.query('SELECT wave FROM game_state WHERE id = 1');
-  const board = await leaderboard(st[0].wave);
+  const { rows: st } = await db.query('SELECT wave, phase FROM game_state WHERE id = 1');
+  const valuationWave = st[0].phase === 'closed' ? st[0].wave + 1 : st[0].wave;
+  const board = await leaderboard(valuationWave);
   res.json({ wave: st[0].wave, ...board });
 }));
 
 // 單一隊伍的完整持股明細（現場有爭議時查帳用）。
 router.get('/teams/:id/portfolio', asyncHandler(async (req, res) => {
-  const { rows: st } = await db.query('SELECT wave FROM game_state WHERE id = 1');
-  const p = await portfolio(Number(req.params.id), st[0].wave);
+  const { rows: st } = await db.query('SELECT wave, phase FROM game_state WHERE id = 1');
+  const valuationWave = st[0].phase === 'closed' ? st[0].wave + 1 : st[0].wave;
+  const p = await portfolio(Number(req.params.id), valuationWave);
   if (!p) return res.status(404).json({ error: '找不到這支隊伍' });
   res.json(p);
 }));

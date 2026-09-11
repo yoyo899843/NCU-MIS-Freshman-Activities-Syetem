@@ -1,8 +1,8 @@
 // 資產計算與下單。玩家端與管理端都走這裡，計價方式只有一份。
 const db = require('./db');
 
-// 某一波的股價表（stockId -> { price, changePct, name }）。
-// 價格是在每波結束時才公布下一筆，波中不變動。
+// 某一波的結算價表（stockId -> { price, changePct, name }）。
+// 初始價格放在 stocks.initial_price；stock_prices 只存每波結束後的結算價。
 async function pricesAt(wave, client = db) {
   const { rows } = await client.query(
     `SELECT s.id, s.name, s.display_order, p.price, p.change_pct
@@ -21,18 +21,21 @@ async function pricesAt(wave, client = db) {
   }));
 }
 
-// 某一波尚未設定新價格時，改用最近一波已公布的收盤價；同時帶回該筆價格的
-// 前一筆價格。漲跌幅一律由兩個實際價格即時計算，不依賴管理端曾經手動填的百分比，
-// 讓「前價 → 現價」與畫面上的百分比永遠對得起來。
+// 一波進行期間使用的是「上一波結算價」；第 1 波則使用初始價格。
+// 因此第 N 波的結算價不會提早套用到第 N 波交易。漲跌幅一律由兩個實際價格
+// 即時計算，讓「前價 → 現價」與畫面上的百分比永遠對得起來。
 async function effectivePrices(wave, client = db) {
   const { rows } = await client.query(
     `SELECT s.id, s.name, s.display_order,
-            current_price.price, current_price.wave AS price_wave,
-            previous_price.price AS previous_price
+            s.initial_price,
+            current_price.price AS settled_price, current_price.wave AS price_wave,
+            CASE WHEN current_price.wave IS NULL THEN NULL
+                 ELSE COALESCE(previous_price.price, s.initial_price)
+            END AS previous_price
      FROM stocks s
      LEFT JOIN LATERAL (
        SELECT price, wave FROM stock_prices
-       WHERE stock_id = s.id AND wave <= $1
+       WHERE stock_id = s.id AND wave < $1
        ORDER BY wave DESC LIMIT 1
      ) current_price ON true
      LEFT JOIN LATERAL (
@@ -44,14 +47,16 @@ async function effectivePrices(wave, client = db) {
     [wave]
   );
   return rows.map(r => {
-    const price = r.price === null ? null : Number(r.price);
+    const initialPrice = Number(r.initial_price);
+    const price = r.settled_price === null ? initialPrice : Number(r.settled_price);
     const previousPrice = r.previous_price === null ? null : Number(r.previous_price);
     return {
       id: r.id,
       name: r.name,
       price,
       previousPrice,
-      priceWave: r.price_wave === null ? null : Number(r.price_wave),
+      initialPrice,
+      priceWave: r.price_wave === null ? 0 : Number(r.price_wave),
       changePct: price !== null && previousPrice !== null
         ? Number((((price - previousPrice) / previousPrice) * 100).toFixed(2))
         : null

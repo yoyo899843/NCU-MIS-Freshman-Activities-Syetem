@@ -9,14 +9,27 @@
 <h1>股價控管</h1>
 
 <section class="card">
-  <h2 id="priceFormTitle"><i data-icon="chart"></i>設定一波的股價</h2>
+  <h2><i data-icon="chart"></i>初始價格</h2>
+  <p class="hint">第 1 波開始前的交易基準。這不是第 1 波結算價；第 1 波結束後的漲跌會以此計算。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>股票</th><th class="n">初始價格</th></tr></thead>
+      <tbody id="initialForm"></tbody>
+    </table>
+  </div>
+  <p class="error" id="initialErr" role="alert" style="margin-top:12px"></p>
+  <button id="initialBtn" type="button" style="max-width:240px;margin-top:12px">儲存初始價格</button>
+</section>
+
+<section class="card">
+  <h2 id="priceFormTitle"><i data-icon="chart"></i>設定一波的結算價</h2>
   <div class="inline" style="margin-bottom:12px">
     <div style="flex:0 0 120px"><label for="wave">波次</label><input id="wave" type="number" min="1" inputmode="numeric"></div>
   </div>
-  <p class="hint" id="priceFormHelp">每一波結束後才設定下一筆價格。每檔可以「直接填新價格」或「填漲跌百分比」（以前一波價格為基準換算），兩欄擇一填即可；都留空表示這檔不改。</p>
+  <p class="hint" id="priceFormHelp">每一波結束後設定該波的結算價。每檔可直接填結算價，或填漲跌百分比；兩欄擇一填即可。</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>股票</th><th class="n" id="basePriceHeading">前一波價格</th><th id="priceInputHeading">新價格</th><th id="changeHeading">漲跌 %</th></tr></thead>
+      <thead><tr><th>股票</th><th class="n" id="basePriceHeading">前一波結算價</th><th id="priceInputHeading">結算價</th><th>漲跌 %</th></tr></thead>
       <tbody id="form"></tbody>
     </table>
   </div>
@@ -39,6 +52,22 @@
 <script>
 if (requireAdminLogin()) {
   let stocks = [];
+  let initialPrices = {};
+
+  $('initialBtn').addEventListener('click', async () => {
+    $('initialErr').textContent = '';
+    const prices = stocks.map(s => ({ stockId: s.id, price: $('i-' + s.id).value }));
+    $('initialBtn').disabled = true;
+    try {
+      const { ok, body } = await api('/initial-prices', {
+        method: 'PUT', body: JSON.stringify({ prices })
+      });
+      if (!ok) { $('initialErr').textContent = body.error || '儲存失敗'; return; }
+      await load();
+    } finally {
+      $('initialBtn').disabled = false;
+    }
+  });
 
   $('btn').addEventListener('click', async () => {
     $('err').textContent = '';
@@ -65,41 +94,43 @@ if (requireAdminLogin()) {
     const st = await api('/state');
     if (st.ok && !$('wave').value) $('wave').value = st.body.wave;
 
-    const m = await fetch('/api/market/stocks').then(r => r.json());
-    stocks = m.stocks;
-
-    const hist = await api('/prices');
+    const [initial, hist] = await Promise.all([api('/initial-prices'), api('/prices')]);
+    const initialRows = initial.ok ? initial.body : [];
+    stocks = initialRows.map(r => ({ id: r.stockId, name: r.name }));
+    initialPrices = Object.fromEntries(initialRows.map(r => [r.stockId, r.price]));
     const rows = hist.ok ? hist.body : [];
-    // 目標波次的前一波價格，讓主辦知道換算基準是多少
+
+    $('initialForm').innerHTML = stocks.map(s => `
+      <tr><td><strong>${esc(s.name)}</strong></td>
+      <td><input id="i-${s.id}" type="number" step="0.01" min="0.01" inputmode="decimal" value="${initialPrices[s.id]}" aria-label="${esc(s.name)} 初始價格"></td></tr>`).join('');
+
+    // 目標波次的基準價格：第 1 波用初始價格，後續才用前一波結算價。
     const target = Number($('wave').value);
     const prevOf = {};
     if (target === 1) {
-      // 第一波沒有「前一波」；初始設定的開盤價就是這一波的原價格。
-      rows.filter(r => r.wave === 1).forEach(r => { prevOf[r.stockId] = r.price; });
-      $('basePriceHeading').textContent = '原價格';
-      $('priceInputHeading').textContent = '設定原價格';
-      $('changeHeading').textContent = '漲跌 %（不適用）';
-      $('priceFormTitle').innerHTML = '<i data-icon="chart"></i>第一波開始前：設定原價格';
-      $('priceFormHelp').textContent = '請直接輸入四間公司的原價格。第一波沒有前一波可比較，因此不需要填漲跌百分比。';
+      Object.assign(prevOf, initialPrices);
+      $('basePriceHeading').textContent = '初始價格';
+      $('priceInputHeading').textContent = '第 1 波結算價';
+      $('priceFormTitle').innerHTML = '<i data-icon="chart"></i>設定第 1 波結算價';
+      $('priceFormHelp').textContent = '第 1 波結束後設定。漲跌幅會以「初始價格」為基準計算；可直接填結算價或填漲跌百分比，兩欄擇一。';
     } else {
       rows.filter(r => r.wave < target).forEach(r => { prevOf[r.stockId] = r.price; });
       $('basePriceHeading').textContent = '前一波價格';
-      $('priceInputHeading').textContent = '新價格';
-      $('changeHeading').textContent = '漲跌 %';
-      $('priceFormTitle').innerHTML = '<i data-icon="chart"></i>設定一波的股價';
-      $('priceFormHelp').textContent = '每一波結束後才設定下一筆價格。每檔可以「直接填新價格」或「填漲跌百分比」（以前一波價格為基準換算），兩欄擇一填即可；都留空表示這檔不改。';
+      $('priceInputHeading').textContent = `第 ${target} 波結算價`;
+      $('priceFormTitle').innerHTML = `<i data-icon="chart"></i>設定第 ${target} 波結算價`;
+      $('priceFormHelp').textContent = '每一波結束後設定該波結算價。可直接填結算價或填漲跌百分比，兩欄擇一。';
     }
 
     // 每個輸入框都要有對得上的名稱：一列兩格沒有 <label>，螢幕報讀器只會唸「編輯文字」
     $('form').innerHTML = stocks.map(s => `
       <tr><td><strong>${esc(s.name)}</strong></td>
       <td class="n muted">${prevOf[s.id] === undefined ? '—' : money(prevOf[s.id])}</td>
-      <td><input id="p-${s.id}" type="number" step="0.01" min="0.01" inputmode="decimal" aria-label="${esc(s.name)} ${target === 1 ? '原價格' : '新價格'}"></td>
-      <td><input id="c-${s.id}" type="number" step="0.01" inputmode="decimal" aria-label="${esc(s.name)} 漲跌百分比" ${target === 1 ? 'disabled' : ''}></td></tr>`).join('');
+      <td><input id="p-${s.id}" type="number" step="0.01" min="0.01" inputmode="decimal" aria-label="${esc(s.name)} 第 ${target} 波結算價"></td>
+      <td><input id="c-${s.id}" type="number" step="0.01" inputmode="decimal" aria-label="${esc(s.name)} 漲跌百分比"></td></tr>`).join('');
     hydrateIcons($('priceFormTitle'));
 
     $('hist').innerHTML = rows.slice().reverse().map(r => `
-      <tr><td class="rank">${r.wave}</td><td>${esc(r.name)}</td><td class="n muted">${r.previousPrice === null ? '原價格' : money(r.previousPrice)}</td><td class="n">${money(r.price)}</td>
+      <tr><td class="rank">${r.wave}</td><td>${esc(r.name)}</td><td class="n muted">${money(r.previousPrice)}</td><td class="n">${money(r.price)}</td>
       <td class="n">${chgHtml(r.changePct)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">尚無資料</td></tr>';
   }
 

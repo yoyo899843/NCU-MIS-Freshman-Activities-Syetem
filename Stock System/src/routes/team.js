@@ -60,7 +60,9 @@ router.use(teamAuth);
 // 資產總覽：可用現金、各檔持股與現值。
 router.get('/portfolio', asyncHandler(async (req, res) => {
   const s = await state();
-  const p = await portfolio(req.team.sub, s.wave);
+  // 收盤後立即用本波結算價顯示資產；交易階段仍固定用本波開始時的價格。
+  const valuationWave = s.phase === 'closed' ? s.wave + 1 : s.wave;
+  const p = await portfolio(req.team.sub, valuationWave);
   if (!p) return res.status(404).json({ error: '找不到這支隊伍' });
   res.json({ ...p, wave: s.wave, phase: s.phase });
 }));
