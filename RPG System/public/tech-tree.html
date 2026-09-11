@@ -35,6 +35,8 @@
   .slot-box.locked .slot-box-text { color: var(--accent); font-weight: bold; }
   .slot-box.unreachable { border-color: var(--line); background: var(--card-2); }
   .slot-box.unreachable .slot-box-text { color: var(--dim); }
+  .slot-box.has-clue { cursor: pointer; }
+  .slot-box.has-clue:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
   .slot-box.dragover { outline: 3px dashed var(--amber); outline-offset: 2px; }
   .slot-clear {
     position: absolute; top: -8px; right: -8px; width: 18px; height: 18px;
@@ -52,6 +54,7 @@
   }
   .slot-bubble strong { display: block; margin-bottom: 2px; }
   .story-box { white-space: pre-wrap; background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin-top: 8px; }
+  .clue-content { white-space: pre-wrap; line-height: 1.65; }
   .check-bar { position: sticky; bottom: 0; background: var(--card); padding: 8px 0; border-top: 1px solid var(--line); text-align: right; }
   .check-bar button {
     width: auto; display: inline-block; padding: 10px 24px; border-radius: 999px;
@@ -103,6 +106,14 @@
   </div>
 </div>
 
+<div id="clueModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1001; padding:16px; overflow-y:auto" role="dialog" aria-modal="true" aria-labelledby="clueModalTitle" aria-describedby="clueModalContent" tabindex="-1">
+  <div class="card" style="max-width:600px; margin:40px auto; background:var(--card)">
+    <h3 id="clueModalTitle"></h3>
+    <div id="clueModalContent" class="story-box clue-content"></div>
+    <button id="closeClueBtn" type="button">關閉</button>
+  </div>
+</div>
+
 <script src="authFetch.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
@@ -116,6 +127,7 @@ if (!token) {
 let branches = [];
 let vault = [];
 let dragState = null; // { clueId, ghostEl } — 目前正在拖曳中的線索
+let clueModalOpener = null;
 
 // 固定色盤，依分支順序取色，純粹用來視覺區分不同分支（跟資料無關）。
 const BRANCH_COLORS = ['#7fd9b0', '#f7a8c4', '#a8c8f0', '#f7d488', '#c9a8f0'];
@@ -211,6 +223,20 @@ function renderBranches() {
     </div>
   `;
   }).join('');
+
+  // 已放入科技樹的線索可點開閱讀內容。clear 按鈕另有自己的操作，不能因為
+  // 冒泡又順便開啟彈窗；鍵盤使用者也可以用 Enter 或 Space 開啟。
+  listEl.querySelectorAll('.slot-box[data-clue-id]').forEach(slotEl => {
+    slotEl.addEventListener('click', event => {
+      if (event.target.closest('.slot-clear')) return;
+      openClueModal(Number(slotEl.dataset.clueId), slotEl);
+    });
+    slotEl.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      openClueModal(Number(slotEl.dataset.clueId), slotEl);
+    });
+  });
 }
 
 function renderSlot(s, idx, branchColor) {
@@ -221,7 +247,7 @@ function renderSlot(s, idx, branchColor) {
 
   return `
     ${idx > 0 ? '<span class="slot-arrow">&rarr;</span>' : ''}
-    <div class="slot-box ${stateClass}" data-slot-id="${s.id}" data-droppable="${droppable}" style="border-color:${borderColor}">
+    <div class="slot-box ${stateClass}${s.placedClueId ? ' has-clue' : ''}" data-slot-id="${s.id}" data-droppable="${droppable}"${s.placedClueId ? ` data-clue-id="${s.placedClueId}" role="button" tabindex="0" aria-label="閱讀線索：${escapeHtml(s.placedClueName || '')}"` : ''} style="border-color:${borderColor}">
       ${s.placedClueId ? `
         <div class="slot-bubble">
           <strong>${escapeHtml(s.placedClueName || '')}</strong>
@@ -340,6 +366,33 @@ window.readStory = async function (branchId) {
 
 document.getElementById('closeStoryBtn').addEventListener('click', () => {
   document.getElementById('storyModal').style.display = 'none';
+});
+
+function openClueModal(clueId, opener) {
+  const clue = clueById(clueId);
+  if (!clue) return;
+
+  clueModalOpener = opener || document.activeElement;
+  document.getElementById('clueModalTitle').textContent = clue.name;
+  document.getElementById('clueModalContent').textContent = clue.description || '（這張線索沒有文字內容）';
+  document.getElementById('clueModal').style.display = '';
+  document.getElementById('closeClueBtn').focus();
+}
+
+function closeClueModal() {
+  document.getElementById('clueModal').style.display = 'none';
+  clueModalOpener?.focus();
+  clueModalOpener = null;
+}
+
+document.getElementById('closeClueBtn').addEventListener('click', closeClueModal);
+document.getElementById('clueModal').addEventListener('click', event => {
+  if (event.target.id === 'clueModal') closeClueModal();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.getElementById('clueModal').style.display !== 'none') {
+    closeClueModal();
+  }
 });
 
 document.getElementById('checkBtn').addEventListener('click', async () => {
