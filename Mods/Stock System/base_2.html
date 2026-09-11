@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模板 2 財經日報 - 賭大股票系統</title>
+<!--
+  模板 2：財經日報（Financial Daily）
+  依 ui-ux-pro-max style 領域的「Editorial Grid / Magazine」＋「Minimalist Monochrome」：
+  報頭、粗細雙線分隔、襯線大標、零圓角、沒有陰影，深度只靠線條。
+  為什麼選這個方向：企劃列的第一個功能就是「閱讀發生事件新聞」，整個遊戲的決策是從
+  判讀新聞開始的。其他兩版把新聞當成一張卡片，這一版讓頭條就是首頁的主角。
+  襯線字只用在報頭和標題；內文、數字、表單仍用無襯線——手機上的中文襯線字（宋體）
+  筆畫細，小字在戶外會糊掉，這是依 §6 readable-font-size 做的取捨。
+  漲跌同樣是顏色＋三角形＋正負號，不只靠紅綠。
+  優點：白天最好讀、最有記憶點；新聞優先，最貼這個遊戲的核心玩法。
+  代價：交易表單在報紙風格裡比較不像 app，按鈕要刻意做大做黑；
+        襯線字依賴系統字型，部分安卓機會退回預設字體，標題氣質會打折。
+-->
+<style>
+  :root {
+    --bg:#f6f1e7; --card:#fffdf8; --ink:#16130e; --fg:#16130e; --dim:#5a5347;
+    --line:#d9cfbd; --rule:#16130e; --red:#a8201a;
+    --up:#a8201a; --down:#0b6b3a; --ring:#16130e; --danger:#a8201a;
+    --pad:14px 16px 28px; --r-sm:0;
+    --input-bg:#fffdf8; --input-bd:1.5px solid #16130e; --placeholder:#7a7162;
+    --font-body: system-ui, "PingFang TC", "Noto Sans TC", sans-serif;
+    --font-head: "Songti TC", "Noto Serif TC", "Source Han Serif TC", "PMingLiU", serif;
+    --font-num: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  /* 報頭：粗線＋細線的雙線，是報紙最辨識得出來的東西 */
+  .mast { text-align:center; border-bottom:3px double var(--rule); padding-bottom:8px; margin-bottom:12px; }
+  .mast .date { display:flex; justify-content:space-between; font-size:13px; color:var(--dim);
+                border-bottom:1px solid var(--rule); padding-bottom:4px; margin-bottom:6px; }
+  .mast .date .clock { font-family:var(--font-num); }
+  h1 { margin:0; font-family:var(--font-head); font-size:34px; font-weight:900;
+       letter-spacing:.12em; color:var(--red); line-height:1.2; }
+  .mast .sub { font-size:13px; color:var(--dim); letter-spacing:.2em; }
+
+  /* 頭條：首頁的主角 */
+  .lead { border-bottom:1px solid var(--rule); padding-bottom:12px; margin-bottom:12px; }
+  .lead .kick { display:inline-block; font-size:13px; font-weight:700; color:var(--card);
+                background:var(--ink); padding:1px 8px; letter-spacing:.08em; }
+  .lead h2 { margin:8px 0 6px; font-family:var(--font-head); font-size:26px; font-weight:900;
+             line-height:1.3; letter-spacing:.01em; }
+  .lead p { margin:0; font-size:15px; }
+
+  h3 { display:flex; align-items:baseline; justify-content:space-between; margin:18px 0 6px;
+       padding-bottom:4px; border-bottom:2px solid var(--rule);
+       font-family:var(--font-head); font-size:18px; font-weight:900; letter-spacing:.06em; }
+  h3 small { font-family:var(--font-body); font-size:13px; font-weight:400; color:var(--dim); letter-spacing:0; }
+
+  /* 行情表：報紙的股市版，只用細線不用卡片 */
+  table { width:100%; border-collapse:collapse; font-size:15px; }
+  th,td { text-align:left; padding:9px 2px; border-bottom:1px solid var(--line); vertical-align:baseline; }
+  th { font-size:13px; font-weight:600; color:var(--dim); border-bottom:1px solid var(--rule); }
+  th.rt, td.n { text-align:right; font-family:var(--font-num); font-weight:700; }
+  td .hist { display:block; font-size:12px; color:var(--dim); font-family:var(--font-num); font-weight:400; }
+  td .held { font-size:12px; color:var(--dim); font-weight:600; }
+  .chg { display:inline-flex; align-items:center; justify-content:flex-end; gap:3px; }
+  .chg.up { color:var(--up); } .chg.dn { color:var(--down); }
+  .tri { width:9px; height:9px; fill:currentColor; }
+
+  /* 帳戶：報紙的「專欄方框」 */
+  .box { border:1.5px solid var(--rule); background:var(--card); padding:12px; margin-top:4px; }
+  .acct { display:grid; grid-template-columns:1fr 1fr 1fr; text-align:center; }
+  .acct > div + div { border-left:1px solid var(--line); }
+  .acct .lab { font-size:12px; color:var(--dim); }
+  .acct .num { font-family:var(--font-num); font-size:17px; font-weight:700; }
+  .acct .total .num { color:var(--red); }
+  .acct-who { margin:0 0 8px; font-size:14px; text-align:center; }
+
+  .nav { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--rule); border-left:1px solid var(--rule); }
+  .nav a { display:flex; align-items:center; gap:8px; padding:11px 12px; color:var(--ink); text-decoration:none;
+           border-right:1px solid var(--rule); border-bottom:1px solid var(--rule); font-weight:700; background:var(--card); }
+  .nav a:hover, .nav a:active { background:var(--ink); color:var(--card); }
+
+  .status { display:flex; align-items:center; gap:7px; font-size:14px; margin:0 0 12px;
+            padding-bottom:8px; border-bottom:1px dashed var(--line); }
+  .status .ic { color:var(--down); }
+
+  .seg { margin:0 0 12px; padding:0; border:0; min-width:0; }
+  .seg-opts { display:grid; grid-template-columns:1fr 1fr; }
+  .seg legend { font-size:14px; color:var(--dim); margin-bottom:6px; padding:0; }
+  .seg label { display:flex; align-items:center; justify-content:center; gap:6px; margin:0;
+               border:1.5px solid var(--rule); color:var(--ink); background:var(--card);
+               font-size:16px; font-weight:700; }
+  .seg label + input + label { border-left:0; }
+  /* 選中＝反白（黑底白字），這是報紙版面本來就有的強調手法，不另外加色 */
+  .seg input:checked + label { background:var(--ink); color:var(--card); }
+  .seg label .ic-sm { display:none; } .seg input:checked + label .ic-sm { display:block; }
+  .helper { font-size:14px; color:var(--dim); font-family:var(--font-num); }
+
+  button { display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
+           padding:14px; border:0; border-radius:0; background:var(--ink); color:var(--card);
+           font-family:inherit; font-size:17px; font-weight:800; letter-spacing:.1em; }
+  button:hover { background:#3a3326; }
+  button.ghost { background:transparent; color:var(--ink); border:1.5px solid var(--rule); font-weight:700; }
+  button.ghost:hover { background:#efe7d8; }
+
+  tr.me td { background:#f1e6cf; }
+  .rank { font-family:var(--font-head); font-size:18px; font-weight:900; width:2em; }
+  .you { display:inline-block; font-size:12px; font-weight:700; margin-left:6px; padding:0 6px;
+         border:1px solid var(--rule); }
+  .foot { text-align:center; font-size:13px; color:var(--dim); margin-top:18px;
+          border-top:3px double var(--rule); padding-top:8px; letter-spacing:.1em; }
+
+  /* ====== 共用基礎層（三個模板一致，只有色票與外觀不同） ======
+     對應 ui-ux-pro-max：§1 無障礙 §2 觸控 §5 版面 §6 字體色彩 §7 動效 §8 表單 */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0 auto; padding: var(--pad);
+    max-width: 480px; min-height: 100dvh;
+    background: var(--bg); color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 16px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .num, .chg, td.n, .clock, .helper { font-variant-numeric: tabular-nums; }
+
+  button, input, select, .nav a, .seg label { min-height: 44px; }
+  button, .nav a, .seg label, select { cursor: pointer; touch-action: manipulation; }
+
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+  .seg input:focus-visible + label { outline: 3px solid var(--ring); outline-offset: 2px; }
+
+  button, .nav a, .seg label {
+    transition: background-color .18s ease-out, border-color .18s ease-out, transform .12s ease-out;
+  }
+  button:active, .nav a:active, .seg label:active { transform: scale(.985); }
+  button[disabled] { opacity: .45; cursor: not-allowed; }
+
+  .ic { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
+        stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .ic-sm { width: 18px; height: 18px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important; scroll-behavior: auto !important;
+    }
+  }
+
+  label { display: block; font-size: 14px; color: var(--dim); margin-bottom: 6px; }
+  input, select {
+    display: block; width: 100%; padding: 10px 12px; margin: 0 0 12px;
+    font-family: inherit; font-size: 16px;
+    color: var(--fg); background-color: var(--input-bg);
+    border: var(--input-bd); border-radius: var(--r-sm);
+  }
+  input::placeholder { color: var(--placeholder); }
+  .seg input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+  input[aria-invalid="true"] { border-color: var(--danger); border-width: 2px; margin-bottom: 0; }
+
+  .error { display: flex; gap: 7px; align-items: flex-start;
+           color: var(--danger); font-size: 14px; margin: 8px 0 12px; }
+  .error .ic-sm { margin-top: 2px; }
+</style>
+</head>
+<body>
+<header class="mast">
+  <div class="date"><span>第 2 期 · 第 2／3 波</span><span class="clock">14:26</span></div>
+  <h1>賭大財經日報</h1>
+  <div class="sub">階段四 · 股票交易中</div>
+</header>
+
+<article class="lead">
+  <span class="kick">頭條</span>
+  <h2>資安法三讀通過，企業資安預算估增三成</h2>
+  <p>新法要求上市櫃公司每年接受資安稽核，市場預期資安服務需求大增；另一方面，物流業者表示油價上漲將壓縮利潤。</p>
+</article>
+
+<h3>今日行情 <small>收盤價 · 相較上一波</small></h3>
+<table>
+  <thead><tr><th>股票</th><th class="rt">股價</th><th class="rt">漲跌</th></tr></thead>
+  <tbody>
+    <tr><td>伊競商務分析事務所<span class="hist">100 → 88</span></td><td class="n">88.00</td>
+        <td class="n"><span class="chg dn" aria-label="下跌 12%"><svg class="tri" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 8.2 1 1.8h8z"/></svg>−12.00%</span></td></tr>
+    <tr><td>佑佑國際資安 <span class="held">持 120</span><span class="hist">100 → 135</span></td><td class="n">135.00</td>
+        <td class="n"><span class="chg up" aria-label="上漲 35%"><svg class="tri" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.8 9 8.2H1z"/></svg>+35.00%</span></td></tr>
+    <tr><td>松鼠宅急便 <span class="held">持 80</span><span class="hist">100 → 105</span></td><td class="n">105.00</td>
+        <td class="n"><span class="chg up" aria-label="上漲 5%"><svg class="tri" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.8 9 8.2H1z"/></svg>+5.00%</span></td></tr>
+    <tr><td>皇家鑄幣局<span class="hist">100 → 92</span></td><td class="n">92.00</td>
+        <td class="n"><span class="chg dn" aria-label="下跌 8%"><svg class="tri" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 8.2 1 1.8h8z"/></svg>−8.00%</span></td></tr>
+  </tbody>
+</table>
+
+<h3>帳戶 <small>金牛座（第 05 隊）</small></h3>
+<div class="box">
+  <div class="acct" role="group" aria-label="資產總覽">
+    <div class="total"><div class="lab">總資產</div><div class="num">63,100</div></div>
+    <div><div class="lab">可用現金</div><div class="num">38,500</div></div>
+    <div><div class="lab">股票現值</div><div class="num">24,600</div></div>
+  </div>
+</div>
+
+<h3>版面導覽</h3>
+<nav class="nav" aria-label="功能">
+  <a href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="13" height="14" rx="1.5"/><path d="M16.5 8.5H20v9a1.5 1.5 0 0 1-3 0V8.5M7 9h6M7 12.5h6M7 16h4"/></svg>新聞情報</a>
+  <a href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16"/><path d="M5 15l4-4 3 3 6-7"/><path d="M14 7h4v4"/></svg>個股查詢</a>
+  <a href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4 3.5 7.5 7 11M3.5 7.5H17M17 13l3.5 3.5L17 20M20.5 16.5H7"/></svg>交易帳戶</a>
+  <a href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v5a4 4 0 0 1-8 0V4Z"/><path d="M8 6H4.5v1.5A3.5 3.5 0 0 0 8 11M16 6h3.5v1.5A3.5 3.5 0 0 1 16 11M12 13v4M8.5 20h7M10 17h4"/></svg>排行榜</a>
+</nav>
+
+<h3>下單 <small>以可用現金為上限</small></h3>
+<p class="status"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 10"/></svg>本波申報 38,500 已通過銀行審核，可以交易</p>
+<label for="stk2">股票</label>
+<select id="stk2"><option>佑佑國際資安　135.00</option><option>伊競商務分析事務所　88.00</option><option>松鼠宅急便　105.00</option><option>皇家鑄幣局　92.00</option></select>
+<fieldset class="seg"><legend>買賣方向</legend>
+  <div class="seg-opts">
+    <input type="radio" name="side2" id="b2" checked><label for="b2"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>買進</label>
+    <input type="radio" name="side2" id="s2"><label for="s2"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>賣出</label>
+  </div>
+</fieldset>
+<label for="qty2">張數</label>
+<input id="qty2" type="number" inputmode="numeric" min="1" step="1" value="600" aria-invalid="true" aria-describedby="err2 hint2">
+<p class="error" id="err2" role="alert"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/></svg><span>可用現金不足：600 張需要 81,000，目前可用 38,500。最多可買 285 張。</span></p>
+<p class="helper" id="hint2" style="margin:-4px 0 12px">預估成交 81,000</p>
+<button type="button">確認買進</button>
+
+<h3>總資產排行 <small>現金＋股票現值</small></h3>
+<table>
+  <thead><tr><th>名次</th><th>隊伍</th><th class="rt">總資產</th></tr></thead>
+  <tbody>
+    <tr><td class="rank">1</td><td>獵豹</td><td class="n">71,240</td></tr>
+    <tr class="me"><td class="rank">2</td><td>金牛座<span class="you">你</span></td><td class="n">63,100</td></tr>
+    <tr><td class="rank">3</td><td>北極星</td><td class="n">58,900</td></tr>
+    <tr><td class="rank">4</td><td>海豚</td><td class="n">52,300</td></tr>
+  </tbody>
+</table>
+
+<div style="height:16px"></div>
+<button type="button" class="ghost"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 20H5.5A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4H9"/><path d="M15 8l4 4-4 4M19 12H9"/></svg> 登出</button>
+
+<p class="foot">STOCK SYSTEM · 模板 2 財經日報</p>
+</body>
+</html>

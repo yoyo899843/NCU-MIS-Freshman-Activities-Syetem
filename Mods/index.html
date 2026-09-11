@@ -102,17 +102,18 @@
 
 <header>
   <h1>UI 模板選擇</h1>
-  <p class="lede">兩個系統各三個方向，同一組元件（標題／身分列／功能導覽／輸入框＋按鈕／錯誤訊息／資料表）做出來的，可以直接互相比較。選定哪個，就把它的 CSS 搬進該系統的 <code>public/style.css</code>。</p>
+  <p class="lede">三個系統各三個方向，同一組元件（標題／身分列／功能導覽／輸入框＋按鈕／錯誤訊息／資料表）做出來的，可以直接互相比較。選定哪個，就把它的 CSS 搬進該系統的 <code>public/style.css</code>。</p>
 </header>
 
 <div class="note">
   <b>選之前先想兩件事。</b>
   一、<b>戶外可讀性</b>：這是白天在校園裡拿手機玩的遊戲，深色主題截圖好看，但正午太陽下反光會很痛苦——RPG 的「皇家典藏」和時空戰爭的「烈日行動」是唯二為這件事設計的。
   二、<b>時空戰爭要兼顧大螢幕</b>：手機和大會集合投影 Dashboard 最好同一套視覺，「作戰儀表」是唯一放大就能直接上投影的。
+  三、<b>股票系統的關鍵不是看盤</b>：這個遊戲最容易卡人的是「申報存款 → 銀行審核 → 才能交易」，玩家看不懂自己卡在哪就會一直問關主。「銀行存摺」是唯一把這段做成進度條的。
 </div>
 
 <div class="note" style="border-left-color:#0f8a5f">
-  <b>六個模板都跑過無障礙檢查。</b>
+  <b>九個模板都跑過無障礙檢查。</b>
   依 <code>ui-ux-pro-max</code> 技能規範重建：所有文字對比 ≥ 4.5:1（產出前用程式斷言，不合格就不會生成）、
   內文與輸入框 16px（小於 16px 會讓 iOS 自動放大頁面）、觸控目標 ≥ 44px、3px 焦點環、
   圖示全部改成 inline SVG、尊重系統的「減少動態效果」設定。
@@ -208,6 +209,58 @@
         <li><span class="c">－</span><span>晚上或投影偏刺眼，大螢幕建議另配深色</span></li>
       </ul>
       <a class="open" href="Time-Space%20Warfare/base_3.html">開啟完整頁面</a>
+    </div>
+  </div>
+
+</div>
+
+<h2>Stock System <span>賭大股票系統</span></h2>
+<div class="note" style="border-left-color:#b4690e;margin-top:14px">
+  <b>三個模板共通的兩個決定。</b>
+  一、<b>不畫 K 線</b>：K 棒需要開高低收四個價，這個遊戲一波只有一個收盤價；少於 4 個點也不該畫折線（ui-ux-pro-max chart 規則），首頁一律用「大數字＋漲跌幅＋各波價格」。
+  二、<b>紅漲綠跌但不只靠顏色</b>：台股慣例保留，每個漲跌都另外加三角形與正負號，紅綠色盲也分得出來。
+</div>
+<div class="grid">
+
+  <div class="item">
+    <div class="thumb"><iframe src="Stock%20System/base_1.html" loading="lazy" title="交易所看板預覽"></iframe></div>
+    <div class="body">
+      <span class="no">模板 1</span>
+      <h3>交易所看板</h3>
+      <p class="concept">深藍黑底、金色數據、等寬報價列——券商看盤軟體的樣子。</p>
+      <ul class="tr">
+        <li><span class="p">＋</span><span>最像股市，數字對齊最好掃；排行榜放大就能直接投影</span></li>
+        <li><span class="c">－</span><span>戶外正午反光，讀新聞長文最累</span></li>
+      </ul>
+      <a class="open" href="Stock%20System/base_1.html">開啟完整頁面</a>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="thumb"><iframe src="Stock%20System/base_2.html" loading="lazy" title="財經日報預覽"></iframe></div>
+    <div class="body">
+      <span class="no">模板 2</span>
+      <h3>財經日報</h3>
+      <p class="concept">米白報紙、紅色報頭、雙線分隔——頭條新聞就是首頁主角。</p>
+      <ul class="tr">
+        <li><span class="p">＋</span><span>新聞優先，最貼「判讀新聞決定買賣」的玩法；白天最好讀</span></li>
+        <li><span class="c">－</span><span>下單表單在報紙風裡最不像 app；襯線字依賴系統字型</span></li>
+      </ul>
+      <a class="open" href="Stock%20System/base_2.html">開啟完整頁面</a>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="thumb"><iframe src="Stock%20System/base_3.html" loading="lazy" title="銀行存摺預覽"></iframe></div>
+    <div class="body">
+      <span class="no">模板 3</span>
+      <h3>銀行存摺</h3>
+      <p class="concept">深藍銀行卡、白色卡片、存款三步驟進度條——理財 app 的樣子。</p>
+      <ul class="tr">
+        <li><span class="p">＋</span><span>資金流程最清楚，按鈕最大；淺色高對比戶外好讀</span></li>
+        <li><span class="c">－</span><span>最不像「賭」；跟時空戰爭「烈日行動」撞風格</span></li>
+      </ul>
+      <a class="open" href="Stock%20System/base_3.html">開啟完整頁面</a>
     </div>
   </div>
 

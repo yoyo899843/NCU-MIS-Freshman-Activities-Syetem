@@ -452,7 +452,8 @@ router.post('/checkpoints/:id/action', asyncHandler(async (req, res) => {
   // 一支隊伍一支手機，取這支隊伍的那位玩家當紀錄上的操作者。
   const { rows: teamRows } = await db.query(
     `SELECT t.id, t.faction, t.team_number,
-            (SELECT p.id FROM players p WHERE p.team_id = t.id ORDER BY p.id LIMIT 1) AS player_id
+            (SELECT p.id FROM players p WHERE p.team_id = t.id ORDER BY p.id LIMIT 1) AS player_id,
+            (SELECT p.display_name FROM players p WHERE p.team_id = t.id ORDER BY p.id LIMIT 1) AS player_name
      FROM teams t WHERE t.id = $1`, [tid]
   );
   if (teamRows.length === 0) return res.status(404).json({ error: '找不到這支隊伍' });
@@ -478,7 +479,16 @@ router.post('/checkpoints/:id/action', asyncHandler(async (req, res) => {
      VALUES ($1, 'checkpoint_action', 'checkpoint', $2, $3, $4)`,
     [req.admin.sub, String(req.params.id),
      JSON.stringify({ progress: result.progressBefore }),
-     JSON.stringify({ progress: result.progressAfter, teamId: team.id, action, aligned: result.aligned })]
+     JSON.stringify({
+       progress: result.progressAfter,
+       checkpointName: result.checkpoint.name,
+       teamId: team.id,
+       teamNumber: team.team_number,
+       teamName: team.player_name,
+       action,
+       aligned: result.aligned,
+       delta: result.delta
+     })]
   );
 
   res.json({
@@ -1401,6 +1411,40 @@ router.post('/game/reset', requireFullAdmin, asyncHandler(async (req, res) => {
   res.json({ ...stats.state, deleted: { ...stats.counts, cancelledSessions, clearedRooms } });
 }));
 
+// 關主在現場替隊伍登記修復／破壞時，會留下不可隨遊戲重啟刪除的稽核帳。
+// 僅完整管理員可查看，避免關主透過紀錄得知其他關主或隊伍的操作情況。
+router.get('/checkpoint-action-logs', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(`
+    SELECT
+      aa.id,
+      aa.created_at,
+      au.email AS operator_email,
+      au.display_name AS operator_name,
+      au.role AS operator_role,
+      c.name AS checkpoint_name,
+      tp.display_name AS current_team_name,
+      t.team_number AS current_team_number,
+      aa.before_value,
+      aa.after_value
+    FROM admin_actions aa
+    JOIN admin_users au ON au.id = aa.admin_user_id
+    LEFT JOIN checkpoints c ON c.id = aa.target_id::int
+    LEFT JOIN teams t ON t.id = NULLIF(aa.after_value->>'teamId', '')::int
+    LEFT JOIN LATERAL (
+      SELECT p.display_name
+      FROM players p
+      WHERE p.team_id = t.id
+      ORDER BY p.is_captain DESC, p.id ASC
+      LIMIT 1
+    ) tp ON true
+    WHERE aa.action_type = 'checkpoint_action'
+      AND aa.target_type = 'checkpoint'
+    ORDER BY aa.created_at DESC
+    LIMIT 500
+  `);
+  res.json(rows);
+}));
+
 // PK 對戰管理頁用的清單：帶出雙方顯示名稱、陣營，方便管理員一眼看懂誰打誰。
 router.get('/pk-duels', asyncHandler(async (req, res) => {
   const { rows } = await db.query(`
@@ -1428,14 +1472,24 @@ router.get('/pk-wins', asyncHandler(async (req, res) => {
       t.id AS team_id,
       t.team_number,
       t.faction,
-      p.display_name,
+      COALESCE(
+        (
+          SELECT team_player.display_name
+          FROM players team_player
+          WHERE team_player.team_id = t.id
+          ORDER BY team_player.is_captain DESC, team_player.id ASC
+          LIMIT 1
+        ),
+        t.name,
+        '第 ' || t.team_number::text || ' 隊'
+      ) AS display_name,
       COUNT(d.id)::int AS wins
     FROM teams t
-    LEFT JOIN players p ON p.team_id = t.id
-    LEFT JOIN pk_duels d ON d.winner_player_id = p.id
+    LEFT JOIN players winner ON winner.team_id = t.id
+    LEFT JOIN pk_duels d ON d.winner_player_id = winner.id
                          AND d.status = 'completed'
-    GROUP BY t.id, t.team_number, t.faction, p.id, p.display_name
-    ORDER BY wins DESC, t.team_number ASC, p.display_name ASC
+    GROUP BY t.id, t.team_number, t.faction, t.name
+    ORDER BY wins DESC, t.team_number ASC
   `);
   res.json(rows);
 }));

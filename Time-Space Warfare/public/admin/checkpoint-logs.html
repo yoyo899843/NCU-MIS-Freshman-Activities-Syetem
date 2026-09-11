@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>關卡操作紀錄 - 時空戰爭管理後台</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { max-width: 1120px; }
+  .meta { color: var(--dim); font-size: .88rem; }
+  .action { font-weight: 700; }
+  .action.disrupt { color: var(--disrupt); }
+  .action.repair { color: var(--repair); }
+  .progress { font-variant-numeric: tabular-nums; white-space: nowrap; }
+</style>
+</head>
+<body>
+<h1>關卡操作紀錄</h1>
+<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+
+<div class="card">
+  <p class="hint">記錄每位關主／管理員登記的修復或破壞操作。遊戲重啟後仍會保留，最多顯示最近 500 筆。</p>
+  <button id="refreshBtn">重新整理</button>
+  <p id="status" class="meta">載入中...</p>
+  <table>
+    <thead>
+      <tr><th>時間</th><th>操作帳號</th><th>隊伍</th><th>據點</th><th>動作</th><th>進度</th></tr>
+    </thead>
+    <tbody id="logsBody"></tbody>
+  </table>
+</div>
+
+<script src="../authFetch.js"></script>
+<script src="adminApi.js"></script>
+<script>
+function asObject(value) {
+  if (value && typeof value === 'object') return value;
+  try { return JSON.parse(value || '{}'); } catch (_) { return {}; }
+}
+
+function renderLogs(logs) {
+  $('logsBody').innerHTML = logs.map(log => {
+    const before = asObject(log.before_value);
+    const after = asObject(log.after_value);
+    const action = after.action === 'disrupt' ? '破壞' : '修復';
+    const actionClass = after.action === 'disrupt' ? 'disrupt' : 'repair';
+    const operator = log.operator_name || log.operator_email || '（已刪除帳號）';
+    const teamName = after.teamName || log.current_team_name ||
+      (after.teamNumber || log.current_team_number ? `第 ${after.teamNumber || log.current_team_number} 隊` : '（隊伍已刪除）');
+    const checkpoint = after.checkpointName || log.checkpoint_name || '（據點已刪除）';
+    const beforeProgress = Number(before.progress);
+    const afterProgress = Number(after.progress);
+    const progress = Number.isFinite(beforeProgress) && Number.isFinite(afterProgress)
+      ? `${beforeProgress}% → ${afterProgress}%`
+      : '-';
+    return `<tr>
+      <td class="meta">${new Date(log.created_at).toLocaleString()}</td>
+      <td>${escapeHtml(operator)}<br><span class="meta">${escapeHtml(log.operator_email || '')}</span></td>
+      <td>${escapeHtml(teamName)}</td>
+      <td>${escapeHtml(checkpoint)}</td>
+      <td><span class="action ${actionClass}">${action}</span></td>
+      <td class="progress">${progress}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6">目前沒有關卡操作紀錄</td></tr>';
+  $('status').textContent = `共 ${logs.length} 筆紀錄`;
+}
+
+async function loadLogs() {
+  const res = await api('/checkpoint-action-logs');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    $('status').textContent = data.error || `載入失敗（${res.status}）`;
+    return;
+  }
+  renderLogs(await res.json());
+}
+
+$('refreshBtn').addEventListener('click', loadLogs);
+
+(async () => {
+  const isAdmin = await loadMe();
+  if (!isAdmin) {
+    $('status').textContent = '此頁僅限管理員查看。';
+    return;
+  }
+  await loadLogs();
+})();
+</script>
+<script src="../footer.js"></script>
+</body>
+</html>

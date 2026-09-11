@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模板 3 銀行存摺 - 賭大股票系統</title>
+<!--
+  模板 3：銀行存摺（Passbook）
+  依 ui-ux-pro-max color 領域的「Banking/Traditional Finance」色票（信任感的深藍＋
+  金色點綴）與 typography 領域的「Financial Trust」組合（全部無襯線、數字等寬）。
+  為什麼選這個方向：這個遊戲最容易卡人的不是看盤，而是「先申報存款 → 實體銀行數鈔
+  審核 → 通過才能交易」這一段。企劃明寫「若該波存款未通過審核，交易功能將直接反灰
+  鎖定」——玩家看不懂自己卡在哪一步，就會一直來問關主。這一版把它做成三步的進度條，
+  一眼看出現在在哪、下一步要做什麼（§8 multi-step-progress）。
+  漲跌是顏色＋三角形＋正負號，不只靠紅綠。
+  優點：資金流程最清楚、最像真的理財 app；淺色高對比，戶外好讀；按鈕最大最好按。
+  代價：最不像「賭」，遊戲感要靠文案補；跟時空戰爭「烈日行動」同屬淺色卡片風，
+        兩個系統放在一起時辨識度較低。
+-->
+<style>
+  :root {
+    --bg:#f3f6fb; --card:#ffffff; --line:#dbe2ee; --fg:#0b1324; --dim:#55627a;
+    --navy:#0f1e3d; --navy-dim:#b4c2dc; --blue:#1e3a8a; --on-blue:#ffffff;
+    /* 金色取 #955a06 而不是色票原本的 #a16207：原值在「自己那一列」的淡藍底上
+       只有 4.43:1，差一點不到 AA。壓深一階後白底 5.61、淡藍底 5.05。 */
+    --gold:#955a06; --gold-lt:#f2c36b;
+    --up:#c0262d; --down:#047a4b; --ok-bg:#dcf5e9; --ok-fg:#035c39;
+    --ring:#1e3a8a; --danger:#b42318;
+    --pad:16px 16px 28px; --r-sm:12px;
+    --input-bg:#fff; --input-bd:1.5px solid #cbd5e4; --placeholder:#6b778c;
+    --font-body: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+    --font-num: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .top { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  .top .phase { display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:700;
+                color:var(--ok-fg); background:var(--ok-bg); padding:4px 12px; border-radius:999px; }
+  .top .clock { font-family:var(--font-num); font-size:14px; color:var(--dim); }
+
+  /* 資產做成一張銀行卡：整頁最重要的數字，也是唯一的深色區塊 */
+  .bankcard { background:var(--navy); color:#fff; border-radius:18px; padding:18px;
+              margin-bottom:14px; box-shadow:0 10px 24px rgba(15,30,61,.22); }
+  .bankcard .row { display:flex; justify-content:space-between; align-items:center; }
+  .bankcard h1 { margin:0; font-size:15px; font-weight:700; letter-spacing:.14em; color:var(--gold-lt); }
+  .bankcard .team { font-size:14px; color:var(--navy-dim); }
+  .bankcard .lab { font-size:13px; color:var(--navy-dim); margin-top:14px; }
+  .bankcard .total { font-family:var(--font-num); font-size:36px; font-weight:700; line-height:1.15; }
+  .bankcard .split { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;
+                     padding-top:12px; border-top:1px solid rgba(255,255,255,.14); }
+  .bankcard .split .num { font-family:var(--font-num); font-size:18px; font-weight:700; }
+
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px;
+          padding:16px; margin-bottom:14px; box-shadow:0 1px 2px rgba(11,19,36,.04); }
+  h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; font-weight:700; }
+  h2 .ic { color:var(--blue); }
+
+  /* 存款三步驟：已完成的打勾、現在這步實心、還沒到的空心——狀態靠形狀也靠文字 */
+  .steps { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:0 0 4px; padding:0; list-style:none; }
+  .steps li { text-align:center; font-size:13px; color:var(--dim); position:relative; }
+  .steps .dot { display:flex; align-items:center; justify-content:center; width:30px; height:30px;
+                margin:0 auto 4px; border-radius:50%; border:2px solid var(--line); background:#fff;
+                font-weight:700; font-size:13px; color:var(--dim); }
+  .steps .done .dot { background:var(--down); border-color:var(--down); color:#fff; }
+  .steps .now .dot { background:var(--blue); border-color:var(--blue); color:#fff; }
+  .steps .done, .steps .now { color:var(--fg); font-weight:600; }
+  .steps li + li::before { content:""; position:absolute; top:15px; right:calc(50% + 17px); width:calc(100% - 28px);
+                           height:2px; background:var(--down); }
+  .steps-note { font-size:14px; color:var(--dim); margin:8px 0 0; text-align:center; }
+
+  .tiles { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:14px; }
+  .tile { display:flex; flex-direction:column; align-items:center; gap:4px; padding:10px 4px;
+          background:var(--card); border:1px solid var(--line); border-radius:14px;
+          color:var(--fg); text-decoration:none; font-size:13px; font-weight:600; text-align:center; }
+  .tile .ic { width:26px; height:26px; color:var(--blue); }
+  .tile:hover, .tile:active { border-color:var(--blue); background:#f5f8ff; }
+
+  .stock { display:flex; align-items:center; gap:10px; padding:11px 0; border-bottom:1px solid var(--line); }
+  .stock:last-child { border-bottom:0; padding-bottom:0; }
+  .stock .logo { width:38px; height:38px; flex:none; border-radius:10px; display:flex; align-items:center;
+                 justify-content:center; font-weight:800; font-size:15px; color:var(--blue); background:#e8eefb; }
+  .stock .info { flex:1; min-width:0; }
+  .stock .nm { font-weight:600; }
+  .stock .sub { font-size:13px; color:var(--dim); font-family:var(--font-num); }
+  .stock .right { text-align:right; }
+  .stock .px { font-family:var(--font-num); font-size:18px; font-weight:700; }
+  .chg { display:inline-flex; align-items:center; gap:3px; font-family:var(--font-num); font-size:13px;
+         font-weight:700; padding:1px 7px; border-radius:999px; }
+  .chg.up { color:var(--up); background:#fdeceb; } .chg.dn { color:var(--down); background:#e3f5ec; }
+  .tri { width:9px; height:9px; fill:currentColor; }
+
+  .news .kick { font-size:13px; font-weight:700; color:var(--gold); }
+  .news h3 { margin:4px 0 6px; font-size:18px; line-height:1.4; }
+  .news p { margin:0; font-size:15px; color:var(--dim); }
+
+  .seg { margin:0 0 12px; padding:0; border:0; min-width:0; }
+  /* legend 不能 float：浮動的 legend 會變成 grid 的普通格子，把「買進」擠到右邊、
+     「賣出」掉到第二行（第一版就是這樣壞的）。grid 只給裡面這一層。 */
+  .seg-opts { display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:4px;
+              background:#eef2f8; border-radius:14px; }
+  .seg legend { font-size:14px; color:var(--dim); margin-bottom:6px; padding:0; }
+  .seg label { display:flex; align-items:center; justify-content:center; gap:6px; margin:0;
+               border-radius:10px; color:var(--dim); font-size:16px; font-weight:700; }
+  .seg input:checked + label { background:#fff; box-shadow:0 1px 3px rgba(11,19,36,.14); }
+  .seg input:checked + label.b { color:var(--up); } .seg input:checked + label.s { color:var(--down); }
+  .seg label .ic-sm { display:none; } .seg input:checked + label .ic-sm { display:block; }
+  .helper { font-size:14px; color:var(--dim); font-family:var(--font-num); }
+
+  button { display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
+           padding:15px; border:none; border-radius:14px;
+           background:var(--blue); color:var(--on-blue); font-family:inherit;
+           font-size:17px; font-weight:700; }
+  button:hover { background:#172f73; }
+  button.ghost { background:var(--card); color:var(--dim); border:1px solid var(--line); font-weight:600; }
+  button.ghost:hover { background:#eef2f8; }
+
+  table { width:100%; border-collapse:collapse; font-size:15px; }
+  th,td { text-align:left; padding:11px 4px; border-bottom:1px solid var(--line); }
+  tr:last-child td { border-bottom:0; }
+  th { color:var(--dim); font-size:13px; font-weight:600; }
+  th.rt, td.n { text-align:right; font-family:var(--font-num); font-weight:700; }
+  tr.me td { background:#eef3ff; }
+  tr.me td:first-child { border-radius:10px 0 0 10px; } tr.me td:last-child { border-radius:0 10px 10px 0; }
+  .rank { width:2.2em; font-weight:800; color:var(--gold); font-family:var(--font-num); }
+  .you { display:inline-block; font-size:12px; font-weight:700; margin-left:6px; padding:1px 8px;
+         border-radius:999px; background:var(--blue); color:#fff; }
+  .foot { text-align:center; font-size:13px; color:var(--dim); margin-top:18px; }
+
+  /* ====== 共用基礎層（三個模板一致，只有色票與外觀不同） ======
+     對應 ui-ux-pro-max：§1 無障礙 §2 觸控 §5 版面 §6 字體色彩 §7 動效 §8 表單 */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0 auto; padding: var(--pad);
+    max-width: 480px; min-height: 100dvh;
+    background: var(--bg); color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 16px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .num, .px, .chg, td.n, .clock, .total, .helper { font-variant-numeric: tabular-nums; }
+
+  button, input, select, .tile, .seg label { min-height: 44px; }
+  button, .tile, .seg label, select { cursor: pointer; touch-action: manipulation; }
+
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+  .seg input:focus-visible + label { outline: 3px solid var(--ring); outline-offset: 2px; }
+
+  button, .tile, .seg label {
+    transition: background-color .18s ease-out, border-color .18s ease-out, transform .12s ease-out;
+  }
+  button:active, .tile:active, .seg label:active { transform: scale(.985); }
+  button[disabled] { opacity: .45; cursor: not-allowed; }
+
+  .ic { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
+        stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .ic-sm { width: 18px; height: 18px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important; scroll-behavior: auto !important;
+    }
+  }
+
+  label { display: block; font-size: 14px; color: var(--dim); margin-bottom: 6px; }
+  input, select {
+    display: block; width: 100%; padding: 11px 13px; margin: 0 0 12px;
+    font-family: inherit; font-size: 16px;
+    color: var(--fg); background-color: var(--input-bg);
+    border: var(--input-bd); border-radius: var(--r-sm);
+  }
+  input::placeholder { color: var(--placeholder); }
+  .seg input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+  input[aria-invalid="true"] { border-color: var(--danger); margin-bottom: 0; }
+
+  .error { display: flex; gap: 7px; align-items: flex-start;
+           color: var(--danger); font-size: 14px; margin: 8px 0 12px; }
+  .error .ic-sm { margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="top">
+  <span class="phase"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4 3.5 7.5 7 11M3.5 7.5H17M17 13l3.5 3.5L17 20M20.5 16.5H7"/></svg>第 2／3 波 · 交易中</span>
+  <span class="clock">14:26</span>
+</div>
+
+<section class="bankcard" aria-label="資產總覽">
+  <div class="row"><h1>賭大股票</h1><span class="team">金牛座 · 第 05 隊</span></div>
+  <div class="lab">總資產</div>
+  <div class="total">63,100</div>
+  <div class="split">
+    <div><div class="lab" style="margin:0">可用現金</div><div class="num">38,500</div></div>
+    <div><div class="lab" style="margin:0">股票現值</div><div class="num">24,600</div></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 9.5 12 4l8.5 5.5M5 10v7M9.5 10v7M14.5 10v7M19 10v7M3.5 20h17"/></svg>本波存款</h2>
+  <ol class="steps" aria-label="存款進度">
+    <li class="done"><span class="dot"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span>申報金額</li>
+    <li class="done"><span class="dot"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span>銀行審核</li>
+    <li class="now" aria-current="step"><span class="dot">3</span>可以交易</li>
+  </ol>
+  <p class="steps-note">申報 38,500 已由銀行核對通過</p>
+</section>
+
+<nav class="tiles" aria-label="功能">
+  <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="13" height="14" rx="1.5"/><path d="M16.5 8.5H20v9a1.5 1.5 0 0 1-3 0V8.5M7 9h6M7 12.5h6M7 16h4"/></svg>新聞</a>
+  <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16"/><path d="M5 15l4-4 3 3 6-7"/><path d="M14 7h4v4"/></svg>個股</a>
+  <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4 3.5 7.5 7 11M3.5 7.5H17M17 13l3.5 3.5L17 20M20.5 16.5H7"/></svg>交易</a>
+  <a class="tile" href="#"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v5a4 4 0 0 1-8 0V4Z"/><path d="M8 6H4.5v1.5A3.5 3.5 0 0 0 8 11M16 6h3.5v1.5A3.5 3.5 0 0 1 16 11M12 13v4M8.5 20h7M10 17h4"/></svg>排行</a>
+</nav>
+
+<section class="card">
+  <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16"/><path d="M5 15l4-4 3 3 6-7"/><path d="M14 7h4v4"/></svg>行情</h2>
+  <div class="stock"><span class="logo" aria-hidden="true">伊</span><div class="info"><div class="nm">伊競商務分析事務所</div><div class="sub">100 → 88</div></div>
+    <div class="right"><div class="px">88.00</div><span class="chg dn" aria-label="下跌 12%"><svg class="tri" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 8.2 1 1.8h8z"/></svg>−12.00%</span></div></div>
+  <div class="stock"><span class="logo" aria-hidden="true">佑</span><div class="info"><div class="nm">佑佑國際資安</div><div class="sub">100 → 135 · 持有 120 張</div></div>
+    <div class="right"><div class="px">135.00</div><span class="chg up" aria-label="上漲 35%"><svg class="tri" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.8 9 8.2H1z"/></svg>+35.00%</span></div></div>
+  <div class="stock"><span class="logo" aria-hidden="true">松</span><div class="info"><div class="nm">松鼠宅急便</div><div class="sub">100 → 105 · 持有 80 張</div></div>
+    <div class="right"><div class="px">105.00</div><span class="chg up" aria-label="上漲 5%"><svg class="tri" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.8 9 8.2H1z"/></svg>+5.00%</span></div></div>
+  <div class="stock"><span class="logo" aria-hidden="true">皇</span><div class="info"><div class="nm">皇家鑄幣局</div><div class="sub">100 → 92</div></div>
+    <div class="right"><div class="px">92.00</div><span class="chg dn" aria-label="下跌 8%"><svg class="tri" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 8.2 1 1.8h8z"/></svg>−8.00%</span></div></div>
+</section>
+
+<section class="card news">
+  <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="13" height="14" rx="1.5"/><path d="M16.5 8.5H20v9a1.5 1.5 0 0 1-3 0V8.5M7 9h6M7 12.5h6M7 16h4"/></svg>本波新聞</h2>
+  <span class="kick">第 2 波 · 產業快訊</span>
+  <h3>資安法三讀通過，企業資安預算估增三成</h3>
+  <p>新法要求上市櫃公司每年接受資安稽核；另一方面，物流業者表示油價上漲將壓縮利潤。</p>
+</section>
+
+<section class="card">
+  <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4 3.5 7.5 7 11M3.5 7.5H17M17 13l3.5 3.5L17 20M20.5 16.5H7"/></svg>下單</h2>
+  <label for="stk3">股票</label>
+  <select id="stk3"><option>佑佑國際資安　135.00</option><option>伊競商務分析事務所　88.00</option><option>松鼠宅急便　105.00</option><option>皇家鑄幣局　92.00</option></select>
+  <fieldset class="seg"><legend>買賣方向</legend>
+    <div class="seg-opts">
+      <input type="radio" name="side3" id="b3" checked><label for="b3" class="b"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>買進</label>
+      <input type="radio" name="side3" id="s3"><label for="s3" class="s"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>賣出</label>
+    </div>
+  </fieldset>
+  <label for="qty3">張數</label>
+  <input id="qty3" type="number" inputmode="numeric" min="1" step="1" value="600" aria-invalid="true" aria-describedby="err3 hint3">
+  <p class="error" id="err3" role="alert"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/></svg><span>可用現金不足：600 張需要 81,000，目前可用 38,500。最多可買 285 張。</span></p>
+  <p class="helper" id="hint3" style="margin:-4px 0 12px">預估成交 81,000</p>
+  <button type="button">確認買進</button>
+</section>
+
+<section class="card">
+  <h2><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v5a4 4 0 0 1-8 0V4Z"/><path d="M8 6H4.5v1.5A3.5 3.5 0 0 0 8 11M16 6h3.5v1.5A3.5 3.5 0 0 1 16 11M12 13v4M8.5 20h7M10 17h4"/></svg>總資產排行</h2>
+  <table>
+    <thead><tr><th>#</th><th>隊伍</th><th class="rt">總資產</th></tr></thead>
+    <tbody>
+      <tr><td class="rank">1</td><td>獵豹</td><td class="n">71,240</td></tr>
+      <tr class="me"><td class="rank">2</td><td>金牛座<span class="you">你</span></td><td class="n">63,100</td></tr>
+      <tr><td class="rank">3</td><td>北極星</td><td class="n">58,900</td></tr>
+      <tr><td class="rank">4</td><td>海豚</td><td class="n">52,300</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<button type="button" class="ghost"><svg class="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 20H5.5A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4H9"/><path d="M15 8l4 4-4 4M19 12H9"/></svg> 登出</button>
+
+<p class="foot">STOCK SYSTEM · 模板 3 銀行存摺</p>
+</body>
+</html>
