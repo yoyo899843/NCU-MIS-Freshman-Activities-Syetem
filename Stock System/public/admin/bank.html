@@ -1,16 +1,37 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>實體銀行對帳 - 賭大股票系統</title></head>
-<body>
-<h1>實體銀行對帳</h1>
-<p><a href="index.html">&laquo; 回後台</a>　第 <strong id="wave"></strong> 波</p>
-<p>隊伍攜帶實體籌碼到攤位數鈔核對。金額相符按「核准入帳」，不符按「駁回作廢」——駁回的隊伍本波不能買賣股票。</p>
-<table border="1" cellpadding="4">
-  <thead><tr><th>隊伍</th><th>提報金額</th><th>目前餘額</th><th>狀態</th><th>操作</th></tr></thead>
-  <tbody id="tbody"></tbody>
-</table>
-<p id="err" style="color:#c00"></p>
+<title>實體銀行對帳 - 賭大股票系統</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body class="wide">
+<a class="back" href="index.html"><i data-icon="back"></i>回後台</a>
+<div class="pagehead"><h1>實體銀行對帳</h1><span class="phase idle">第 <span id="wave">—</span> 波</span></div>
+<p class="hint">隊伍帶實體籌碼到攤位數鈔核對。金額相符按「核准入帳」，不符按「駁回作廢」——駁回的隊伍本波不能買賣股票。</p>
+
+<!-- 待審的排最上面、按鈕最大：這一頁是攤位上拿平板、隊伍排隊等著的時候用的 -->
+<section class="card">
+  <h2><i data-icon="bank"></i>待審核 <span class="badge pending" id="pendingCount">0</span></h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>隊伍</th><th class="n">提報金額</th><th class="n">目前餘額</th><th>操作</th></tr></thead>
+      <tbody id="pending"></tbody>
+    </table>
+  </div>
+  <p class="error" id="err" role="alert"></p>
+</section>
+
+<section class="card">
+  <h2><i data-icon="list"></i>已處理</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>隊伍</th><th class="n">提報金額</th><th class="n">目前餘額</th><th>結果</th></tr></thead>
+      <tbody id="done"></tbody>
+    </table>
+  </div>
+</section>
+
+<script src="../ui.js"></script>
 <script src="admin.js"></script>
 <script>
 if (requireAdminLogin()) {
@@ -18,16 +39,25 @@ if (requireAdminLogin()) {
     const { ok, body } = await api('/deposits');
     if (!ok) return;
     $('wave').textContent = body.wave;
-    $('tbody').innerHTML = body.deposits.map(d => `
+    const pending = body.deposits.filter(d => d.status === 'pending');
+    const done = body.deposits.filter(d => d.status !== 'pending');
+    $('pendingCount').textContent = pending.length;
+
+    $('pending').innerHTML = pending.map(d => `
       <tr>
-        <td>${esc(d.display_name)}</td>
-        <td><strong>${money(d.amount)}</strong></td>
-        <td>${money(d.cash)}</td>
-        <td>${DEPOSIT_LABEL[d.status]}</td>
-        <td>${d.status === 'pending'
-          ? `<button onclick="review(${d.id},'approve')">核准入帳</button>
-             <button onclick="review(${d.id},'reject')">駁回作廢</button>` : ''}</td>
-      </tr>`).join('') || '<tr><td colspan="5">本波還沒有隊伍提報</td></tr>';
+        <td><strong>${esc(d.display_name)}</strong></td>
+        <td class="n" style="font-size:20px">${money(d.amount)}</td>
+        <td class="n muted">${money(d.cash)}</td>
+        <td><div class="actions">
+          <button class="sm approve" type="button" onclick="review(${d.id},'approve')">${icon('check','ic-sm')}核准入帳</button>
+          <button class="sm danger" type="button" onclick="review(${d.id},'reject')">${icon('x','ic-sm')}駁回作廢</button>
+        </div></td>
+      </tr>`).join('') || '<tr><td colspan="4" class="muted">目前沒有等待審核的申報。</td></tr>';
+
+    $('done').innerHTML = done.map(d => `
+      <tr><td>${esc(d.display_name)}</td><td class="n">${money(d.amount)}</td>
+      <td class="n muted">${money(d.cash)}</td><td>${statusBadge(d.status)}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="muted">本波還沒有處理過的申報。</td></tr>';
   }
 
   window.review = async function (id, action) {

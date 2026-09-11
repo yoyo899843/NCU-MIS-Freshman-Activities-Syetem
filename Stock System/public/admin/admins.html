@@ -1,33 +1,39 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>管理端帳號 - 賭大股票系統</title></head>
-<body>
+<title>管理端帳號 - 賭大股票系統</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body class="wide">
+<a class="back" href="index.html"><i data-icon="back"></i>回後台</a>
 <h1>管理端帳號</h1>
-<p><a href="index.html">&laquo; 回後台</a></p>
+<p class="hint">兩種權限：<strong>主辦</strong>什麼都能做；<strong>銀行關主</strong>只能核准／駁回存款申報，其餘寫入操作一律被伺服器擋下。</p>
 
-<p>兩種權限：<strong>主辦</strong>（admin）什麼都能做；<strong>銀行關主</strong>（banker）只能核准／駁回存款申報，其餘寫入操作一律被伺服器擋下。</p>
+<form class="card" id="addForm" onsubmit="return false">
+  <h2><i data-icon="users"></i>新增帳號</h2>
+  <div class="field-row">
+    <div><label for="newEmail">Email</label><input id="newEmail" type="email" autocomplete="off" autocapitalize="off"></div>
+    <div><label for="newPassword">密碼（至少 8 字元）</label><input id="newPassword" type="password" autocomplete="new-password"></div>
+    <div><label for="newName">顯示名稱（選填）</label><input id="newName"></div>
+    <div><label for="newRole">權限</label>
+      <select id="newRole"><option value="banker">銀行關主</option><option value="admin">主辦（管理員）</option></select></div>
+  </div>
+  <p class="error" id="addErr" role="alert"></p>
+  <button id="addBtn" type="submit" style="max-width:240px">新增帳號</button>
+</form>
 
-<h2>新增帳號</h2>
-<p>
-  Email <input id="newEmail" type="email" placeholder="banker1@example.com">
-  密碼 <input id="newPassword" type="password" placeholder="至少 8 字元">
-  名稱 <input id="newName" placeholder="顯示名稱（選填）">
-  <select id="newRole">
-    <option value="banker">銀行關主</option>
-    <option value="admin">主辦（管理員）</option>
-  </select>
-  <button id="addBtn">新增</button>
-</p>
-<p id="addErr" style="color:#c00"></p>
+<section class="card">
+  <h2><i data-icon="key"></i>帳號清單</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Email</th><th>名稱</th><th>權限</th><th>建立時間</th><th>操作</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <p class="error" id="err" role="alert" style="margin-top:12px"></p>
+</section>
 
-<h2>帳號清單</h2>
-<table border="1" cellpadding="4">
-  <thead><tr><th>Email</th><th>名稱</th><th>權限</th><th>建立時間</th><th>重設密碼</th><th>刪除</th></tr></thead>
-  <tbody id="rows"></tbody>
-</table>
-<p id="err" style="color:#c00"></p>
-
+<script src="../ui.js"></script>
 <script src="admin.js"></script>
 <script>
 if (requireAdminLogin()) {
@@ -39,7 +45,7 @@ if (requireAdminLogin()) {
   // &#39; 也救不了——HTML 屬性會先解碼回單引號才交給 JS 解析）。
   const emailOf = id => (admins.find(a => a.id === id) || {}).email || '';
 
-  $('addBtn').addEventListener('click', async () => {
+  $('addForm').addEventListener('submit', async () => {
     $('addErr').textContent = '';
     const { ok, body } = await api('/admins', {
       method: 'POST',
@@ -85,19 +91,19 @@ if (requireAdminLogin()) {
     const { ok, body } = await api('/admins');
     admins = ok ? body : [];
     if (!ok) {
-      $('rows').innerHTML = '<tr><td colspan="6">你不是管理員，看不到帳號清單。</td></tr>';
+      $('rows').innerHTML = '<tr><td colspan="5" class="muted">你不是管理員，看不到帳號清單。</td></tr>';
       return;
     }
     $('rows').innerHTML = body.map(a => `
-      <tr>
-        <td>${esc(a.email)}${a.id === meId ? '　<strong>（你自己）</strong>' : ''}</td>
+      <tr class="${a.id === meId ? 'me' : ''}">
+        <td>${esc(a.email)}${a.id === meId ? '<span class="you">你</span>' : ''}</td>
         <td>${esc(a.display_name || '—')}</td>
-        <td>${ROLE_LABEL[a.role] || a.role}</td>
-        <td>${new Date(a.created_at).toLocaleString()}</td>
-        <td><button onclick="resetPassword(${a.id})">重設</button></td>
-        <td>${a.id === meId
-          ? '<span style="color:#888">—</span>'
-          : `<button onclick="removeAdmin(${a.id})">刪除</button>`}</td>
+        <td><span class="badge ${a.role === 'admin' ? 'approved' : 'neutral'}">${ROLE_LABEL[a.role] || a.role}</span></td>
+        <td class="muted" style="white-space:nowrap">${new Date(a.created_at).toLocaleString()}</td>
+        <td><div class="actions">
+          <button class="sm ghost" type="button" onclick="resetPassword(${a.id})">重設密碼</button>
+          ${a.id === meId ? '' : `<button class="sm danger" type="button" onclick="removeAdmin(${a.id})">刪除</button>`}
+        </div></td>
       </tr>`).join('');
   }
 

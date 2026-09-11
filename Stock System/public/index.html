@@ -1,35 +1,57 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>賭大股票系統</title></head>
+<title>賭大股票系統</title>
+<link rel="stylesheet" href="style.css">
+</head>
 <body>
-<h1>賭大股票系統</h1>
-<p id="who"></p>
-<p>目前：第 <strong id="wave"></strong> 波　<strong id="phase"></strong></p>
-<p>
-  <a href="news.html">新聞情報中心</a> |
-  <a href="market.html">個股查詢</a> |
-  <a href="trade.html">交易與帳戶</a> |
-  <a href="leaderboard.html">總資產排行榜</a> |
-  <a href="admin/login.html">管理後台</a>
-</p>
-<p><button id="logoutBtn">登出</button></p>
+<div class="top">
+  <span class="phase" id="phase">載入中</span>
+  <span class="clock" id="clock"></span>
+</div>
 
-<h2>資產總覽</h2>
-<p>可用現金：<strong id="cash">—</strong>　股票現值：<strong id="stockValue">—</strong>　總資產：<strong id="total">—</strong></p>
-<table border="1" cellpadding="4">
-  <thead><tr><th>股票</th><th>股價</th><th>漲跌</th><th>持有張數</th><th>市值</th></tr></thead>
-  <tbody id="positions"></tbody>
-</table>
+<section class="bankcard" aria-label="資產總覽">
+  <div class="row"><h1 class="brand">賭大股票</h1><span class="team" id="who"></span></div>
+  <div class="lab" style="margin-top:14px">總資產</div>
+  <div class="total" id="total">—</div>
+  <div class="split">
+    <div><div class="lab">可用現金</div><div class="num" id="cash">—</div></div>
+    <div><div class="lab">股票現值</div><div class="num" id="stockValue">—</div></div>
+  </div>
+</section>
 
-<h2>本波申報狀態</h2>
-<p id="depositState">—</p>
+<section class="card">
+  <h2><i data-icon="bank"></i>本波存款</h2>
+  <div id="depositState"><p class="hint">載入中…</p></div>
+</section>
 
+<nav class="tiles" aria-label="功能">
+  <a class="tile" href="news.html"><i data-icon="news"></i>新聞</a>
+  <a class="tile" href="market.html"><i data-icon="chart"></i>個股</a>
+  <a class="tile" href="trade.html"><i data-icon="trade"></i>交易</a>
+  <a class="tile" href="leaderboard.html"><i data-icon="trophy"></i>排行</a>
+</nav>
+
+<section class="card">
+  <h2><i data-icon="chart"></i>行情與持股</h2>
+  <div id="positions"><p class="hint">載入中…</p></div>
+</section>
+
+<section class="card" id="newsCard" hidden>
+  <h2><i data-icon="news"></i>本波新聞</h2>
+  <div id="news"></div>
+  <a class="btn ghost sm" href="news.html" style="margin-top:12px">看全部新聞</a>
+</section>
+
+<button id="logoutBtn" class="ghost" type="button"><i data-icon="logout" data-size="sm"></i>登出</button>
+<p class="foot"><a href="admin/login.html">工作人員登入</a></p>
+
+<script src="ui.js"></script>
 <script src="app.js"></script>
 <script>
 if (requireLogin()) {
   const info = JSON.parse(localStorage.getItem('teamInfo') || 'null');
-  if (info) $('who').textContent = `隊伍：${info.displayName}`;
+  if (info) $('who').textContent = info.displayName;
 
   $('logoutBtn').addEventListener('click', () => {
     localStorage.removeItem('teamToken');
@@ -37,29 +59,41 @@ if (requireLogin()) {
     location.href = 'login.html';
   });
 
+  // 持股列：股價、漲跌、各波價格，有持股的另外寫張數與市值
+  function positionRow(p) {
+    const hist = p.shares ? `持有 ${p.shares} 張 · 市值 ${money(p.value)}` : '未持有';
+    return `<div class="stock">
+      <span class="logo" aria-hidden="true">${esc(Array.from(p.name)[0])}</span>
+      <div class="info"><div class="nm">${esc(p.name)}</div><div class="sub">${hist}</div></div>
+      <div class="right"><div class="px">${p.price === null ? '—' : money(p.price)}</div>${chgHtml(p.changePct)}</div>
+    </div>`;
+  }
+
   async function load() {
     const { ok, body } = await api('/api/team/portfolio');
     if (!ok) return;
-    $('wave').textContent = body.wave;
-    $('phase').textContent = PHASE_LABEL[body.phase] || body.phase;
+    const tradingNow = body.phase === 'trading';
+    $('phase').className = 'phase' + (tradingNow ? '' : ' idle');
+    $('phase').textContent = `第 ${body.wave} 波 · ${PHASE_LABEL[body.phase] || body.phase}`;
     $('cash').textContent = money(body.cash);
     $('stockValue').textContent = money(body.stockValue);
     $('total').textContent = money(body.total);
-    $('positions').innerHTML = body.positions.map(p => `
-      <tr>
-        <td>${esc(p.name)}</td>
-        <td>${p.price === null ? '—' : money(p.price)}</td>
-        <td>${pctText(p.changePct)}</td>
-        <td>${p.shares}</td>
-        <td>${money(p.value)}</td>
-      </tr>`).join('');
+    $('positions').innerHTML = body.positions.map(positionRow).join('')
+      || '<p class="hint">還沒有股票資料。</p>';
 
     const d = await api('/api/team/deposit');
-    if (d.ok) {
-      $('depositState').textContent = d.body.deposit
-        ? `申報 ${money(d.body.deposit.amount)} 元　狀態：${DEPOSIT_LABEL[d.body.deposit.status]}`
-        : '本波尚未申報';
+    if (d.ok) $('depositState').innerHTML = depositSteps(d.body.phase, d.body.deposit);
+
+    const n = await api('/api/market/news');
+    if (n.ok && n.body.length) {
+      const top = n.body[0];
+      $('newsCard').hidden = false;
+      $('news').innerHTML = `<div class="news-item"><span class="kick">第 ${top.wave} 波</span>
+        <h3>${esc(top.title)}</h3>${top.body ? `<p>${esc(top.body)}</p>` : ''}</div>`;
+    } else {
+      $('newsCard').hidden = true;
     }
+    $('clock').textContent = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
   }
 
   load();

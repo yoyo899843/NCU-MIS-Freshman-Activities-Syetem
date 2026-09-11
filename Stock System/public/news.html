@@ -1,24 +1,49 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>新聞情報中心 - 賭大股票系統</title></head>
+<title>新聞情報中心 - 賭大股票系統</title>
+<link rel="stylesheet" href="style.css">
+</head>
 <body>
-<h1>新聞情報中心</h1>
-<p><a href="index.html">&laquo; 回首頁</a>　<label><input type="checkbox" id="all"> 顯示歷來所有波次</label></p>
-<div id="list"></div>
+<a class="back" href="index.html"><i data-icon="back"></i>回首頁</a>
+<div class="pagehead">
+  <h1>新聞情報中心</h1>
+  <label class="switch"><input type="checkbox" id="all"><span aria-hidden="true"></span>顯示所有波次</label>
+</div>
+<p class="hint">判讀每則新聞對四間公司是利多還是利空，再決定這一波要買什麼。</p>
+
+<section class="card" aria-live="polite">
+  <div id="list"><p class="hint">載入中…</p></div>
+</section>
+
+<nav class="tiles" aria-label="功能">
+  <a class="tile" href="news.html" aria-current="page"><i data-icon="news"></i>新聞</a>
+  <a class="tile" href="market.html"><i data-icon="chart"></i>個股</a>
+  <a class="tile" href="trade.html"><i data-icon="trade"></i>交易</a>
+  <a class="tile" href="leaderboard.html"><i data-icon="trophy"></i>排行</a>
+</nav>
+
+<script src="ui.js"></script>
 <script src="app.js"></script>
 <script>
+// 只在內容真的變了才重畫：aria-live 區塊每 5 秒被整段換掉的話，
+// 螢幕報讀器會一直重唸同一則新聞。
+let lastSig = '';
 async function load() {
   const { ok, body } = await api('/api/market/news' + ($('all').checked ? '?all=1' : ''));
   if (!ok) return;
+  const sig = body.map(n => n.id).join(',') + '|' + $('all').checked;
+  if (sig === lastSig) return;
+  lastSig = sig;
   $('list').innerHTML = body.length
     ? body.map(n => `
-        <article>
-          <h3>第 ${n.wave} 波：${esc(n.title)}</h3>
-          ${n.body ? `<p style="white-space:pre-wrap">${esc(n.body)}</p>` : ''}
-          <p><small>${new Date(n.published_at).toLocaleString()}</small></p>
-        </article><hr>`).join('')
-    : '<p>本波還沒有新聞。</p>';
+        <article class="news-item">
+          <span class="kick">第 ${n.wave} 波</span>
+          <h2>${esc(n.title)}</h2>
+          ${n.body ? `<p>${esc(n.body)}</p>` : ''}
+          <time datetime="${esc(n.published_at)}">${new Date(n.published_at).toLocaleString()}</time>
+        </article>`).join('')
+    : '<p class="hint">本波還沒有新聞，主持人發布後這裡會自動出現。</p>';
 }
 $('all').addEventListener('change', load);
 load();

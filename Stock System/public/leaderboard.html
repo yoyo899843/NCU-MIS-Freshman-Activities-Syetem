@@ -2,52 +2,74 @@
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>總資產排行榜 - 賭大股票系統</title>
+<link rel="stylesheet" href="style.css">
 <style>
-  /* 這一頁是投影用的，不是拿手機看的：字級刻意放大到會議室最後一排也看得清楚。
-     其餘頁面照企劃說的先不做美編。 */
-  body { font-family: system-ui, "PingFang TC", sans-serif; margin: 24px; }
-  h1 { font-size: 2rem; margin: 0 0 4px; }
-  .meta { color: #555; margin-bottom: 16px; }
-  table { width: 100%; border-collapse: collapse; font-size: 1.5rem; }
-  th, td { padding: 10px 12px; border-bottom: 2px solid #ddd; text-align: right; }
-  th:nth-child(1), td:nth-child(1) { width: 3.5em; text-align: center; }
-  th:nth-child(2), td:nth-child(2) { text-align: left; }
-  tbody tr:nth-child(1) { background: #fff6d6; font-weight: 700; }
-  tbody tr:nth-child(2) { background: #f2f2f2; }
-  tbody tr:nth-child(3) { background: #f7ece2; }
-  .total { font-weight: 700; }
+  /* 這一頁是投影用的：尺寸跟著視窗走（vw / clamp），1024×768 的投影機到 4K
+     都不用另外調，會議室最後一排也看得清楚。手機打開時則退回正常大小。 */
+  body.board { max-width: 1400px; padding: clamp(16px, 2.5vw, 40px); }
+  .board .bankcard { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+                     flex-wrap: wrap; padding: clamp(16px, 2vw, 28px) clamp(18px, 2.4vw, 36px); }
+  .board .bankcard h1 { margin: 0; font-size: clamp(24px, 3.2vw, 48px); color: #fff; letter-spacing: .06em; }
+  .board .bankcard .brand { font-size: clamp(13px, 1.1vw, 18px); }
+  .board .bankcard .meta { text-align: right; font-size: clamp(14px, 1.3vw, 22px); color: var(--navy-dim); }
+  .board .bankcard .meta b { color: var(--gold-lt); font-family: var(--font-num); }
+  .board table { font-size: clamp(16px, 2vw, 34px); }
+  .board th { font-size: clamp(13px, 1.1vw, 20px); padding: .6em .5em; }
+  .board td { padding: .55em .5em; }
+  .board td.n, .board th.n { white-space: nowrap; }
+  .board .rank { width: 3em; font-size: 1.1em; }
+  /* 前三名：名次旁加獎牌標籤，不是只把整列染色——顏色在投影機上常常會偏掉 */
+  .medal { display: inline-block; font-size: .55em; font-weight: 800; padding: .15em .6em; border-radius: 999px;
+           vertical-align: middle; margin-left: .5em; }
+  .medal.g1 { background: #fdf1dc; color: #7a4a05; }
+  .medal.g2 { background: #eef2f8; color: #3c4658; }
+  .medal.g3 { background: #fbeee6; color: #7c3a12; }
+  tr.top1 td { background: #fffaf0; }
+  .board td.total { font-weight: 800; color: var(--blue); }
+  .board .card { padding: clamp(10px, 1.4vw, 24px); }
+  #updated { font-size: clamp(12px, 1vw, 16px); }
 </style>
 </head>
-<body>
-<h1>總資產排行榜</h1>
-<p class="meta">第 <strong id="wave"></strong> / <span id="totalWaves"></span> 波　<span id="phase"></span>
-   <span id="updated"></span>　<a href="index.html">回首頁</a></p>
+<body class="board">
+<header class="bankcard">
+  <div><p class="brand">賭大股票</p><h1>總資產排行榜</h1></div>
+  <div class="meta">第 <b id="wave">—</b> / <span id="totalWaves">—</span> 波<br><span id="phase"></span></div>
+</header>
 
-<table>
-  <thead><tr><th>名次</th><th>隊伍</th><th>現金</th><th>股票現值</th><th>總資產</th></tr></thead>
-  <tbody id="rows"></tbody>
-</table>
+<section class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>名次</th><th>隊伍</th><th class="n">現金</th><th class="n">股票現值</th><th class="n">總資產</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="5" class="muted">載入中…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+<p class="foot"><span id="updated"></span>　·　<a href="index.html">回首頁</a></p>
 
+<script src="ui.js"></script>
 <script src="app.js"></script>
 <script>
 // 這一頁不需要登入：大螢幕那台電腦沒有隊伍帳號，而名次本來就是要公開投影的。
-// 用的是 /api/market/leaderboard（公開），不是管理端那支。
+// 用的是 /api/market/leaderboard（公開，不含各隊持股），不是管理端那支。
+const MEDAL = { 1: ['g1', '冠軍'], 2: ['g2', '亞軍'], 3: ['g3', '季軍'] };
 async function load() {
   const { ok, body } = await api('/api/market/leaderboard');
   if (!ok) return;
   $('wave').textContent = body.wave;
   $('totalWaves').textContent = body.total_waves;
   $('phase').textContent = PHASE_LABEL[body.phase] || body.phase;
-  $('updated').textContent = '更新於 ' + new Date().toLocaleTimeString();
+  $('updated').textContent = '更新於 ' + new Date().toLocaleTimeString('zh-TW');
 
-  $('rows').innerHTML = body.teams.map(t => `
-    <tr>
-      <td>${t.rank}</td>
-      <td>${esc(t.name)}</td>
-      <td>${money(t.cash)}</td>
-      <td>${money(t.stockValue)}</td>
-      <td class="total">${money(t.total)}</td>
-    </tr>`).join('') || '<tr><td colspan="5">還沒有隊伍</td></tr>';
+  $('rows').innerHTML = body.teams.map(t => {
+    const m = MEDAL[t.rank];
+    return `<tr class="${t.rank === 1 ? 'top1' : ''}">
+      <td class="rank">${t.rank}</td>
+      <td>${esc(t.name)}${m ? `<span class="medal ${m[0]}">${m[1]}</span>` : ''}</td>
+      <td class="n">${money(t.cash)}</td>
+      <td class="n">${money(t.stockValue)}</td>
+      <td class="n total">${money(t.total)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" class="muted">還沒有隊伍</td></tr>';
 }
 load();
 setInterval(load, 5000);

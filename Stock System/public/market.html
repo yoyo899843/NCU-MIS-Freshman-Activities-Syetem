@@ -1,50 +1,75 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>個股查詢 - 賭大股票系統</title></head>
+<title>個股查詢 - 賭大股票系統</title>
+<link rel="stylesheet" href="style.css">
+</head>
 <body>
-<h1>個股查詢</h1>
-<p><a href="index.html">&laquo; 回首頁</a>　目前第 <strong id="wave"></strong> 波</p>
+<a class="back" href="index.html"><i data-icon="back"></i>回首頁</a>
+<div class="pagehead"><h1>個股查詢</h1><span class="phase idle" id="wave">—</span></div>
 
-<h2>四檔走勢比較</h2>
-<div id="chart"></div>
+<section class="card">
+  <h2><i data-icon="chart"></i>四檔走勢比較</h2>
+  <p class="hint">收盤價，每一波開盤時更新。指到某一波可以看當時的價格。</p>
+  <div id="chart"></div>
+</section>
 
-<h2>個股明細</h2>
 <div id="list"></div>
 
+<nav class="tiles" aria-label="功能">
+  <a class="tile" href="news.html"><i data-icon="news"></i>新聞</a>
+  <a class="tile" href="market.html" aria-current="page"><i data-icon="chart"></i>個股</a>
+  <a class="tile" href="trade.html"><i data-icon="trade"></i>交易</a>
+  <a class="tile" href="leaderboard.html"><i data-icon="trophy"></i>排行</a>
+</nav>
+
+<script src="ui.js"></script>
 <script src="app.js"></script>
 <script>
+// 圖表每 5 秒重畫一次的話，使用者正指著看的提示框會一直閃掉，
+// 所以只在資料真的變了（股價或波次有動）才重畫。
+let lastSig = '';
+
 async function load() {
   const { ok, body } = await api('/api/market/stocks');
   if (!ok) return;
-  $('wave').textContent = body.wave;
+  $('wave').textContent = `第 ${body.wave} 波`;
 
-  // 疊在同一張圖上：玩家要判斷的是「這則新聞讓哪一檔比較有利」，
-  // 四張各自獨立的圖沒辦法直接比較，一張疊起來的可以。
-  $('chart').innerHTML = trendChart(
-    body.stocks.filter(s => s.history.length).map(s => ({ name: s.name, history: s.history }))
-  );
+  const sig = JSON.stringify(body.stocks.map(s => [s.id, s.history]));
+  if (sig === lastSig) return;
+  lastSig = sig;
 
-  $('list').innerHTML = body.stocks.map((s, i) => {
-    const color = CHART_COLORS[i % CHART_COLORS.length];
-    return `
-    <article style="margin-bottom:18px">
-      <h3><span style="display:inline-block;width:11px;height:11px;background:${color}"></span>
-          ${esc(s.name)}</h3>
-      <p>最新股價：<strong>${s.price === null ? '尚未開盤' : money(s.price)}</strong>
-         本波漲跌：<strong>${pctText(s.changePct)}</strong></p>
-      <p>各波漲跌幅：</p>
-      ${changeBars(s.history)}
-      <p style="font-size:0.9em;color:#444">
-        ${s.history.length
-          ? s.history.map(h => `第${h.wave}波 ${money(h.price)}（${pctText(h.changePct)}）`).join('　→　')
-          : '尚無歷史價格'}
-      </p>
-    </article><hr>`;
-  }).join('');
+  // colorIndex 用股票在完整清單裡的位置，不是篩選後的位置——顏色跟著股票走
+  const series = body.stocks.map((s, i) => ({ name: s.name, colorIndex: i, history: s.history }));
+  // 照容器實際寬度畫。原本固定畫 640 寬再用 CSS 縮進手機的卡片，整張圖連字一起被
+  // 縮到 58%，12px 的軸標籤變成 7px，根本讀不到。
+  const cw = Math.max(280, $('chart').clientWidth);
+  $('chart').innerHTML = trendChart(series.filter(s => s.history.length), { w: cw, h: Math.round(Math.min(300, cw * 0.62)) });
+  attachTips($('chart'));
+
+  $('list').innerHTML = body.stocks.map((s, i) => `
+    <section class="card">
+      <div class="stock" style="padding:0 0 12px;border-bottom:1px solid var(--line);margin-bottom:12px">
+        <span class="logo" aria-hidden="true">${esc(Array.from(s.name)[0])}</span>
+        <!-- 名稱前的色線跟上面走勢圖、圖例同一個記號，用來把這張卡對到圖上的哪一條線。
+             不把代號做成「白字疊在系列色上」：黃色那格只有 2.6:1，而且文字不該用系列色。 -->
+        <div class="info"><h2 style="margin:0"><svg width="18" height="10" aria-hidden="true"><rect y="3.5" width="18" height="3" rx="1.5" fill="${SERIES_COLORS[i % SERIES_COLORS.length]}"/></svg>${esc(s.name)}</h2>
+          <div class="sub">${s.history.map(h => money(h.price)).join(' → ') || '尚無價格'}</div></div>
+        <div class="right"><div class="px">${s.price === null ? '尚未開盤' : money(s.price)}</div>${chgHtml(s.changePct)}</div>
+      </div>
+      <div class="hint" style="margin-bottom:4px">各波漲跌幅</div>
+      <div class="bars">${changeBars(s.history, { w: cw })}</div>
+    </section>`).join('');
+  document.querySelectorAll('#list .bars').forEach(attachTips);
 }
 load();
 // 股價是主辦在後台每波開盤時更新的，玩家端沒有別的方式知道
 setInterval(load, 5000);
+// 轉橫向、改視窗大小時用新的寬度重畫（圖是照寬度畫的，不是縮放的）
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { lastSig = ''; load(); }, 200);
+});
 </script>
 </body></html>

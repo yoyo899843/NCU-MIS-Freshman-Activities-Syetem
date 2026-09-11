@@ -1,31 +1,51 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>隊伍登入 - 賭大股票系統</title></head>
+<title>隊伍登入 - 賭大股票系統</title>
+<link rel="stylesheet" href="style.css">
+</head>
 <body>
-<h1>賭大股票系統</h1>
-<div id="loginBox">
-  <p><input id="name" placeholder="隊伍名稱"></p>
-  <p><input id="pin" placeholder="4 碼 PIN" maxlength="4" inputmode="numeric"></p>
-  <p><button id="loginBtn">登入</button></p>
-  <p id="err" style="color:#c00"></p>
-</div>
+<section class="bankcard" style="margin-top:12px">
+  <div class="row"><p class="brand">賭大股票</p><i data-icon="bank"></i></div>
+  <h1 style="font-size:24px;font-weight:800;margin:14px 0 0">隊伍登入</h1>
+  <div class="lab" style="margin-top:4px">用主辦發給你們的隊伍名稱與 4 碼 PIN 登入。</div>
+</section>
+
+<form class="card" id="loginBox" onsubmit="return false">
+  <label for="name">隊伍名稱</label>
+  <input id="name" autocomplete="username" autocapitalize="off">
+  <label for="pin">PIN（4 碼數字）</label>
+  <input id="pin" type="password" maxlength="4" inputmode="numeric" autocomplete="current-password" pattern="\d*">
+  <p class="error" id="err" role="alert"></p>
+  <button id="loginBtn" type="submit">登入</button>
+</form>
+
+<p class="foot">忘記 PIN 請找銀行攤位或主辦重設　·　<a href="admin/login.html">工作人員登入</a></p>
+
+<script src="ui.js"></script>
 <script src="app.js"></script>
 <script>
 if (teamToken()) location.href = 'index.html';
 
 $('pin').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
 
-$('loginBtn').addEventListener('click', async () => {
+// 用 form submit 而不是只綁按鈕 click：手機鍵盤上按「前往／送出」也要能登入
+$('loginBox').addEventListener('submit', async () => {
   $('err').textContent = '';
-  const { ok, body } = await api('/api/team/login', {
-    method: 'POST',
-    body: JSON.stringify({ displayName: $('name').value.trim(), pin: $('pin').value })
-  });
-  if (!ok) { $('err').textContent = body.error || '登入失敗'; return; }
-  localStorage.setItem('teamToken', body.token);
-  localStorage.setItem('teamInfo', JSON.stringify(body.team));
-  location.href = 'index.html';
+  const btn = $('loginBtn');
+  btn.disabled = true;   // 送出中鎖住，避免連點送出兩次
+  try {
+    const { ok, body } = await api('/api/team/login', {
+      method: 'POST',
+      body: JSON.stringify({ displayName: $('name').value.trim(), pin: $('pin').value })
+    });
+    if (!ok) { $('err').textContent = body.error || '登入失敗'; return; }
+    localStorage.setItem('teamToken', body.token);
+    localStorage.setItem('teamInfo', JSON.stringify(body.team));
+    location.href = 'index.html';
+  } finally {
+    btn.disabled = false;
+  }
 });
 </script>
 </body></html>

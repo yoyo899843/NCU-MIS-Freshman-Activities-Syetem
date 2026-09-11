@@ -1,3 +1,4 @@
+// 管理後台共用。外觀在 ../style.css，圖示／漲跌膠囊／狀態徽章在 ../ui.js（要先載入）。
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

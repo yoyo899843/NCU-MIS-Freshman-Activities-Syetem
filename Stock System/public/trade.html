@@ -1,63 +1,101 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>交易與帳戶 - 賭大股票系統</title></head>
+<title>交易與帳戶 - 賭大股票系統</title>
+<link rel="stylesheet" href="style.css">
+</head>
 <body>
-<h1>交易與帳戶中心</h1>
-<p><a href="index.html">&laquo; 回首頁</a>　目前第 <strong id="wave"></strong> 波　<strong id="phase"></strong></p>
+<a class="back" href="index.html"><i data-icon="back"></i>回首頁</a>
+<div class="pagehead"><h1>交易與帳戶</h1><span class="phase idle" id="phase">—</span></div>
 
-<h2>存款提報</h2>
-<div id="depositBox">
-  <p id="depositState">—</p>
-  <p id="depositForm" style="display:none">
-    實體換算金額 <input id="amount" type="number" min="0" step="1">
-    <button id="depositBtn">送出申報</button>
-  </p>
-  <p id="depositErr" style="color:#c00"></p>
-</div>
+<section class="bankcard" aria-label="資產總覽">
+  <div class="row"><p class="brand">賭大股票</p><span class="team">第 <span id="wave">—</span> 波</span></div>
+  <div class="lab" style="margin-top:14px">總資產</div>
+  <div class="total" id="total">—</div>
+  <div class="split">
+    <div><div class="lab">可用現金</div><div class="num" id="cash">—</div></div>
+    <div><div class="lab">股票現值</div><div class="num" id="stockValue">—</div></div>
+  </div>
+</section>
 
-<h2>下單交易</h2>
-<p id="tradeLock" style="color:#c00"></p>
-<div id="tradeForm" style="display:none">
-  <p>
+<section class="card" id="depositBox">
+  <h2><i data-icon="bank"></i>本波存款</h2>
+  <div id="depositState"><p class="hint">載入中…</p></div>
+  <form id="depositForm" hidden onsubmit="return false" style="margin-top:14px">
+    <label for="amount">要存入的金額（實體籌碼換算）</label>
+    <input id="amount" type="number" min="0" step="1" inputmode="numeric" aria-describedby="depositHelp">
+    <p class="helper" id="depositHelp">一波只能申報一次。送出後帶籌碼到銀行攤位，關主數完核准才會入帳。</p>
+    <p class="error" id="depositErr" role="alert"></p>
+    <button id="depositBtn" type="submit">送出申報</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2><i data-icon="trade"></i>下單</h2>
+  <p class="notice" id="tradeLock"></p>
+  <form id="tradeForm" hidden onsubmit="return false">
+    <label for="stockSel">股票</label>
     <select id="stockSel"></select>
-    <select id="sideSel"><option value="buy">買進</option><option value="sell">賣出</option></select>
-    <input id="shares" type="number" min="1" step="1" placeholder="張數">
-    <button id="orderBtn">送出</button>
-  </p>
-  <p id="orderHint"></p>
-  <p id="orderErr" style="color:#c00"></p>
-</div>
+    <fieldset class="seg"><legend>買賣方向</legend>
+      <div class="seg-opts">
+        <input type="radio" name="side" id="sideBuy" value="buy" checked><label for="sideBuy" class="buy"><i data-icon="check" data-size="sm"></i>買進</label>
+        <input type="radio" name="side" id="sideSell" value="sell"><label for="sideSell" class="sell"><i data-icon="check" data-size="sm"></i>賣出</label>
+      </div>
+    </fieldset>
+    <label for="shares">張數</label>
+    <input id="shares" type="number" min="1" step="1" inputmode="numeric" aria-describedby="orderHint orderErr">
+    <p class="helper" id="orderHint"></p>
+    <p class="error" id="orderErr" role="alert"></p>
+    <button id="orderBtn" type="submit">確認買進</button>
+  </form>
+</section>
 
-<h2>資產總覽</h2>
-<p>可用現金：<strong id="cash">—</strong>　股票現值：<strong id="stockValue">—</strong>　總資產：<strong id="total">—</strong></p>
-<table border="1" cellpadding="4">
-  <thead><tr><th>股票</th><th>股價</th><th>漲跌</th><th>持有張數</th><th>市值</th></tr></thead>
-  <tbody id="positions"></tbody>
-</table>
+<section class="card">
+  <h2><i data-icon="wallet"></i>持股</h2>
+  <div id="positions"><p class="hint">載入中…</p></div>
+</section>
 
-<h2>成交紀錄</h2>
-<table border="1" cellpadding="4">
-  <thead><tr><th>時間</th><th>波</th><th>股票</th><th>買賣</th><th>張數</th><th>成交價</th><th>總額</th></tr></thead>
-  <tbody id="trades"></tbody>
-</table>
+<section class="card">
+  <h2><i data-icon="list"></i>成交紀錄</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>時間</th><th>股票</th><th>買賣</th><th class="n">張數</th><th class="n">成交價</th><th class="n">總額</th></tr></thead>
+      <tbody id="trades"></tbody>
+    </table>
+  </div>
+</section>
 
+<nav class="tiles" aria-label="功能">
+  <a class="tile" href="news.html"><i data-icon="news"></i>新聞</a>
+  <a class="tile" href="market.html"><i data-icon="chart"></i>個股</a>
+  <a class="tile" href="trade.html" aria-current="page"><i data-icon="trade"></i>交易</a>
+  <a class="tile" href="leaderboard.html"><i data-icon="trophy"></i>排行</a>
+</nav>
+
+<script src="ui.js"></script>
 <script src="app.js"></script>
 <script>
 if (requireLogin()) {
   let positions = [];
   let cash = 0;
+  const side = () => document.querySelector('input[name="side"]:checked').value;
 
   /* ----- 存款提報 ----- */
-  $('depositBtn').addEventListener('click', async () => {
+  $('depositForm').addEventListener('submit', async () => {
     $('depositErr').textContent = '';
-    const { ok, body } = await api('/api/team/deposit', {
-      method: 'POST',
-      body: JSON.stringify({ amount: Number($('amount').value) })
-    });
-    if (!ok) { $('depositErr').textContent = body.error || '送出失敗'; return; }
-    $('amount').value = '';
-    await load();
+    const btn = $('depositBtn');
+    btn.disabled = true;   // 送出中鎖住：一波只能申報一次，連點兩下會吃到「已經申報過」
+    try {
+      const { ok, body } = await api('/api/team/deposit', {
+        method: 'POST',
+        body: JSON.stringify({ amount: Number($('amount').value) })
+      });
+      if (!ok) { $('depositErr').textContent = body.error || '送出失敗'; return; }
+      $('amount').value = '';
+      await load();
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   /* ----- 下單 ----- */
@@ -66,27 +104,51 @@ if (requireLogin()) {
   function updateHint() {
     const stock = positions.find(p => p.stockId === Number($('stockSel').value));
     const n = Number($('shares').value);
-    if (!stock || !n || !stock.price) { $('orderHint').textContent = ''; return; }
+    const buying = side() === 'buy';
+    $('orderBtn').textContent = buying ? '確認買進' : '確認賣出';
+    if (!stock || !stock.price) { $('orderHint').textContent = ''; return; }
+    if (!n) {
+      // 還沒填張數時，先告訴他最多能買／賣多少——這就是他要填的那個數字的上限
+      $('orderHint').textContent = buying
+        ? `可用現金 ${money(cash)}，最多可買 ${Math.floor(cash / stock.price)} 張`
+        : `持有 ${stock.shares} 張`;
+      return;
+    }
     const totalCost = stock.price * n;
-    $('orderHint').textContent = $('sideSel').value === 'buy'
-      ? `預估成交金額 ${money(totalCost)}（可用現金 ${money(cash)}）`
-      : `預估入帳金額 ${money(totalCost)}（持有 ${stock.shares} 張）`;
+    $('orderHint').textContent = buying
+      ? `預估成交 ${money(totalCost)}（可用現金 ${money(cash)}）`
+      : `預估入帳 ${money(totalCost)}（持有 ${stock.shares} 張）`;
   }
-  ['stockSel', 'sideSel', 'shares'].forEach(id => $(id).addEventListener('input', updateHint));
+  ['stockSel', 'shares'].forEach(id => $(id).addEventListener('input', updateHint));
+  $('stockSel').addEventListener('change', updateHint);
+  document.querySelectorAll('input[name="side"]').forEach(r => r.addEventListener('change', updateHint));
 
-  $('orderBtn').addEventListener('click', async () => {
+  $('tradeForm').addEventListener('submit', async () => {
     $('orderErr').textContent = '';
-    const { ok, body } = await api('/api/team/orders', {
-      method: 'POST',
-      body: JSON.stringify({
-        stockId: Number($('stockSel').value),
-        side: $('sideSel').value,
-        shares: Number($('shares').value)
-      })
-    });
-    if (!ok) { $('orderErr').textContent = body.error || '下單失敗'; return; }
-    $('shares').value = '';
-    await load();
+    $('shares').removeAttribute('aria-invalid');
+    const btn = $('orderBtn');
+    btn.disabled = true;
+    try {
+      const { ok, body } = await api('/api/team/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          stockId: Number($('stockSel').value),
+          side: side(),
+          shares: Number($('shares').value)
+        })
+      });
+      if (!ok) {
+        // 錯誤貼著張數欄位顯示，並把焦點送回去讓他直接改（§8 focus-management）
+        $('orderErr').textContent = body.error || '下單失敗';
+        $('shares').setAttribute('aria-invalid', 'true');
+        $('shares').focus();
+        return;
+      }
+      $('shares').value = '';
+      await load();
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   async function load() {
@@ -96,48 +158,55 @@ if (requireLogin()) {
     cash = p.body.cash;
 
     $('wave').textContent = p.body.wave;
+    $('phase').className = 'phase' + (p.body.phase === 'trading' ? '' : ' idle');
     $('phase').textContent = PHASE_LABEL[p.body.phase] || p.body.phase;
     $('cash').textContent = money(p.body.cash);
     $('stockValue').textContent = money(p.body.stockValue);
     $('total').textContent = money(p.body.total);
-    $('positions').innerHTML = positions.map(x => `
-      <tr><td>${esc(x.name)}</td><td>${x.price === null ? '—' : money(x.price)}</td>
-      <td>${pctText(x.changePct)}</td><td>${x.shares}</td><td>${money(x.value)}</td></tr>`).join('');
+
+    const held = positions.filter(x => x.shares > 0);
+    $('positions').innerHTML = held.length
+      ? held.map(x => `<div class="stock">
+          <span class="logo" aria-hidden="true">${esc(Array.from(x.name)[0])}</span>
+          <div class="info"><div class="nm">${esc(x.name)}</div><div class="sub">持有 ${x.shares} 張 · 市值 ${money(x.value)}</div></div>
+          <div class="right"><div class="px">${x.price === null ? '—' : money(x.price)}</div>${chgHtml(x.changePct)}</div>
+        </div>`).join('')
+      : '<p class="hint">目前沒有持股。</p>';
 
     // 下拉選單只在內容真的變了才重建，否則使用者選到一半會被洗掉
-    const wanted = positions.map(x => `${x.stockId}:${x.name}`).join('|');
+    const wanted = positions.map(x => `${x.stockId}:${x.name}:${x.price}`).join('|');
     if ($('stockSel').dataset.sig !== wanted) {
+      const keep = $('stockSel').value;
       $('stockSel').dataset.sig = wanted;
       $('stockSel').innerHTML = positions.map(x =>
-        `<option value="${x.stockId}">${esc(x.name)}</option>`).join('');
+        `<option value="${x.stockId}">${esc(x.name)}　${x.price === null ? '尚未開盤' : money(x.price)}</option>`).join('');
+      if (keep) $('stockSel').value = keep;
     }
 
     const d = await api('/api/team/deposit');
     if (d.ok) {
       const dep = d.body.deposit;
-      $('depositState').textContent = dep
-        ? `已申報 ${money(dep.amount)} 元　狀態：${DEPOSIT_LABEL[dep.status]}`
-        : '本波尚未申報';
+      $('depositState').innerHTML = depositSteps(d.body.phase, dep);
       // 一波只能申報一次，送出後表單就收起來
-      $('depositForm').style.display = (!dep && d.body.phase === 'deposit') ? '' : 'none';
+      $('depositForm').hidden = !(!dep && d.body.phase === 'deposit');
 
       const canTrade = d.body.phase === 'trading' && dep && dep.status === 'approved';
-      $('tradeForm').style.display = canTrade ? '' : 'none';
+      $('tradeForm').hidden = !canTrade;
       $('tradeLock').textContent = canTrade ? '' :
-        d.body.phase !== 'trading' ? '現在不是交易階段。'
-        : !dep ? '本波尚未申報存款，無法交易。'
-        : dep.status === 'pending' ? '存款審核中，通過後才能交易。'
-        : '本波申報金額與實際不符遭駁回，這一波無法交易。';
+        d.body.phase !== 'trading' ? '現在不是交易時間，等主持人宣布進入階段四。'
+        : !dep ? '本波沒有申報存款，這一波不能交易。'
+        : dep.status === 'pending' ? '存款還在銀行審核中，通過後這裡就會開放下單。'
+        : '本波申報金額與實際不符遭駁回，這一波不能交易。';
     }
     updateHint();
 
     const t = await api('/api/team/trades');
     if (t.ok) {
       $('trades').innerHTML = t.body.map(x => `
-        <tr><td>${new Date(x.created_at).toLocaleString()}</td><td>${x.wave}</td>
-        <td>${esc(x.stock_name)}</td><td>${x.side === 'buy' ? '買進' : '賣出'}</td>
-        <td>${x.shares}</td><td>${money(x.price)}</td><td>${money(x.total)}</td></tr>`).join('')
-        || '<tr><td colspan="7">尚無成交紀錄</td></tr>';
+        <tr><td class="muted">第${x.wave}波<br>${new Date(x.created_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</td>
+        <td>${esc(x.stock_name)}</td><td>${sideBadge(x.side)}</td>
+        <td class="n">${x.shares}</td><td class="n">${money(x.price)}</td><td class="n">${money(x.total)}</td></tr>`).join('')
+        || '<tr><td colspan="6" class="muted">尚無成交紀錄</td></tr>';
     }
   }
 

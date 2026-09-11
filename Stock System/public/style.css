@@ -1,0 +1,311 @@
+/* ============================================================================
+   賭大股票系統 — 銀行存摺（Passbook）
+   來源模板：Mods/Stock System/base_3.html
+
+   深藍銀行卡＋白色卡片＋存款三步驟。玩家端和管理後台共用這一份；後台頁面在
+   <body> 加 class="wide" 放寬版面寬度，其餘元件完全一樣。
+
+   色票全部走 CSS 變數，頁面裡請用 var(--...)，不要再寫死顏色。
+   所有文字前景/背景組合都驗過 WCAG AA（>= 4.5:1），見各變數旁的數字。
+   漲跌是台股慣例的紅漲綠跌，但一律搭配三角形與正負號，不只靠顏色
+   （見 ui.js 的 chgHtml）。
+   ========================================================================== */
+:root {
+  --bg: #f3f6fb;
+  --card: #ffffff;
+  --card-2: #f7f9fd;       /* 卡片裡再一層（表頭、表單區塊） */
+  --line: #dbe2ee;
+  --fg: #0b1324;           /* 對白 18.5:1 */
+  --dim: #55627a;          /* 對白 6.2:1、對頁面底 5.7:1 */
+  --navy: #0f1e3d;         /* 銀行卡底色 */
+  --navy-dim: #b4c2dc;     /* 銀行卡上的次要字 9.2:1 */
+  --blue: #1e3a8a;         /* 主色；白字在上面 10.4:1 */
+  --blue-hover: #172f73;
+  --blue-soft: #eef3ff;    /* 選中列、hover 底 */
+  --on-blue: #ffffff;
+  /* 金色用 #955a06 而不是色票原本的 #a16207：原值在淡藍底上只有 4.43:1。 */
+  --gold: #955a06;
+  --gold-lt: #f2c36b;      /* 只用在深藍銀行卡上 10.1:1 */
+  --up: #c0262d;   --up-bg: #fdeceb;     /* 漲 5.9:1 / 膠囊內 5.2:1 */
+  --down: #047a4b; --down-bg: #e3f5ec;   /* 跌 5.4:1 / 膠囊內 4.8:1 */
+  --ok-fg: #035c39; --ok-bg: #dcf5e9;    /* 7.1:1 */
+  --warn-fg: #7a4a05; --warn-bg: #fdf1dc;
+  --danger: #b42318; --danger-bg: #fdecea;
+  --ring: #1e3a8a;
+
+  --r-sm: 12px;
+  --r: 16px;
+  --font-body: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  --font-num: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ====== 基礎層（對應 ui-ux-pro-max：§1 無障礙 §2 觸控 §5 版面 §6 字體 §7 動效 §8 表單） ====== */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0 auto; padding: 16px 16px 32px;
+  max-width: 480px; min-height: 100dvh;          /* viewport-units：不用 100vh */
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;                                /* 手機最小 16px，否則 iOS 會自動放大 */
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+/* 後台是在筆電、平板上用的，表格欄位多，480px 會把它擠爛 */
+body.wide { max-width: 1040px; padding: 20px 20px 40px; }
+
+/* number-tabular：股價、金額一律等寬，跳動時不會左右晃 */
+.num, .px, .chg, td.n, th.n, .clock, .money { font-variant-numeric: tabular-nums; font-family: var(--font-num); }
+
+a { color: var(--blue); }
+h1 { margin: 0 0 12px; font-size: 22px; font-weight: 800; letter-spacing: .02em; }
+h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 17px; font-weight: 700; }
+h2 .ic { color: var(--blue); }
+h3 { margin: 0 0 6px; font-size: 17px; line-height: 1.4; }
+p { margin: 0 0 10px; }
+
+/* touch-target-size：可點擊元素最小 44px；touch-spacing：間距 >= 8px */
+button, input, select, textarea, .tile, .seg label, .btn { min-height: 44px; }
+button, .tile, .seg label, select, .btn, .switch { cursor: pointer; touch-action: manipulation; }
+
+/* focus-states：3px 可見焦點環，絕不移除 outline（radio/checkbox 的焦點畫在 label 上） */
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, .seg input:focus-visible + label, .switch input:focus-visible + span {
+  outline: 3px solid var(--ring); outline-offset: 2px;
+}
+
+/* press-feedback：按壓有回饋，但不造成版面位移 */
+button, .tile, .seg label, .btn {
+  transition: background-color .18s ease-out, border-color .18s ease-out, transform .12s ease-out;
+}
+button:active, .tile:active, .seg label:active, .btn:active { transform: scale(.985); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; scroll-behavior: auto !important;
+  }
+}
+
+/* icon-style-consistent：單一圖示語言，stroke 1.75，尺寸 token 化（圖示由 ui.js 注入） */
+.ic { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
+      stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.ic-sm { width: 18px; height: 18px; }
+.ic-lg { width: 26px; height: 26px; }
+
+/* ====== 表單 ====== */
+/* input-labels：標籤永遠可見，不用 placeholder 當標籤 */
+label { display: block; font-size: 14px; color: var(--dim); margin-bottom: 6px; }
+input, select, textarea {
+  display: block; width: 100%; padding: 11px 13px; margin: 0 0 12px;
+  font-family: inherit; font-size: 16px;
+  color: var(--fg); background-color: #fff;
+  border: 1.5px solid #cbd5e4; border-radius: var(--r-sm);
+}
+textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
+input::placeholder, textarea::placeholder { color: #6b778c; }   /* 4.5:1 */
+input:focus, select:focus, textarea:focus { border-color: var(--blue); outline: none; }
+input[aria-invalid="true"] { border-color: var(--danger); }
+.field-row { display: grid; gap: 0 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.helper { font-size: 14px; color: var(--dim); margin: -6px 0 12px; }
+
+/* 買／賣這類二選一：原生 radio 做語意，外觀做成分段按鈕。
+   legend 不能 float——浮動的 legend 會變成 grid 的普通格子，把選項擠亂。grid 只給裡面那層。 */
+.seg { margin: 0 0 12px; padding: 0; border: 0; min-width: 0; }
+.seg legend { font-size: 14px; color: var(--dim); margin-bottom: 6px; padding: 0; }
+.seg-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px;
+            background: #eef2f8; border-radius: 14px; }
+.seg input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.seg label { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0;
+             border-radius: 10px; color: var(--dim); font-size: 16px; font-weight: 700; }
+.seg input:checked + label { background: #fff; color: var(--fg); box-shadow: 0 1px 3px rgba(11,19,36,.14); }
+.seg input:checked + label.buy { color: var(--up); }
+.seg input:checked + label.sell { color: var(--down); }
+.seg label .ic-sm { display: none; }
+.seg input:checked + label .ic-sm { display: block; }
+
+/* 開關（例：新聞「顯示歷來所有波次」）——整條都能點，不是只有一顆小方框 */
+.switch { display: inline-flex; align-items: center; gap: 10px; min-height: 44px;
+          font-size: 15px; color: var(--fg); margin: 0; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.switch span { width: 42px; height: 24px; border-radius: 999px; background: #cbd5e4;
+               position: relative; flex: none; transition: background-color .18s; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+                      border-radius: 50%; background: #fff; transition: transform .18s; }
+.switch input:checked + span { background: var(--blue); }
+.switch input:checked + span::after { transform: translateX(18px); }
+
+/* ====== 按鈕 ====== */
+button, .btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+  padding: 13px 16px; border: none; border-radius: 14px;
+  background: var(--blue); color: var(--on-blue); font-family: inherit;
+  font-size: 17px; font-weight: 700; text-decoration: none;
+}
+button:hover, .btn:hover { background: var(--blue-hover); }
+button[disabled] { opacity: .45; cursor: not-allowed; }
+button.ghost, .btn.ghost { background: var(--card); color: var(--dim); border: 1px solid var(--line); font-weight: 600; }
+button.ghost:hover, .btn.ghost:hover { background: #eef2f8; color: var(--fg); }
+button.danger { background: var(--card); color: var(--danger); border: 1.5px solid var(--danger); }
+button.danger:hover { background: var(--danger); color: #fff; }
+button.approve { background: var(--down); }
+button.approve:hover { background: #03603b; }
+/* 表格裡的小按鈕：寬度跟著內容，但高度仍守 44px（在平板上用手指點） */
+button.sm, .btn.sm { display: inline-flex; width: auto; padding: 8px 14px; font-size: 15px; border-radius: 10px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.inline { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.inline > * { margin-bottom: 0; }
+/* 只管「直接放在 .inline 裡」的欄位。包在 <div>（連同 label）裡的欄位要填滿那個 div——
+   第一版寫成 .inline input，把 div 裡的輸入框也縮成內容寬度，「隊伍名稱」變得很窄、
+   跟右邊的 PIN 之間空出一大段。 */
+.inline > input, .inline > select { width: auto; flex: 1 1 140px; }
+.inline > div input, .inline > div select { width: 100%; margin-bottom: 0; }
+.inline > button { width: auto; flex: none; }
+
+/* ====== 訊息 ======
+   error-clarity + color-not-only：圖示用 ::before 畫，頁面用 textContent 塞字就好，
+   不會因為換字把圖示洗掉；空的時候整個不佔位置。 */
+.error, .ok-msg, .notice {
+  display: flex; gap: 8px; align-items: flex-start;
+  font-size: 14px; margin: 0 0 12px; padding: 10px 12px; border-radius: var(--r-sm);
+}
+.error:empty, .ok-msg:empty, .notice:empty { display: none; }
+.error { color: var(--danger); background: var(--danger-bg); }
+.ok-msg { color: var(--ok-fg); background: var(--ok-bg); }
+.notice { color: var(--warn-fg); background: var(--warn-bg); }
+.error::before, .ok-msg::before, .notice::before {
+  content: ""; flex: none; width: 18px; height: 18px; margin-top: 1px; background: currentColor;
+  -webkit-mask: var(--m) center / contain no-repeat; mask: var(--m) center / contain no-repeat;
+}
+.error, .notice { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7.5v5M12 16h.01'/%3E%3C/svg%3E"); }
+.ok-msg { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='m8 12.5 2.8 2.8L16 10'/%3E%3C/svg%3E"); }
+.hint { font-size: 14px; color: var(--dim); }
+
+/* ====== 頁首 ====== */
+.top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; }
+.phase { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700;
+         color: var(--ok-fg); background: var(--ok-bg); padding: 5px 12px; border-radius: 999px; }
+.phase.idle { color: var(--dim); background: #e7ecf4; }
+.clock { font-size: 14px; color: var(--dim); }
+.back { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; font-weight: 600;
+        color: var(--blue); text-decoration: none; }
+.back .ic { width: 18px; height: 18px; }
+.pagehead { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            flex-wrap: wrap; margin-bottom: 8px; }
+.pagehead h1 { margin: 0; }
+
+/* ====== 銀行卡（資產總覽）——整頁最重要的數字，也是唯一的深色區塊 ====== */
+.bankcard { background: var(--navy); color: #fff; border-radius: 18px; padding: 18px;
+            margin-bottom: 14px; box-shadow: 0 10px 24px rgba(15,30,61,.22); }
+.bankcard .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.bankcard .brand { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .14em; color: var(--gold-lt); }
+.bankcard .team { font-size: 14px; color: var(--navy-dim); }
+.bankcard .lab { font-size: 13px; color: var(--navy-dim); }
+.bankcard .total { font-family: var(--font-num); font-size: 36px; font-weight: 700; line-height: 1.15; margin-top: 2px; }
+.bankcard .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px;
+                   padding-top: 12px; border-top: 1px solid rgba(255,255,255,.14); }
+.bankcard .split .num { font-size: 18px; font-weight: 700; }
+
+/* ====== 卡片 ====== */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r);
+        padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(11,19,36,.04); }
+.card > h2 + .hint { margin-top: -6px; }
+
+/* ====== 存款三步驟（§8 multi-step-progress） ======
+   已完成打勾、現在這步實心、還沒到空心、被駁回打叉——狀態靠形狀也靠文字 */
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 0 0 4px; padding: 0; list-style: none; }
+.steps li { text-align: center; font-size: 13px; color: var(--dim); position: relative; }
+.steps .dot { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px;
+              margin: 0 auto 4px; border-radius: 50%; border: 2px solid var(--line); background: #fff;
+              font-weight: 700; font-size: 13px; color: var(--dim); position: relative; z-index: 1; }
+.steps .done .dot { background: var(--down); border-color: var(--down); color: #fff; }
+.steps .now .dot  { background: var(--blue); border-color: var(--blue); color: #fff; }
+.steps .fail .dot { background: var(--danger); border-color: var(--danger); color: #fff; }
+.steps .done, .steps .now, .steps .fail { color: var(--fg); font-weight: 600; }
+.steps .fail { color: var(--danger); }
+.steps li + li::before { content: ""; position: absolute; top: 15px; right: calc(50% + 15px);
+                         width: calc(100% - 24px); height: 2px; background: var(--line); }
+.steps li.done + li::before, .steps li.done + li.now::before, .steps li.done + li.fail::before { background: var(--down); }
+.steps-note { font-size: 14px; color: var(--dim); margin: 8px 0 0; text-align: center; }
+
+/* ====== 功能磚 ====== */
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+.tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+        padding: 10px 4px; background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+        color: var(--fg); text-decoration: none; font-size: 13px; font-weight: 600; text-align: center; }
+.tile .ic { width: 26px; height: 26px; color: var(--blue); }
+.tile:hover, .tile:active { border-color: var(--blue); background: #f5f8ff; }
+.tile[aria-current="page"] { border-color: var(--blue); background: var(--blue-soft); }
+/* 後台的功能磚帶一行說明，排成可以自動換欄的格子 */
+.tiles.wide { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.tiles.wide .tile { flex-direction: row; justify-content: flex-start; text-align: left; gap: 12px;
+                    padding: 14px; font-size: 16px; }
+.tiles.wide .tile small { display: block; font-size: 13px; font-weight: 400; color: var(--dim); }
+
+/* ====== 個股列 ====== */
+.stock { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.stock:last-child { border-bottom: 0; padding-bottom: 0; }
+.stock:first-child { padding-top: 0; }
+.stock .logo { width: 38px; height: 38px; flex: none; border-radius: 10px; display: flex; align-items: center;
+               justify-content: center; font-weight: 800; font-size: 15px; color: var(--blue); background: #e8eefb; }
+.stock .info { flex: 1; min-width: 0; }
+.stock .nm { font-weight: 600; }
+.stock .sub { font-size: 13px; color: var(--dim); }
+.stock .right { text-align: right; }
+.stock .px { font-size: 18px; font-weight: 700; }
+.chg { display: inline-flex; align-items: center; gap: 3px; font-size: 13px; font-weight: 700;
+       padding: 1px 7px; border-radius: 999px; white-space: nowrap; color: var(--dim); background: #eef2f8; }
+.chg.up { color: var(--up); background: var(--up-bg); }
+.chg.dn { color: var(--down); background: var(--down-bg); }
+.tri { width: 9px; height: 9px; fill: currentColor; }
+
+/* ====== 新聞 ====== */
+.news-item + .news-item { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
+.news-item .kick { font-size: 13px; font-weight: 700; color: var(--gold); }
+/* 新聞頁的每則新聞是 h2，首頁卡片裡的是 h3（上面還有卡片標題）——層級不同，長相一樣 */
+.news-item h2, .news-item h3 { display: block; margin: 4px 0 6px; font-size: 18px; line-height: 1.4; }
+.news-item p { margin: 0; font-size: 15px; color: var(--dim); white-space: pre-wrap; }
+.news-item time { display: block; margin-top: 6px; font-size: 13px; color: var(--dim); }
+
+/* ====== 表格 ====== */
+.table-wrap { overflow-x: auto; margin: 0 -4px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 11px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+th { color: var(--dim); font-size: 13px; font-weight: 600; white-space: nowrap; }
+th.n, td.n { text-align: right; font-weight: 700; }
+td.muted { color: var(--dim); font-weight: 400; }
+/* 「0 張」跟有持股的格子要分得出來，但靠的是字重（有值的是粗體），不是把字調淡——
+   調淡到一眼看得出差別的程度（#8b96a8）對白只剩 3:1，那仍然是要讀得到的數字。 */
+td.zero { color: var(--dim); font-weight: 400; }
+tr.me td { background: var(--blue-soft); }
+.rank { width: 2.4em; font-weight: 800; color: var(--gold); font-family: var(--font-num); }
+.you { display: inline-block; font-size: 12px; font-weight: 700; margin-left: 6px; padding: 1px 8px;
+       border-radius: 999px; background: var(--blue); color: #fff; }
+td input { margin: 0; min-width: 7em; }
+
+/* ====== 狀態徽章（審核中／已通過／遭拒，也用在權限、買賣） ====== */
+.badge { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 700;
+         padding: 2px 10px; border-radius: 999px; white-space: nowrap; }
+.badge.pending  { color: var(--warn-fg); background: var(--warn-bg); }
+.badge.approved { color: var(--ok-fg);  background: var(--ok-bg); }
+.badge.rejected { color: var(--danger); background: var(--danger-bg); }
+.badge.neutral  { color: var(--dim);    background: #eef2f8; }
+.badge.buy  { color: var(--up);   background: var(--up-bg); }
+.badge.sell { color: var(--down); background: var(--down-bg); }
+
+/* ====== 圖表 ====== */
+.chart { overflow-x: auto; }
+/* 不設 max-width:100% / height:auto——那會把整張圖連字一起縮小。圖是照容器寬度畫的
+   （見 market.html），真的比容器寬時交給外層的 overflow-x 橫向捲動。 */
+.chart svg { display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0 0; font-size: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+.foot { text-align: center; font-size: 13px; color: var(--dim); margin-top: 18px; }
+.foot a { color: var(--dim); }
+
+/* hidden 屬性一定要贏。瀏覽器預設的 [hidden]{display:none} 優先級比 class 低，
+   .tile、.notice、.btn 這些設了 display:flex 的元素加上 hidden 會照樣顯示——
+   後台「只有主辦看得到」的功能磚就是靠 hidden 藏起來的，藏不住等於權限提示全錯。 */
+[hidden], .hidden { display: none !important; }

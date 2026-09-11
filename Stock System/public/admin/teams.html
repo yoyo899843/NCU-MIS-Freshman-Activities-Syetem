@@ -1,47 +1,59 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>隊伍與結算總覽 - 賭大股票系統</title></head>
-<body>
+<title>隊伍與結算總覽 - 賭大股票系統</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body class="wide">
+<a class="back" href="index.html"><i data-icon="back"></i>回後台</a>
 <h1>隊伍與結算總覽</h1>
-<p><a href="index.html">&laquo; 回後台</a></p>
 
-<div class="admin-only" style="display:none">
-  <h2>新增隊伍</h2>
-  <p>
-    隊伍名稱 <input id="newName">
-    PIN <input id="newPin" maxlength="4" style="width:5em">
-    <button id="addBtn">新增</button>
-  </p>
-  <p id="addErr" style="color:#c00"></p>
-</div>
+<section class="card">
+  <div class="pagehead" style="margin-bottom:4px">
+    <h2 style="margin:0"><i data-icon="trophy"></i>總資產排行與持股</h2>
+    <label class="switch"><input type="checkbox" id="showValue" checked><span aria-hidden="true"></span>顯示市值</label>
+  </div>
+  <p class="hint">四檔欄位是「目前持有張數」，市值用第 <strong id="lbWave">—</strong> 波的股價計算。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr id="lbHead"></tr></thead>
+      <tbody id="lb"></tbody>
+    </table>
+  </div>
+</section>
 
-<h2>總資產排行榜與持股總覽</h2>
-<p>四檔的欄位顯示「持有張數（市值）」，張數是目前庫存，市值用第 <strong id="lbWave">—</strong> 波的股價計算。
-   <label style="margin-left:12px"><input type="checkbox" id="showValue" checked> 顯示市值</label></p>
-<div style="overflow-x:auto">
-  <table border="1" cellpadding="4">
-    <thead><tr id="lbHead"></tr></thead>
-    <tbody id="lb"></tbody>
-  </table>
-</div>
+<section class="card admin-only" hidden>
+  <h2><i data-icon="users"></i>新增隊伍</h2>
+  <form class="inline" id="addForm" onsubmit="return false">
+    <div style="flex:1 1 200px"><label for="newName">隊伍名稱</label><input id="newName"></div>
+    <div style="flex:0 0 130px"><label for="newPin">PIN（4 碼）</label><input id="newPin" maxlength="4" inputmode="numeric"></div>
+    <button id="addBtn" type="submit">新增</button>
+  </form>
+  <p class="error" id="addErr" role="alert" style="margin-top:12px"></p>
+</section>
 
-<h2>隊伍帳號</h2>
-<table border="1" cellpadding="4">
-  <thead><tr><th>隊伍</th><th>PIN</th><th>可用現金</th>
-    <th class="admin-only" style="display:none">覆寫餘額</th>
-    <th class="admin-only" style="display:none">重設 PIN</th>
-    <th class="admin-only" style="display:none">刪除</th></tr></thead>
-  <tbody id="teams"></tbody>
-</table>
-<p id="cashErr" style="color:#c00"></p>
+<section class="card">
+  <h2><i data-icon="key"></i>隊伍帳號</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>隊伍</th><th>PIN</th><th class="n">可用現金</th><th class="admin-only" hidden>操作</th></tr></thead>
+      <tbody id="teams"></tbody>
+    </table>
+  </div>
+  <p class="error" id="cashErr" role="alert" style="margin-top:12px"></p>
+</section>
 
-<h2>最近成交</h2>
-<table border="1" cellpadding="4">
-  <thead><tr><th>時間</th><th>波</th><th>隊伍</th><th>股票</th><th>買賣</th><th>張數</th><th>價格</th><th>總額</th></tr></thead>
-  <tbody id="trades"></tbody>
-</table>
+<section class="card">
+  <h2><i data-icon="list"></i>最近成交</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>時間</th><th>隊伍</th><th>股票</th><th>買賣</th><th class="n">張數</th><th class="n">價格</th><th class="n">總額</th></tr></thead>
+      <tbody id="trades"></tbody>
+    </table>
+  </div>
+</section>
 
+<script src="../ui.js"></script>
 <script src="admin.js"></script>
 <script>
 if (requireAdminLogin()) {
@@ -50,7 +62,7 @@ if (requireAdminLogin()) {
   let lastBoard = null;   // 最近一次的排行榜資料，切換「顯示市值」時重畫用
   const nameOf = id => (teams.find(t => t.id === id) || {}).display_name || '';
 
-  $('addBtn').addEventListener('click', async () => {
+  $('addForm').addEventListener('submit', async () => {
     $('addErr').textContent = '';
     const { ok, body } = await api('/teams', {
       method: 'POST',
@@ -117,9 +129,9 @@ if (requireAdminLogin()) {
 
     $('lbHead').innerHTML =
       '<th>名次</th><th>隊伍</th>' +
-      stocks.map(s => `<th>${esc(s.name)}<br><span style="font-weight:normal">${
+      stocks.map(s => `<th class="n">${esc(s.name)}<br><span class="money" style="font-weight:400">${
         s.price === null ? '尚未開盤' : money(s.price)}</span></th>`).join('') +
-      '<th>現金</th><th>股票現值</th><th>總資產</th>';
+      '<th class="n">現金</th><th class="n">股票現值</th><th class="n">總資產</th>';
 
     const withValue = $('showValue').checked;
     const cols = stocks.length + 5;
@@ -130,17 +142,17 @@ if (requireAdminLogin()) {
         const p = (t.positions || []).find(x => x.stockId === s.id);
         const shares = p ? p.shares : 0;
         // 沒持股的格子用淡灰的 0，不留白——空白格會讓人分不清「沒有」和「還沒載入」
-        if (!shares) return '<td style="color:#bbb">0</td>';
-        return `<td><strong>${shares}</strong> 張${
-          withValue ? `<br><span style="color:#666">${money(p.value)}</span>` : ''}</td>`;
+        if (!shares) return '<td class="n zero">0</td>';
+        return `<td class="n">${shares} 張${
+          withValue ? `<br><span class="muted" style="font-weight:400">${money(p.value)}</span>` : ''}</td>`;
       }).join('');
       return `<tr>
-        <td>${t.rank}</td><td>${esc(t.name)}</td>
+        <td class="rank">${t.rank}</td><td><strong>${esc(t.name)}</strong></td>
         ${cells}
-        <td>${money(t.cash)}</td><td>${money(t.stockValue)}</td>
-        <td><strong>${money(t.total)}</strong></td>
+        <td class="n">${money(t.cash)}</td><td class="n">${money(t.stockValue)}</td>
+        <td class="n" style="color:var(--blue)">${money(t.total)}</td>
       </tr>`;
-    }).join('') || `<tr><td colspan="${cols}">還沒有隊伍</td></tr>`;
+    }).join('') || `<tr><td colspan="${cols}" class="muted">還沒有隊伍</td></tr>`;
   }
 
   // 只切換顯示方式，不用重打 API
@@ -154,28 +166,30 @@ if (requireAdminLogin()) {
     if (ts.ok) {
       teams = ts.body;
       $('teams').innerHTML = ts.body.map(t => `
-        <tr><td>${esc(t.display_name)}</td><td>${esc(t.pin)}</td><td>${money(t.cash)}</td>
-        ${isAdmin ? `<td><button onclick="overrideCash(${t.id})">覆寫</button></td>
-                     <td><button onclick="resetPin(${t.id})">重設</button></td>
-                     <td><button onclick="removeTeam(${t.id})">刪除</button></td>` : ''}</tr>`).join('')
-        || '<tr><td colspan="6">還沒有隊伍</td></tr>';
+        <tr><td><strong>${esc(t.display_name)}</strong></td><td class="money">${esc(t.pin)}</td><td class="n">${money(t.cash)}</td>
+        ${isAdmin ? `<td><div class="actions">
+                       <button class="sm ghost" type="button" onclick="overrideCash(${t.id})">覆寫餘額</button>
+                       <button class="sm ghost" type="button" onclick="resetPin(${t.id})">重設 PIN</button>
+                       <button class="sm danger" type="button" onclick="removeTeam(${t.id})">刪除</button>
+                     </div></td>` : ''}</tr>`).join('')
+        || `<tr><td colspan="${isAdmin ? 4 : 3}" class="muted">還沒有隊伍</td></tr>`;
     }
 
     const tr = await api('/trades');
     if (tr.ok) {
       $('trades').innerHTML = tr.body.map(x => `
-        <tr><td>${new Date(x.created_at).toLocaleString()}</td><td>${x.wave}</td>
+        <tr><td class="muted" style="white-space:nowrap">第${x.wave}波 ${new Date(x.created_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</td>
         <td>${esc(x.team_name)}</td><td>${esc(x.stock_name)}</td>
-        <td>${x.side === 'buy' ? '買進' : '賣出'}</td><td>${x.shares}</td>
-        <td>${money(x.price)}</td><td>${money(x.total)}</td></tr>`).join('')
-        || '<tr><td colspan="8">尚無成交</td></tr>';
+        <td>${sideBadge(x.side)}</td><td class="n">${x.shares}</td>
+        <td class="n">${money(x.price)}</td><td class="n">${money(x.total)}</td></tr>`).join('')
+        || '<tr><td colspan="7" class="muted">尚無成交</td></tr>';
     }
   }
 
   (async () => {
     const me = await api('/me');
     isAdmin = me.body.adminRole === 'admin';
-    document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+    document.querySelectorAll('.admin-only').forEach(el => { el.hidden = !isAdmin; });
     await load();
     setInterval(load, 5000);
   })();
