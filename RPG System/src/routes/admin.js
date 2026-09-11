@@ -1027,13 +1027,11 @@ function validateSlotBody(body, branchIds, clueIds) {
   const correctClueId = Number.isInteger(body.correctClueId) ? body.correctClueId : parseInt(body.correctClueId, 10);
   if (!Number.isInteger(correctClueId) || !clueIds.has(correctClueId)) return { error: '指定的正確答案線索不存在' };
 
-  const slotOrder = body.slotOrder === undefined || body.slotOrder === null || body.slotOrder === ''
-    ? 0
-    : parseInt(body.slotOrder, 10);
-  if (!Number.isInteger(slotOrder)) return { error: '槽位順序必須是整數' };
-
-  return { data: { branchId, correctClueId, slotOrder } };
+  return { data: { branchId, correctClueId } };
 }
+
+// 槽位不分順序（線索放在所屬分支任一格都算對），主辦不用填順序。slot_order 只拿來
+// 讓格子排列穩定：新增或搬到別的分支時排在那個分支的最後面。
 
 router.post('/tech-tree/slots', asyncHandler(async (req, res) => {
   const { rows: branches } = await db.query('SELECT id FROM tech_tree_branches');
@@ -1045,22 +1043,14 @@ router.post('/tech-tree/slots', asyncHandler(async (req, res) => {
   if (validated.error) return res.status(400).json({ error: validated.error });
 
   const d = validated.data;
-  try {
-    const { rows } = await db.query(
-      `INSERT INTO tech_tree_slots (branch_id, slot_order, correct_clue_id)
-       VALUES ($1,$2,$3) RETURNING id, branch_id, slot_order, correct_clue_id`,
-      [d.branchId, d.slotOrder, d.correctClueId]
-    );
-    await audit(req.admin.sub, 'create_tech_slot', 'tech_tree_slot', rows[0].id, null, rows[0]);
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    // 同一個分支裡順序不能重複——重複的話玩家端「排得到/排不到」的判定會沒有
-    // 確定的順序（見 migrations/008_tech_tree_slot_order_unique.sql）。
-    if (err.code === '23505') {
-      return res.status(409).json({ error: '這個分支底下已經有相同順序的槽位了，請換一個順序' });
-    }
-    throw err;
-  }
+  const { rows } = await db.query(
+    `INSERT INTO tech_tree_slots (branch_id, slot_order, correct_clue_id)
+     VALUES ($1, (SELECT COALESCE(MAX(slot_order), 0) + 1 FROM tech_tree_slots WHERE branch_id = $1), $2)
+     RETURNING id, branch_id, slot_order, correct_clue_id`,
+    [d.branchId, d.correctClueId]
+  );
+  await audit(req.admin.sub, 'create_tech_slot', 'tech_tree_slot', rows[0].id, null, rows[0]);
+  res.status(201).json(rows[0]);
 }));
 
 router.patch('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
@@ -1075,28 +1065,24 @@ router.patch('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
 
   const merged = {
     branchId: req.body.branchId !== undefined ? req.body.branchId : existing.branch_id,
-    correctClueId: req.body.correctClueId !== undefined ? req.body.correctClueId : existing.correct_clue_id,
-    slotOrder: req.body.slotOrder !== undefined ? req.body.slotOrder : existing.slot_order
+    correctClueId: req.body.correctClueId !== undefined ? req.body.correctClueId : existing.correct_clue_id
   };
 
   const validated = validateSlotBody(merged, branchIds, clueIds);
   if (validated.error) return res.status(400).json({ error: validated.error });
 
   const d = validated.data;
-  try {
-    const { rows } = await db.query(
-      `UPDATE tech_tree_slots SET branch_id=$1, slot_order=$2, correct_clue_id=$3
-       WHERE id = $4 RETURNING id, branch_id, slot_order, correct_clue_id`,
-      [d.branchId, d.slotOrder, d.correctClueId, req.params.id]
-    );
-    await audit(req.admin.sub, 'update_tech_slot', 'tech_tree_slot', req.params.id, existing, rows[0]);
-    res.json(rows[0]);
-  } catch (err) {
-    if (err.code === '23505') {
-      return res.status(409).json({ error: '這個分支底下已經有相同順序的槽位了，請換一個順序' });
-    }
-    throw err;
-  }
+  const movedBranch = d.branchId !== existing.branch_id;
+  const { rows } = await db.query(
+    `UPDATE tech_tree_slots
+     SET branch_id = $1, correct_clue_id = $2,
+         slot_order = CASE WHEN $4 THEN (SELECT COALESCE(MAX(slot_order), 0) + 1 FROM tech_tree_slots WHERE branch_id = $1)
+                           ELSE slot_order END
+     WHERE id = $3 RETURNING id, branch_id, slot_order, correct_clue_id`,
+    [d.branchId, d.correctClueId, req.params.id, movedBranch]
+  );
+  await audit(req.admin.sub, 'update_tech_slot', 'tech_tree_slot', req.params.id, existing, rows[0]);
+  res.json(rows[0]);
 }));
 
 // 刪除槽位：各隊在這一格的放置與驗證紀錄一起刪掉。

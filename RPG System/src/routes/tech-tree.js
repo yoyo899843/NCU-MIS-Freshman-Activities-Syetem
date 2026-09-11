@@ -52,16 +52,13 @@ router.get('/', asyncHandler(async (req, res) => {
       name: b.name,
       displayOrder: b.display_order,
       unlocked: b.unlocked,
-      slots: slots.map(s => {
-        return {
-          id: s.id,
-          slotOrder: s.slot_order,
-          placedClueId: s.placed_clue_id,
-          placedClueName: s.placed_clue_name,
-          isLocked: s.is_locked,
-          reachable: true
-        };
-      })
+      // 格子不分順序，任何一格都能放；排列只照 slot_order 讓畫面穩定，不代表先後
+      slots: slots.map(s => ({
+        id: s.id,
+        placedClueId: s.placed_clue_id,
+        placedClueName: s.placed_clue_name,
+        isLocked: s.is_locked
+      }))
     };
   });
 
@@ -81,7 +78,7 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
   const slotId = parseInt(req.params.slotId, 10);
   if (!Number.isInteger(slotId)) return res.status(400).json({ error: 'invalid slot id' });
 
-  const { rows: slotRows } = await db.query('SELECT id, branch_id, slot_order FROM tech_tree_slots WHERE id = $1', [slotId]);
+  const { rows: slotRows } = await db.query('SELECT id, branch_id FROM tech_tree_slots WHERE id = $1', [slotId]);
   if (slotRows.length === 0) return res.status(404).json({ error: 'slot not found' });
   const slot = slotRows[0];
 

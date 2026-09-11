@@ -89,26 +89,25 @@ function render() {
       </div>
       <p style="font-size:0.8rem;color:var(--dim)">顯示順序：${b.display_order}${b.story_content ? '　劇情內容：' + escapeHtml(b.story_content.slice(0, 40)) + (b.story_content.length > 40 ? '...' : '') : '（尚未填寫劇情內容）'}</p>
 
+      <p style="font-size:0.8rem;color:var(--dim)">槽位不分順序：每一格設定一張屬於這個分支的答案線索，玩家把這些線索放在這個分支的任一格都算對。</p>
       <table>
-        <thead><tr><th>順序</th><th>正確答案線索</th><th></th></tr></thead>
+        <thead><tr><th>答案線索</th><th></th></tr></thead>
         <tbody>
           ${b.slots.map(s => `
             <tr>
-              <td>${s.slot_order}</td>
               <td>#${s.correct_clue_id} ${escapeHtml(s.correct_clue_name)}</td>
               <td class="row-actions">
-                <button onclick="startEditSlot(${s.id}, ${b.id}, ${s.slot_order}, ${s.correct_clue_id})">編輯</button>
+                <button onclick="startEditSlot(${s.id}, ${s.correct_clue_id})">編輯</button>
                 <button onclick="deleteSlot(${s.id})">刪除</button>
               </td>
             </tr>
-          `).join('') || '<tr><td colspan="3">這個分支還沒有任何槽位</td></tr>'}
+          `).join('') || '<tr><td colspan="2">這個分支還沒有任何槽位</td></tr>'}
         </tbody>
       </table>
 
       <div class="inline-form" data-add-slot-for="${b.id}">
-        <input type="number" class="slotOrderInput" placeholder="順序（例如 1）">
         <select class="slotClueInput"><option value="">選擇正確答案線索</option>${clueOptionsHtml(null)}</select>
-        <button onclick="addSlot(${b.id}, this)">新增槽位</button>
+        <button onclick="addSlot(${b.id}, this)">新增一格</button>
       </div>
       <p class="slotFormResult error" style="font-size:0.85rem"></p>
     </div>
@@ -182,7 +181,6 @@ document.getElementById('saveBranchBtn').addEventListener('click', async () => {
 
 window.addSlot = async function (branchId, btn) {
   const wrapper = btn.closest('.inline-form');
-  const slotOrder = wrapper.querySelector('.slotOrderInput').value.trim();
   const correctClueId = wrapper.querySelector('.slotClueInput').value;
   const resultEl = wrapper.parentElement.querySelector('.slotFormResult');
 
@@ -194,7 +192,7 @@ window.addSlot = async function (branchId, btn) {
   const res = await api('/tech-tree/slots', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ branchId, slotOrder, correctClueId })
+    body: JSON.stringify({ branchId, correctClueId })
   });
   const data = await res.json();
   if (!res.ok) {
@@ -205,19 +203,17 @@ window.addSlot = async function (branchId, btn) {
   await loadBranches();
 };
 
-window.startEditSlot = function (slotId, branchId, slotOrder, correctClueId) {
-  const newOrder = prompt('新的順序：', slotOrder);
-  if (newOrder === null) return;
-  const clueIdStr = prompt('新的正確答案線索 ID（在上方表格可以查到線索 ID）：', correctClueId);
+window.startEditSlot = function (slotId, correctClueId) {
+  const clueIdStr = prompt('新的答案線索 ID（在上方表格可以查到線索 ID）：', correctClueId);
   if (clueIdStr === null) return;
-  updateSlot(slotId, branchId, newOrder, clueIdStr);
+  updateSlot(slotId, clueIdStr);
 };
 
-async function updateSlot(slotId, branchId, slotOrder, correctClueId) {
+async function updateSlot(slotId, correctClueId) {
   const res = await api(`/tech-tree/slots/${slotId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ branchId, slotOrder, correctClueId })
+    body: JSON.stringify({ correctClueId })
   });
   const data = await res.json();
   if (!res.ok) {

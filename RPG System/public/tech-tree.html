@@ -21,8 +21,8 @@
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
   .badge-locked { background: #626b75; }
   .badge-unlocked { background: #2a7d2a; }
-  .branch-row { display: flex; align-items: center; gap: 4px; margin: 40px 0 8px; overflow-x: auto; padding: 4px; }
-  .slot-arrow { flex-shrink: 0; color: var(--dim); font-size: 1.1rem; }
+  /* 格子不分順序，所以格子之間不畫箭頭，只是並排 */
+  .branch-row { display: flex; align-items: center; gap: 8px; margin: 40px 0 8px; overflow-x: auto; padding: 4px; }
   .slot-box {
     position: relative; width: 92px; height: 56px; flex-shrink: 0;
     border: 2px solid var(--line); border-radius: 6px; background: var(--card);
@@ -34,8 +34,6 @@
   .slot-box.staged .slot-box-text { color: var(--amber); font-weight: bold; }
   .slot-box.locked { border-color: var(--accent); background: #12351f; }
   .slot-box.locked .slot-box-text { color: var(--accent); font-weight: bold; }
-  .slot-box.unreachable { border-color: var(--line); background: var(--card-2); }
-  .slot-box.unreachable .slot-box-text { color: var(--dim); }
   .slot-box.has-clue { cursor: pointer; }
   .slot-box.has-clue:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
   .slot-box.dragover { outline: 3px dashed var(--amber); outline-offset: 2px; }
@@ -225,7 +223,7 @@ function renderBranches() {
         <span class="badge ${b.unlocked ? 'badge-unlocked' : 'badge-locked'}">${b.unlocked ? '已解鎖' : `${b.slots.filter(s => s.isLocked).length}/${b.slots.length} 完成`}</span>
       </div>
       <div class="branch-row">
-        ${b.slots.map((s, idx) => renderSlot(s, idx, color)).join('')}
+        ${b.slots.map(s => renderSlot(s, color)).join('')}
       </div>
       ${b.unlocked ? `<button onclick="readStory(${b.id})">閱讀分支劇情</button>` : ''}
     </div>
@@ -247,14 +245,13 @@ function renderBranches() {
   });
 }
 
-function renderSlot(s, idx, branchColor) {
+function renderSlot(s, branchColor) {
   const clue = s.placedClueId ? clueById(s.placedClueId) : null;
-  const stateClass = s.isLocked ? 'locked' : (!s.reachable ? 'unreachable' : (s.placedClueId ? 'staged' : ''));
-  const droppable = s.reachable && !s.isLocked;
-  const borderColor = s.isLocked ? '#2a7d2a' : (s.placedClueId ? '#06c' : (s.reachable ? branchColor : '#ddd'));
+  const stateClass = s.isLocked ? 'locked' : (s.placedClueId ? 'staged' : '');
+  const droppable = !s.isLocked;
+  const borderColor = s.isLocked ? '#2a7d2a' : (s.placedClueId ? '#06c' : branchColor);
 
   return `
-    ${idx > 0 ? '<span class="slot-arrow">&rarr;</span>' : ''}
     <div class="slot-box ${stateClass}${s.placedClueId ? ' has-clue' : ''}" data-slot-id="${s.id}" data-droppable="${droppable}"${s.placedClueId ? ` data-clue-id="${s.placedClueId}" role="button" tabindex="0" aria-label="閱讀線索：${escapeHtml(s.placedClueName || '')}"` : ''} style="border-color:${borderColor}">
       ${s.placedClueId ? `
         <div class="slot-bubble">
