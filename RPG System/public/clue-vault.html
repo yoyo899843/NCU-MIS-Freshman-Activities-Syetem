@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>線索庫 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  .clue-card { cursor: pointer; }
+  .clue-card:focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
+  .clue-modal-backdrop { position: fixed; inset: 0; z-index: 1000; padding: 16px; overflow-y: auto; background: rgba(0, 0, 0, .66); }
+  .clue-modal { max-width: 520px; margin: 8vh auto; background: var(--card); }
+  .clue-modal-content { white-space: pre-wrap; line-height: 1.7; }
+</style>
 </head>
 <body>
 <h1>線索庫</h1>
@@ -20,49 +27,149 @@
   <p id="error" class="error"></p>
 </div>
 
+<div id="clueModal" class="clue-modal-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="clueModalTitle" aria-describedby="clueModalContent" tabindex="-1">
+  <div class="card clue-modal">
+    <span id="newClueBadge" class="tag" style="display:none">新線索</span>
+    <h2 id="clueModalTitle" style="margin-top:10px"></h2>
+    <p id="clueModalLocation" class="hint"></p>
+    <div id="clueModalContent" class="clue-modal-content"></div>
+    <p id="clueModalMeta" class="hint"></p>
+    <button id="closeClueBtn" type="button">關閉</button>
+  </div>
+</div>
+
 <script src="authFetch.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
+const viaLabel = { scan: 'QR 掃描', code: '權限碼兌換', staff: '關主派發' };
+const forcedClueId = Number(new URLSearchParams(location.search).get('newClue'));
+let clues = [];
+let pendingNewClues = [];
+let clueModalOpener = null;
+
+function seenStorageKey() {
+  // 以學派帳號區分「已看過」狀態；只是前端提示用途，不信任 token 內容做權限判斷。
+  try {
+    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return 'rpg-clue-vault-seen-' + JSON.parse(atob(payload)).sub;
+  } catch (err) {
+    return 'rpg-clue-vault-seen';
+  }
+}
+
+function readSeenIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(seenStorageKey()) || '[]')); } catch (err) { return new Set(); }
+}
+
+function saveSeenIds(rows) {
+  localStorage.setItem(seenStorageKey(), JSON.stringify(rows.map(clue => clue.id)));
+}
+
+function queueNewClues(rows, isInitialLoad) {
+  const seenIds = readSeenIds();
+  const requested = Number.isInteger(forcedClueId) ? rows.find(clue => clue.id === forcedClueId) : null;
+  const recentlyReceived = clue => Date.now() - new Date(clue.acquired_at).getTime() < 10 * 60 * 1000;
+  const unseen = isInitialLoad && seenIds.size === 0
+    ? rows.filter(recentlyReceived)
+    : rows.filter(clue => !seenIds.has(clue.id));
+
+  // 掃描／兌換成功後帶進來的線索一定優先跳出；Set 防止和「未看過」清單重複。
+  const ids = new Set();
+  const candidates = [requested, ...unseen].filter(clue => clue && !ids.has(clue.id) && ids.add(clue.id));
+  saveSeenIds(rows);
+  // 彈窗開著時，輪詢到的線索接在隊列後面，不能覆寫掉玩家尚未閱讀的下一張。
+  if (document.getElementById('clueModal').style.display !== 'none') {
+    const queuedIds = new Set(pendingNewClues.map(clue => clue.id));
+    pendingNewClues.push(...candidates.filter(clue => !queuedIds.has(clue.id)));
+    return;
+  }
+  pendingNewClues = candidates;
+  showNextNewClue();
+}
+
+function openClueModal(clue, opener, isNew = false) {
+  clueModalOpener = opener || document.activeElement;
+  document.getElementById('newClueBadge').style.display = isNew ? '' : 'none';
+  document.getElementById('clueModalTitle').textContent = clue.name;
+  document.getElementById('clueModalLocation').textContent = clue.acquisition_location ? `獲得地點：${clue.acquisition_location}` : '';
+  document.getElementById('clueModalContent').textContent = clue.description || '（這張線索沒有文字內容）';
+  const time = new Date(clue.acquired_at).toLocaleString('zh-TW');
+  document.getElementById('clueModalMeta').textContent = `取得方式：${viaLabel[clue.acquired_via] || clue.acquired_via} ／ ${time}`;
+  document.getElementById('clueModal').style.display = '';
+  document.getElementById('closeClueBtn').focus();
+}
+
+function showNextNewClue() {
+  const clue = pendingNewClues.shift();
+  if (clue) openClueModal(clue, null, true);
+}
+
+function closeClueModal() {
+  document.getElementById('clueModal').style.display = 'none';
+  const opener = clueModalOpener;
+  clueModalOpener = null;
+  if (pendingNewClues.length) return setTimeout(showNextNewClue, 0);
+  opener?.focus();
+}
+
+function renderClues() {
+  const listEl = document.getElementById('list');
+  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[char]));
+  listEl.innerHTML = clues.map(clue => {
+    const time = new Date(clue.acquired_at).toLocaleString('zh-TW');
+    const location = clue.acquisition_location
+      ? `<p style="font-size:0.85rem;color:var(--dim)">獲得地點：${escapeHtml(clue.acquisition_location)}</p>`
+      : '';
+    return `<div class="card clue-card" data-clue-id="${clue.id}" role="button" tabindex="0" aria-label="閱讀線索：${escapeHtml(clue.name)}">
+      <strong>${escapeHtml(clue.name)}</strong>
+      <p>${escapeHtml(clue.description)}</p>
+      ${location}
+      <p style="font-size:0.85rem;color:var(--dim)">取得方式：${escapeHtml(viaLabel[clue.acquired_via] || clue.acquired_via)} ／ ${time}</p>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('.clue-card').forEach(card => {
+    const clue = clues.find(row => row.id === Number(card.dataset.clueId));
+    card.addEventListener('click', () => openClueModal(clue, card));
+    card.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openClueModal(clue, card); }
+    });
+  });
+}
+
+async function loadVault(isInitialLoad = false) {
+  const res = await fetch('/api/clues/vault', { headers: { Authorization: 'Bearer ' + token } });
+  const data = await res.json();
+  if (!res.ok) throw new Error(`讀取失敗 (${res.status}): ${data.error || ''}`);
+  clues = data;
+  if (data.length === 0) {
+    document.getElementById('empty').style.display = '';
+    return;
+  }
+  document.getElementById('empty').style.display = 'none';
+  renderClues();
+  queueNewClues(data, isInitialLoad);
+}
+
 if (!token) {
   document.getElementById('notLoggedIn').style.display = '';
 } else {
   document.getElementById('content').style.display = '';
-  fetch('/api/clues/vault', { headers: { Authorization: 'Bearer ' + token } })
-    .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
-    .then(({ ok, status, data }) => {
-      if (!ok) {
-        document.getElementById('error').textContent = `讀取失敗 (${status}): ${data.error || ''}`;
-        return;
-      }
-      if (data.length === 0) {
-        document.getElementById('empty').style.display = '';
-        return;
-      }
-      const listEl = document.getElementById('list');
-      const viaLabel = { scan: 'QR 掃描', code: '權限碼兌換' };
-      const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      }[char]));
-      data.forEach(clue => {
-        const item = document.createElement('div');
-        item.className = 'card';
-        const time = new Date(clue.acquired_at).toLocaleString('zh-TW');
-        const location = clue.acquisition_location
-          ? `<p style="font-size:0.85rem;color:var(--dim)">獲得地點：${escapeHtml(clue.acquisition_location)}</p>`
-          : '';
-        item.innerHTML = `
-          <strong>${escapeHtml(clue.name)}</strong>
-          <p>${escapeHtml(clue.description)}</p>
-          ${location}
-          <p style="font-size:0.85rem;color:var(--dim)">取得方式：${escapeHtml(viaLabel[clue.acquired_via] || clue.acquired_via)} ／ ${time}</p>
-        `;
-        listEl.appendChild(item);
-      });
-    })
-    .catch(err => {
-      document.getElementById('error').textContent = '連線失敗: ' + err.message;
-    });
+  loadVault(true).catch(err => { document.getElementById('error').textContent = err.message; });
+  // 關主可在玩家停留線索庫時派發線索；每 10 秒同步一次，收到新線索就跳出內容視窗。
+  setInterval(() => {
+    if (!document.hidden) loadVault().catch(() => {});
+  }, 10000);
 }
+
+document.getElementById('closeClueBtn').addEventListener('click', closeClueModal);
+document.getElementById('clueModal').addEventListener('click', event => {
+  if (event.target.id === 'clueModal') closeClueModal();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.getElementById('clueModal').style.display !== 'none') closeClueModal();
+});
 </script>
 </body>
 </html>

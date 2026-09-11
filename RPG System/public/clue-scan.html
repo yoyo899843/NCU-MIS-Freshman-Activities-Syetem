@@ -125,9 +125,11 @@ async function submitScan(qrToken) {
       resultEl.textContent = `掃描失敗 (${res.status}): ${data.error || ''}`;
       return;
     }
-    resultEl.textContent = data.alreadyAcquired
-      ? `你已經拿過線索「${data.clue.name}」了，可以到線索庫查看。`
-      : `獲得線索「${data.clue.name}」！可以到線索庫查看。`;
+    if (!data.alreadyAcquired) {
+      location.href = 'clue-vault.html?newClue=' + encodeURIComponent(data.clue.id);
+      return;
+    }
+    resultEl.textContent = `你已經拿過線索「${data.clue.name}」了，可以到線索庫查看。`;
     document.getElementById('qrToken').value = '';
   } catch (err) {
     resultEl.className = 'error';

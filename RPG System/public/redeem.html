@@ -55,7 +55,8 @@ document.getElementById('redeemBtn')?.addEventListener('click', async () => {
     if (data.type === 'checkpoint_unlock') {
       resultEl.textContent = `解鎖成功！關卡「${data.checkpoint.name}」已開放挑戰。`;
     } else if (data.type === 'hidden_clue') {
-      resultEl.textContent = `兌換成功！獲得隱藏線索「${data.clue.name}」，可以到線索庫查看。`;
+      location.href = 'clue-vault.html?newClue=' + encodeURIComponent(data.clue.id);
+      return;
     } else {
       resultEl.textContent = JSON.stringify(data);
     }
