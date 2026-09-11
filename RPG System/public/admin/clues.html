@@ -161,7 +161,7 @@ window.startEdit = function (id) {
 };
 
 window.deleteClue = async function (id) {
-  if (!confirm('確定要刪除這個線索嗎？已經被隊伍取得或被其他功能使用中的線索會被擋下來。')) return;
+  if (!confirm('確定要刪除這個線索嗎？\n\n各隊已取得的這張線索、以它為答案的科技樹槽位（連同各隊的放置紀錄）、指向它的權限碼會一起刪掉，無法復原。')) return;
   const res = await api(`/clues/${id}`, { method: 'DELETE' });
   if (res.status === 409) {
     const data = await res.json();

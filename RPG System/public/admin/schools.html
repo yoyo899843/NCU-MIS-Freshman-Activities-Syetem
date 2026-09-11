@@ -3,38 +3,52 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>學派管理 - 資管皇家學院數位探查儀</title>
+<title>學派（玩家帳號）管理 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="../style.css">
 <style>
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th, td { border: 1px solid var(--line); padding: 6px; text-align: left; }
+  body { max-width: 900px; }
+  .table-wrap { overflow-x: auto; }
+  /* 窄螢幕上寧可讓表格在框內左右滑，也不要把名字擠成一個字一行 */
+  th, td { vertical-align: middle; white-space: nowrap; }
   td.password { font-family: monospace; }
-  button.small { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 0 0; font-size: 0.8rem; }
+  td input { margin: 0; min-width: 8em; }
+  .row-actions { white-space: nowrap; }
+  .msg { font-size: 14px; margin: 8px 0 0; }
+  .msg:empty { display: none; }
+  .msg.ok { color: var(--accent); }
+  .msg.error { color: var(--danger); }
+  .field-grid { display: grid; gap: 0 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 </style>
 </head>
 <body>
-<h1>學派管理</h1>
+<h1>學派（玩家帳號）管理</h1>
 <p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
 
 <div class="card">
-  <p>密碼明碼儲存，可直接在下方清單查看——這是主辦控制的固定帳號，不是玩家自己設的密碼，方便忘記密碼時直接查、不用重設。</p>
-  <input id="usernameInput" placeholder="帳號（例如 school1）">
-  <input id="passwordInput" placeholder="密碼（至少 8 個字元）">
-  <input id="displayNameInput" placeholder="顯示名稱（例如 資管一系）">
+  <h3>新增學派帳號</h3>
+  <p class="hint">每個學派就是一組玩家帳號，隊員共用這組帳密登入。密碼明碼儲存，可直接在下方清單查看——這是主辦控制的固定帳號，不是玩家自己設的密碼，忘記時直接查、不用重設。</p>
+  <div class="field-grid">
+    <div><label for="usernameInput">帳號</label><input id="usernameInput" autocomplete="off" autocapitalize="off" placeholder="例如 school1"></div>
+    <div><label for="passwordInput">密碼</label><input id="passwordInput" autocomplete="off" placeholder="至少 8 個字元"></div>
+    <div><label for="displayNameInput">顯示名稱</label><input id="displayNameInput" autocomplete="off" placeholder="例如 資管一系"></div>
+  </div>
   <p class="hint">顯示名稱只能用中英文字、數字與 emoji，不能有空白或標點符號。</p>
-  <button id="createBtn">新增學派帳號</button>
-  <p id="createResult" class="error"></p>
+  <button id="createBtn" type="button">新增學派帳號</button>
+  <p id="createResult" class="msg" role="status"></p>
 </div>
 
 <div class="card">
-  <label><input type="checkbox" id="showPasswords" style="width:auto;display:inline"> 顯示密碼明碼</label>
-  <table>
-    <thead>
-      <tr><th>ID</th><th>帳號</th><th>密碼</th><th>顯示名稱</th><th>建立時間</th><th></th></tr>
-    </thead>
-    <tbody id="tableBody"></tbody>
-  </table>
-  <p id="listError" class="error"></p>
+  <h3>所有學派帳號</h3>
+  <label><input type="checkbox" id="showPasswords" style="width:auto;display:inline;min-height:0"> 顯示密碼明碼</label>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>ID</th><th>顯示名稱</th><th>帳號</th><th>密碼</th><th>操作</th><th>建立時間</th></tr>
+      </thead>
+      <tbody id="tableBody"><tr><td colspan="6">載入中…</td></tr></tbody>
+    </table>
+  </div>
+  <p id="listMsg" class="msg" role="status"></p>
 </div>
 
 <script src="../authFetch.js"></script>
@@ -42,115 +56,163 @@
 const token = localStorage.getItem('adminToken');
 if (!token) location.href = 'login.html';
 
-let showPasswords = false;
-document.getElementById('showPasswords').addEventListener('change', e => {
-  showPasswords = e.target.checked;
-  renderTable(lastData);
-});
+// 跟伺服器同一套規則（src/displayName.js 的 NAME_PATTERN）。這裡只是先給即時
+// 回饋，真正說了算的是伺服器（POST/PATCH /schools 與 create-school.js 都會擋）。
+const NAME_PATTERN = /^[\p{L}\p{Nd}\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u200D\uFE0F\u20E3]+$/u;
+const NAME_RULE = '顯示名稱只能用中英文字、數字與 emoji，不能有空白或標點符號';
 
+let showPasswords = false;
 let lastData = [];
+let editingId = null;   // 正在編輯的那一列；同時只開一列，避免改到一半又點另一列而搞混
+
+async function api(path, options = {}) {
+  const res = await fetch('/admin/api' + path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token, ...(options.headers || {}) }
+  });
+  const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
+  return { res, data };
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function showMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'error');
+}
 
 async function loadList() {
-  const res = await fetch('/admin/api/schools', { headers: { Authorization: 'Bearer ' + token } });
-  if (res.status === 401) {
-    localStorage.removeItem('adminToken');
-    location.href = 'login.html';
-    return;
-  }
-  const data = await res.json();
-  if (!res.ok) {
-    document.getElementById('listError').textContent = `讀取失敗 (${res.status}): ${data.error || ''}`;
-    return;
-  }
+  const { res, data } = await api('/schools');
+  if (!res.ok) return showMsg('listMsg', `讀取失敗 (${res.status}): ${data.error || ''}`, false);
   lastData = data;
-  renderTable(data);
+  renderTable();
 }
 
-function renderTable(data) {
-  const body = document.getElementById('tableBody');
-  body.innerHTML = '';
-  data.forEach(row => {
-    const tr = document.createElement('tr');
-    const passwordText = showPasswords ? row.password : '••••••••';
-    tr.innerHTML = `
-      <td>${row.id}</td>
-      <td>${row.username}</td>
-      <td class="password">${passwordText}</td>
-      <td>${row.display_name}</td>
-      <td>${new Date(row.created_at).toLocaleString('zh-TW')}</td>
-      <td>
-        <button class="small resetBtn" data-id="${row.id}">重設密碼</button>
-        <button class="small deleteBtn" data-id="${row.id}">刪除</button>
-      </td>
-    `;
-    body.appendChild(tr);
-  });
-  document.querySelectorAll('.resetBtn').forEach(btn => {
-    btn.addEventListener('click', () => resetPassword(btn.dataset.id));
-  });
-  document.querySelectorAll('.deleteBtn').forEach(btn => {
-    btn.addEventListener('click', () => deleteSchool(btn.dataset.id));
-  });
+function renderTable() {
+  document.getElementById('tableBody').innerHTML = lastData.map(row => {
+    if (row.id === editingId) {
+      return `
+        <tr data-id="${row.id}">
+          <td>${row.id}</td>
+          <td><input id="editDisplayName" value="${escapeHtml(row.display_name)}" aria-label="顯示名稱"></td>
+          <td><input id="editUsername" value="${escapeHtml(row.username)}" aria-label="帳號" autocapitalize="off"></td>
+          <td><input id="editPassword" placeholder="留空＝不改" aria-label="新密碼（留空不改）" autocomplete="off"></td>
+          <td class="row-actions">
+            <button type="button" data-act="save">儲存</button>
+            <button type="button" class="ghost" data-act="cancel">取消</button>
+          </td>
+          <td>${new Date(row.created_at).toLocaleString('zh-TW')}</td>
+        </tr>`;
+    }
+    return `
+      <tr data-id="${row.id}">
+        <td>${row.id}</td>
+        <td>${escapeHtml(row.display_name)}</td>
+        <td>${escapeHtml(row.username)}</td>
+        <td class="password">${showPasswords ? escapeHtml(row.password) : '••••••••'}</td>
+        <td class="row-actions">
+          <button type="button" data-act="edit">編輯</button>
+          <button type="button" class="ghost" data-act="delete">刪除</button>
+        </td>
+        <td>${new Date(row.created_at).toLocaleString('zh-TW')}</td>
+      </tr>`;
+  }).join('') || '<tr><td colspan="6">目前沒有任何學派帳號，用上面的表單新增。</td></tr>';
+
+  if (editingId !== null) document.getElementById('editDisplayName')?.focus();
 }
 
-async function resetPassword(id) {
-  const newPassword = prompt('輸入新密碼（至少 8 個字元）：');
-  if (!newPassword) return;
-  const res = await fetch('/admin/api/schools/' + id, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify({ password: newPassword })
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    alert(`重設失敗 (${res.status}): ${data.error || ''}`);
-    return;
+async function saveEdit(id) {
+  const row = lastData.find(r => r.id === id);
+  const username = document.getElementById('editUsername').value.trim();
+  const password = document.getElementById('editPassword').value;
+  const displayName = document.getElementById('editDisplayName').value.trim();
+
+  if (!username) return showMsg('listMsg', '帳號不可為空', false);
+  if (!NAME_PATTERN.test(displayName)) return showMsg('listMsg', NAME_RULE, false);
+  if (password && password.length < 8) return showMsg('listMsg', '新密碼至少要 8 個字元', false);
+
+  // 只送真的有改的欄位，稽核紀錄才看得出這次改了什麼
+  const body = {};
+  if (username !== row.username) body.username = username;
+  if (displayName !== row.display_name) body.displayName = displayName;
+  if (password) body.password = password;
+  if (Object.keys(body).length === 0) {
+    editingId = null;
+    renderTable();
+    return showMsg('listMsg', '沒有任何變更', true);
   }
-  loadList();
+
+  const { res, data } = await api('/schools/' + id, { method: 'PATCH', body: JSON.stringify(body) });
+  if (!res.ok) return showMsg('listMsg', `儲存失敗：${data.error || res.status}`, false);
+
+  editingId = null;
+  showMsg('listMsg', `已更新「${data.display_name}」` +
+    (body.username ? '。帳號改了，請通知這一隊之後用新帳號登入（已登入的裝置不受影響）' : ''), true);
+  await loadList();
 }
 
 async function deleteSchool(id) {
-  if (!confirm('確定要刪除這個學派帳號嗎？若這隊已經有遊戲進度會被擋下來。')) return;
-  const res = await fetch('/admin/api/schools/' + id, {
-    method: 'DELETE',
-    headers: { Authorization: 'Bearer ' + token }
-  });
-  if (res.status === 204) {
-    loadList();
-    return;
-  }
-  const data = await res.json().catch(() => ({}));
-  alert(`刪除失敗 (${res.status}): ${data.error || ''}`);
+  const row = lastData.find(r => r.id === id);
+  if (!confirm(
+    `確定要刪除「${row.display_name}」（帳號 ${row.username}）嗎？\n\n` +
+    '這一隊的關卡進度、線索、權限碼兌換、科技樹紀錄、長老投票會一起刪掉，無法復原；' +
+    '有投票的話，投票結果也會跟著變。這一隊已登入的裝置會立刻被登出。'
+  )) return;
+
+  const { res, data } = await api('/schools/' + id, { method: 'DELETE' });
+  if (res.status !== 204) return showMsg('listMsg', `刪除失敗：${data.error || res.status}`, false);
+  if (editingId === id) editingId = null;
+  showMsg('listMsg', `已刪除「${row.display_name}」`, true);
+  await loadList();
 }
+
+document.getElementById('tableBody').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const id = parseInt(btn.closest('tr').dataset.id, 10);
+  const act = btn.dataset.act;
+  if (act === 'edit') { editingId = id; showMsg('listMsg', '', true); renderTable(); }
+  else if (act === 'cancel') { editingId = null; renderTable(); }
+  else if (act === 'save') saveEdit(id);
+  else if (act === 'delete') deleteSchool(id);
+});
+// 編輯中按 Enter 儲存、Esc 取消
+document.getElementById('tableBody').addEventListener('keydown', e => {
+  if (editingId === null || e.target.tagName !== 'INPUT') return;
+  if (e.key === 'Enter') saveEdit(editingId);
+  if (e.key === 'Escape') { editingId = null; renderTable(); }
+});
+
+document.getElementById('showPasswords').addEventListener('change', e => {
+  showPasswords = e.target.checked;
+  renderTable();
+});
 
 document.getElementById('createBtn').addEventListener('click', async () => {
   const username = document.getElementById('usernameInput').value.trim();
   const password = document.getElementById('passwordInput').value;
   const displayName = document.getElementById('displayNameInput').value.trim();
-  const resultEl = document.getElementById('createResult');
 
-  // 跟伺服器同一套規則（src/displayName.js 的 NAME_PATTERN）。這裡只是先給即時
-  // 回饋，真正說了算的是伺服器（POST/PATCH /schools 與 create-school.js 都會擋）。
-  if (!/^[\p{L}\p{Nd}\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u200D\uFE0F\u20E3]+$/u.test(displayName)) {
-    resultEl.textContent = '顯示名稱只能用中英文字、數字與 emoji，不能有空白或標點符號';
-    return;
-  }
+  if (!username) return showMsg('createResult', '帳號不可為空', false);
+  if (password.length < 8) return showMsg('createResult', '密碼至少要 8 個字元', false);
+  if (!NAME_PATTERN.test(displayName)) return showMsg('createResult', NAME_RULE, false);
 
-  const res = await fetch('/admin/api/schools', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify({ username, password, displayName })
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    resultEl.textContent = `新增失敗 (${res.status}): ${data.error || ''}`;
-    return;
+  const btn = document.getElementById('createBtn');
+  btn.disabled = true;
+  try {
+    const { res, data } = await api('/schools', { method: 'POST', body: JSON.stringify({ username, password, displayName }) });
+    if (!res.ok) return showMsg('createResult', `新增失敗：${data.error || res.status}`, false);
+    showMsg('createResult', `已新增「${data.display_name}」（帳號 ${data.username}）`, true);
+    document.getElementById('usernameInput').value = '';
+    document.getElementById('passwordInput').value = '';
+    document.getElementById('displayNameInput').value = '';
+    await loadList();
+  } finally {
+    btn.disabled = false;
   }
-  resultEl.textContent = '';
-  document.getElementById('usernameInput').value = '';
-  document.getElementById('passwordInput').value = '';
-  document.getElementById('displayNameInput').value = '';
-  loadList();
 });
 
 if (token) loadList();

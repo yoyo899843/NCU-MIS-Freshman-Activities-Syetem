@@ -11,6 +11,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { createLoginThrottle } = require('../loginThrottle');
 const { validateName } = require('../displayName');
 const { techTreeScore } = require('../scoring');
+const { removeLocation } = require('../schoolLocations');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -150,7 +151,7 @@ router.patch('/admins/:id/password', requireFullAdmin, asyncHandler(async (req, 
   res.json({ id: Number(req.params.id), passwordReset: true });
 }));
 
-// 刪除關主帳號。同樣不能刪管理員。
+// 刪除關主帳號。同樣不能刪管理員。他留下的稽核紀錄會保留（操作者存有 email 快照，見 migrations/012）。
 router.delete('/admins/:id', requireFullAdmin, asyncHandler(async (req, res) => {
   const { rows: existingRows } = await db.query(
     'SELECT id, email, role FROM admin_users WHERE id = $1', [req.params.id]
@@ -160,16 +161,7 @@ router.delete('/admins/:id', requireFullAdmin, asyncHandler(async (req, res) => 
     return res.status(403).json({ error: '管理員帳號只能在伺服器上用 CLI 調整' });
   }
 
-  try {
-    await db.query('DELETE FROM admin_users WHERE id = $1', [req.params.id]);
-  } catch (err) {
-    // 這個關主已經留下操作紀錄（admin_actions 有 FK 指過來），刪掉的話稽核就
-    // 斷了，所以擋下來。真的要移除請改成重設密碼讓他登不進來。
-    if (err.code === '23503') {
-      return res.status(409).json({ error: '這個關主已經有操作紀錄，不能刪除（可以改成重設密碼讓他無法登入）' });
-    }
-    throw err;
-  }
+  await db.query('DELETE FROM admin_users WHERE id = $1', [req.params.id]);
 
   await db.query(
     `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
@@ -195,9 +187,12 @@ router.get('/audit-logs', requireFullAdmin, asyncHandler(async (req, res) => {
   const { rows } = await db.query(`
     SELECT aa.id, aa.action_type, aa.target_type, aa.target_id,
            aa.before_value, aa.after_value, aa.created_at,
-           au.email AS operator_email, au.display_name AS operator_name, au.role AS operator_role
+           COALESCE(au.email, aa.operator_email) AS operator_email,
+           COALESCE(au.display_name, aa.operator_name) AS operator_name,
+           au.role AS operator_role, (au.id IS NULL) AS operator_deleted
     FROM admin_actions aa
-    JOIN admin_users au ON au.id = aa.admin_user_id
+    -- LEFT JOIN：操作者的帳號被刪掉之後紀錄還在，改用寫入當下存的快照（見 migrations/012）
+    LEFT JOIN admin_users au ON au.id = aa.admin_user_id
     ORDER BY aa.created_at DESC, aa.id DESC
     LIMIT 500
   `);
@@ -337,103 +332,162 @@ router.post('/schools/:schoolId/clues/:clueId', asyncHandler(async (req, res) =>
   res.json({ schoolId: Number(schoolId), clueId: Number(clueId), alreadyOwned });
 }));
 
-// 學派管理：帳號密碼明碼儲存（不雜湊）——這是主辦控制的固定帳號，不是玩家自己設的
+// 學派（玩家帳號）管理：帳號密碼明碼儲存（不雜湊）——這是主辦控制的固定帳號，不是玩家自己設的
 // 密碼，主辦需要能直接在後台查到/管理每組學派目前的帳密（例如忘記密碼時直接看，
 // 不用重設），理由跟 Time-Space Warfare 玩家 PIN 明碼儲存一樣。
 // 見 migrations/003_school_password_plaintext.sql、src/routes/auth.js 的登入比對。
+//
+// 關主也打得到這支 GET（關主現場操作頁要列出隊伍），但密碼只回給管理員。
 router.get('/schools', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     'SELECT id, username, password, display_name, created_at FROM schools ORDER BY id ASC'
   );
-  res.json(rows);
+  const isAdmin = (req.admin.adminRole || 'admin') === 'admin';
+  res.json(isAdmin ? rows : rows.map(({ password, ...rest }) => rest));
 }));
 
+// 登入帳號：不能有空白（登入時會 trim，中間有空白的帳號打不進去），長度 1–40。
+function validateUsername(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return { error: '帳號不可為空' };
+  const username = raw.trim();
+  if (/\s/.test(username)) return { error: '帳號不能有空白' };
+  if (username.length > 40) return { error: '帳號最多 40 個字元' };
+  return { username };
+}
+
+// validateName 的訊息開頭是「名稱…」，這一頁有帳號和顯示名稱兩種名字，講清楚是哪個
+function displayNameError(message) {
+  return message.startsWith('名稱') ? '顯示' + message : '顯示名稱' + message;
+}
+
+function validatePassword(raw) {
+  if (typeof raw !== 'string' || raw.length < 8) return { error: '密碼至少要 8 個字元' };
+  return { password: raw };
+}
+
 router.post('/schools', asyncHandler(async (req, res) => {
-  const { username, password, displayName } = req.body || {};
-  if (!username || typeof username !== 'string' || !username.trim()) {
-    return res.status(400).json({ error: 'username is required' });
-  }
-  if (!password || typeof password !== 'string' || password.length < 8) {
-    return res.status(400).json({ error: 'password must be at least 8 characters' });
-  }
-  if (!displayName || typeof displayName !== 'string' || !displayName.trim()) {
-    return res.status(400).json({ error: 'displayName is required' });
-  }
+  const body = req.body || {};
+  const u = validateUsername(body.username);
+  if (u.error) return res.status(400).json({ error: u.error });
+  const p = validatePassword(body.password);
+  if (p.error) return res.status(400).json({ error: p.error });
   // 學派名稱會出現在地圖 tooltip、戰況板、後台表格等地方，字元規則見
   // src/displayName.js（只准文字、數字、emoji，把標點與角括號擋在輸入端）。
-  const validatedName = validateName(displayName);
-  if (validatedName.error) return res.status(400).json({ error: validatedName.error });
+  const n = validateName(body.displayName);
+  if (n.error) return res.status(400).json({ error: displayNameError(n.error) });
 
   try {
     const { rows } = await db.query(
       `INSERT INTO schools (username, password, display_name)
        VALUES ($1, $2, $3)
        RETURNING id, username, password, display_name, created_at`,
-      [username.trim(), password, displayName.trim()]
+      [u.username, p.password, n.name]
     );
     await audit(req.admin.sub, 'create_school', 'school', rows[0].id, null,
       { username: rows[0].username, displayName: rows[0].display_name });
     res.status(201).json(rows[0]);
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'username already exists' });
+    if (err.code === '23505') return res.status(409).json({ error: '這個帳號已經有人用了' });
     throw err;
   }
 }));
 
-// 部分更新：改密碼、改顯示名稱，或兩個一起改。至少要帶一個欄位。
+// 部分更新：帳號、密碼、顯示名稱，帶哪個改哪個，至少要帶一個。
+// 已經登入的裝置不用重新登入：schoolAuth 每次都從資料庫讀最新的帳號與名稱。
 router.patch('/schools/:id', asyncHandler(async (req, res) => {
-  const { password, displayName } = req.body || {};
-  if (password === undefined && displayName === undefined) {
-    return res.status(400).json({ error: 'nothing to update' });
+  const body = req.body || {};
+  if (body.username === undefined && body.password === undefined && body.displayName === undefined) {
+    return res.status(400).json({ error: '沒有要更新的欄位' });
   }
-  if (password !== undefined && (typeof password !== 'string' || password.length < 8)) {
-    return res.status(400).json({ error: 'password must be at least 8 characters' });
+  const changes = {};
+  if (body.username !== undefined) {
+    const u = validateUsername(body.username);
+    if (u.error) return res.status(400).json({ error: u.error });
+    changes.username = u.username;
   }
-  if (displayName !== undefined && (typeof displayName !== 'string' || !displayName.trim())) {
-    return res.status(400).json({ error: 'displayName cannot be empty' });
+  if (body.password !== undefined) {
+    const p = validatePassword(body.password);
+    if (p.error) return res.status(400).json({ error: p.error });
+    changes.password = p.password;
   }
-  if (displayName !== undefined) {
-    const validatedName = validateName(displayName);
-    if (validatedName.error) return res.status(400).json({ error: validatedName.error });
+  if (body.displayName !== undefined) {
+    const n = validateName(body.displayName);
+    if (n.error) return res.status(400).json({ error: displayNameError(n.error) });
+    changes.displayName = n.name;
   }
 
   const { rows: existingRows } = await db.query('SELECT * FROM schools WHERE id = $1', [req.params.id]);
-  if (existingRows.length === 0) return res.status(404).json({ error: 'not found' });
+  if (existingRows.length === 0) return res.status(404).json({ error: '找不到這個學派帳號' });
   const existing = existingRows[0];
 
-  const { rows } = await db.query(
-    `UPDATE schools SET password = $1, display_name = $2 WHERE id = $3
-     RETURNING id, username, password, display_name, created_at`,
-    [
-      password !== undefined ? password : existing.password,
-      displayName !== undefined ? displayName.trim() : existing.display_name,
-      req.params.id
-    ]
-  );
-  await audit(req.admin.sub, 'update_school', 'school', req.params.id,
-    { username: existing.username, displayName: existing.display_name },
-    { username: rows[0].username, displayName: rows[0].display_name, passwordChanged: password !== undefined });
-  res.json(rows[0]);
+  try {
+    const { rows } = await db.query(
+      `UPDATE schools SET username = $1, password = $2, display_name = $3 WHERE id = $4
+       RETURNING id, username, password, display_name, created_at`,
+      [
+        changes.username ?? existing.username,
+        changes.password ?? existing.password,
+        changes.displayName ?? existing.display_name,
+        req.params.id
+      ]
+    );
+    await audit(req.admin.sub, 'update_school', 'school', req.params.id,
+      { username: existing.username, displayName: existing.display_name },
+      { username: rows[0].username, displayName: rows[0].display_name, passwordChanged: changes.password !== undefined });
+    res.json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: '這個帳號已經有人用了' });
+    throw err;
+  }
 }));
 
+// 刪帳號時會跟著刪掉的遊戲紀錄（migrations/012 的 ON DELETE CASCADE）。
+// 這裡只用來在刪之前數一下各有幾筆，寫進稽核紀錄，事後查得到刪掉了什麼。
+const SCHOOL_PROGRESS_TABLES = [
+  ['school_checkpoint_progress', '關卡進度'],
+  ['school_clues', '線索'],
+  ['school_code_redemptions', '權限碼兌換'],
+  ['school_slot_placements', '科技樹放置'],
+  ['school_check_attempts', '科技樹驗證紀錄'],
+  ['school_branch_unlocks', '已解鎖分支'],
+  ['school_votes', '長老投票']
+];
+
+// 刪除學派帳號，連同這一隊所有遊戲紀錄（包含長老投票，投票結果會跟著變）。
 router.delete('/schools/:id', asyncHandler(async (req, res) => {
-  const { rows: existingRows } = await db.query(
-    'SELECT id, username, display_name FROM schools WHERE id = $1', [req.params.id]
-  );
-  if (existingRows.length === 0) return res.status(404).json({ error: 'not found' });
+  const client = await db.connect();
   try {
-    const { rowCount } = await db.query('DELETE FROM schools WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'not found' });
-    await audit(req.admin.sub, 'delete_school', 'school', req.params.id,
-      { username: existingRows[0].username, displayName: existingRows[0].display_name }, null);
+    await client.query('BEGIN');
+    const { rows: existingRows } = await client.query(
+      'SELECT id, username, display_name FROM schools WHERE id = $1 FOR UPDATE', [req.params.id]
+    );
+    if (existingRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: '找不到這個學派帳號' });
+    }
+    const school = existingRows[0];
+
+    const deletedProgress = {};
+    for (const [table, label] of SCHOOL_PROGRESS_TABLES) {
+      const { rows } = await client.query(`SELECT COUNT(*)::int AS n FROM ${table} WHERE school_id = $1`, [school.id]);
+      if (rows[0].n > 0) deletedProgress[label] = rows[0].n;
+    }
+
+    await client.query('DELETE FROM schools WHERE id = $1', [school.id]);
+    await client.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+       VALUES ($1, 'delete_school', 'school', $2, $3, NULL)`,
+      [req.admin.sub, String(school.id),
+       JSON.stringify({ username: school.username, displayName: school.display_name, deletedProgress })]
+    );
+    await client.query('COMMIT');
+    removeLocation(school.id);
     res.status(204).end();
   } catch (err) {
-    // 這支隊伍已經留下遊戲進度（解鎖記錄、線索、兌換記錄等），FK 擋刪除，
-    // 避免刪帳號的同時默默把玩過的紀錄弄不見。
-    if (err.code === '23503') {
-      return res.status(409).json({ error: 'cannot delete a school that already has game progress' });
-    }
+    await client.query('ROLLBACK').catch(() => {});
     throw err;
+  } finally {
+    client.release();
   }
 }));
 
@@ -507,24 +561,17 @@ router.patch('/checkpoints/:id', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
+// 刪除關卡：各隊在這一關的進度、以這一關為目標的權限碼（含兌換紀錄）一起刪掉；
+// 關聯到這一關的線索保留，只是變成沒有關聯關卡（也就不能再由關主派發）。
 router.delete('/checkpoints/:id', asyncHandler(async (req, res) => {
   const { rows: existingRows } = await db.query(
     'SELECT id, name, description, map_lat, map_lng, is_locked_by_default FROM checkpoints WHERE id = $1', [req.params.id]
   );
   if (existingRows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
-  try {
-    const { rowCount } = await db.query('DELETE FROM checkpoints WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'checkpoint not found' });
-    await audit(req.admin.sub, 'delete_checkpoint', 'checkpoint', req.params.id, existingRows[0], null);
-    res.status(204).end();
-  } catch (err) {
-    // 已經有隊伍的解鎖/挑戰進度、掛著線索、或被權限碼指定為目標的關卡不能直接刪掉，
-    // FK 擋下來，避免默默弄壞既有進度/設定。
-    if (err.code === '23503') {
-      return res.status(409).json({ error: '這個關卡已經有隊伍進度或被其他功能使用中，無法刪除' });
-    }
-    throw err;
-  }
+  const { rowCount } = await db.query('DELETE FROM checkpoints WHERE id = $1', [req.params.id]);
+  if (rowCount === 0) return res.status(404).json({ error: 'checkpoint not found' });
+  await audit(req.admin.sub, 'delete_checkpoint', 'checkpoint', req.params.id, existingRows[0], null);
+  res.status(204).end();
 }));
 
 // 權限碼與線索 QR 代碼一律正規化成「去頭尾空白＋全大寫」再存。
@@ -644,24 +691,17 @@ router.patch('/clues/:id', asyncHandler(async (req, res) => {
   }
 }));
 
+// 刪除線索：各隊取得的這張線索、以它為答案的科技樹槽位、放著它的格子、相關驗證紀錄、
+// 指向它的權限碼（含兌換紀錄）一起刪掉。
 router.delete('/clues/:id', asyncHandler(async (req, res) => {
   const { rows: existingRows } = await db.query(
     'SELECT id, checkpoint_id, name, description, acquisition_location, staff_grant_enabled, qr_token FROM clues WHERE id = $1', [req.params.id]
   );
   if (existingRows.length === 0) return res.status(404).json({ error: 'clue not found' });
-  try {
-    const { rowCount } = await db.query('DELETE FROM clues WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'clue not found' });
-    await audit(req.admin.sub, 'delete_clue', 'clue', req.params.id, existingRows[0], null);
-    res.status(204).end();
-  } catch (err) {
-    // 已經被隊伍拿過（school_clues）、被用在權限碼（access_codes）或科技樹插槽正確答案
-    // （tech_tree_slots）的線索不能直接刪掉，FK 擋下來，避免默默弄壞既有進度/設定。
-    if (err.code === '23503') {
-      return res.status(409).json({ error: '這個線索已經被隊伍取得或被其他功能使用中，無法刪除' });
-    }
-    throw err;
-  }
+  const { rowCount } = await db.query('DELETE FROM clues WHERE id = $1', [req.params.id]);
+  if (rowCount === 0) return res.status(404).json({ error: 'clue not found' });
+  await audit(req.admin.sub, 'delete_clue', 'clue', req.params.id, existingRows[0], null);
+  res.status(204).end();
 }));
 
 // CSV 欄位格式：名稱, 描述, 獲得地點（關卡）, 圖片網址, QR代碼。
@@ -797,24 +837,16 @@ router.post('/access-codes', asyncHandler(async (req, res) => {
   }
 }));
 
+// 刪除權限碼：各隊的兌換紀錄一起刪掉（已經因為兌換拿到的線索／解鎖的關卡不受影響）。
 router.delete('/access-codes/:id', asyncHandler(async (req, res) => {
   const { rows: existingRows } = await db.query(
     'SELECT id, code, type, target_checkpoint_id, target_clue_id FROM access_codes WHERE id = $1', [req.params.id]
   );
   if (existingRows.length === 0) return res.status(404).json({ error: 'not found' });
-  try {
-    const { rowCount } = await db.query('DELETE FROM access_codes WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'not found' });
-    await audit(req.admin.sub, 'delete_access_code', 'access_code', req.params.id, existingRows[0], null);
-    res.status(204).end();
-  } catch (err) {
-    // 已經被兌換過的碼，school_code_redemptions 還留著兌換記錄（FK 擋刪除），
-    // 不能直接刪掉，避免破壞稽核歷史。
-    if (err.code === '23503') {
-      return res.status(409).json({ error: 'cannot delete a code that has already been redeemed' });
-    }
-    throw err;
-  }
+  const { rowCount } = await db.query('DELETE FROM access_codes WHERE id = $1', [req.params.id]);
+  if (rowCount === 0) return res.status(404).json({ error: 'not found' });
+  await audit(req.admin.sub, 'delete_access_code', 'access_code', req.params.id, existingRows[0], null);
+  res.status(204).end();
 }));
 
 // CSV 欄位格式：代碼, 類型, 目標ID。
@@ -976,24 +1008,16 @@ router.patch('/tech-tree/branches/:id', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
+// 刪除分支：底下的槽位、各隊在這些槽位的放置與驗證紀錄、分支解鎖紀錄一起刪掉。
 router.delete('/tech-tree/branches/:id', asyncHandler(async (req, res) => {
   const { rows: existingRows } = await db.query(
     'SELECT id, name, story_content, display_order FROM tech_tree_branches WHERE id = $1', [req.params.id]
   );
   if (existingRows.length === 0) return res.status(404).json({ error: 'branch not found' });
-  try {
-    const { rowCount } = await db.query('DELETE FROM tech_tree_branches WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'branch not found' });
-    await audit(req.admin.sub, 'delete_tech_branch', 'tech_tree_branch', req.params.id, existingRows[0], null);
-    res.status(204).end();
-  } catch (err) {
-    // 底下還掛著槽位、或已經有隊伍解鎖過這個分支，FK 擋下來——先刪掉底下的槽位
-    // （或等隊伍進度另外處理）才能刪分支，避免默默弄丟劇情解鎖記錄。
-    if (err.code === '23503') {
-      return res.status(409).json({ error: '這個分支底下還有槽位或已有隊伍進度，無法刪除' });
-    }
-    throw err;
-  }
+  const { rowCount } = await db.query('DELETE FROM tech_tree_branches WHERE id = $1', [req.params.id]);
+  if (rowCount === 0) return res.status(404).json({ error: 'branch not found' });
+  await audit(req.admin.sub, 'delete_tech_branch', 'tech_tree_branch', req.params.id, existingRows[0], null);
+  res.status(204).end();
 }));
 
 function validateSlotBody(body, branchIds, clueIds) {
@@ -1075,23 +1099,16 @@ router.patch('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
   }
 }));
 
+// 刪除槽位：各隊在這一格的放置與驗證紀錄一起刪掉。
 router.delete('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
   const { rows: existingRows } = await db.query(
     'SELECT id, branch_id, slot_order, correct_clue_id FROM tech_tree_slots WHERE id = $1', [req.params.id]
   );
   if (existingRows.length === 0) return res.status(404).json({ error: 'slot not found' });
-  try {
-    const { rowCount } = await db.query('DELETE FROM tech_tree_slots WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'slot not found' });
-    await audit(req.admin.sub, 'delete_tech_slot', 'tech_tree_slot', req.params.id, existingRows[0], null);
-    res.status(204).end();
-  } catch (err) {
-    // 已經有隊伍放過線索/檢查過這一格，FK 擋下來，避免默默把玩過的進度弄不見。
-    if (err.code === '23503') {
-      return res.status(409).json({ error: '這個槽位已經有隊伍互動過，無法刪除' });
-    }
-    throw err;
-  }
+  const { rowCount } = await db.query('DELETE FROM tech_tree_slots WHERE id = $1', [req.params.id]);
+  if (rowCount === 0) return res.status(404).json({ error: 'slot not found' });
+  await audit(req.admin.sub, 'delete_tech_slot', 'tech_tree_slot', req.params.id, existingRows[0], null);
+  res.status(204).end();
 }));
 
 // 長老候選人管理：清單附得票數（方便主辦看目前投票結果），新增、編輯、刪除。
@@ -1135,23 +1152,16 @@ router.patch('/elders/:id', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
+// 刪除長老候選人：投給他的票一起刪掉，那些隊伍可以重新投票。
 router.delete('/elders/:id', asyncHandler(async (req, res) => {
   const { rows: existingRows } = await db.query(
     'SELECT id, name, description FROM elders WHERE id = $1', [req.params.id]
   );
   if (existingRows.length === 0) return res.status(404).json({ error: 'elder not found' });
-  try {
-    const { rowCount } = await db.query('DELETE FROM elders WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'elder not found' });
-    await audit(req.admin.sub, 'delete_elder', 'elder', req.params.id, existingRows[0], null);
-    res.status(204).end();
-  } catch (err) {
-    // 已經有隊伍投給這位候選人，FK 擋刪除，避免默默把已經投出去的票變成指向不存在的人。
-    if (err.code === '23503') {
-      return res.status(409).json({ error: 'cannot delete an elder that already has votes' });
-    }
-    throw err;
-  }
+  const { rowCount } = await db.query('DELETE FROM elders WHERE id = $1', [req.params.id]);
+  if (rowCount === 0) return res.status(404).json({ error: 'elder not found' });
+  await audit(req.admin.sub, 'delete_elder', 'elder', req.params.id, existingRows[0], null);
+  res.status(204).end();
 }));
 
 // 投票結果：每位候選人的得票數 + 目前已投票／總學派數，給主辦即時看戰況用。

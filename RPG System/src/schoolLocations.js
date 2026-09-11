@@ -20,6 +20,11 @@ function setLocation(schoolId, data) {
   locations.set(schoolId, { ...data, updatedAt: Date.now() });
 }
 
+// 後台刪除學派帳號時一起拿掉，不然地圖上會留著一個已經不存在的隊伍
+function removeLocation(schoolId) {
+  locations.delete(schoolId);
+}
+
 function getAllLocations() {
   const now = Date.now();
   const result = [];
@@ -36,4 +41,4 @@ function getAllLocations() {
   return result;
 }
 
-module.exports = { setLocation, getAllLocations };
+module.exports = { setLocation, removeLocation, getAllLocations };

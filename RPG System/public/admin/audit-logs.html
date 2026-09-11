@@ -59,7 +59,7 @@ async function loadLogs() {
   if (!res.ok) { $('status').textContent = data.error || `載入失敗（${res.status}）`; return; }
   $('logsBody').innerHTML = data.map(log => `<tr>
     <td class="meta">${new Date(log.created_at).toLocaleString()}</td>
-    <td>${escapeHtml(log.operator_name || log.operator_email)}<br><span class="meta">${escapeHtml(log.operator_email)}</span></td>
+    <td>${escapeHtml(log.operator_name || log.operator_email || '（不明）')}${log.operator_deleted ? '<span class="meta">（帳號已刪除）</span>' : ''}<br><span class="meta">${escapeHtml(log.operator_email)}</span></td>
     <td>${escapeHtml(actionLabels[log.action_type] || log.action_type)}</td>
     <td>${escapeHtml(log.target_type)}<br><span class="meta">${escapeHtml(log.target_id)}</span></td>
     <td>${jsonDetails(log.before_value, log.after_value)}</td>

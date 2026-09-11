@@ -147,7 +147,7 @@ window.startEditBranch = function (id) {
 };
 
 window.deleteBranch = async function (id) {
-  if (!confirm('確定要刪除這個分支嗎？底下還有槽位、或已有隊伍解鎖過的分支會被擋下來（要先把槽位刪光）。')) return;
+  if (!confirm('確定要刪除這個分支嗎？\n\n底下所有槽位、各隊在這些槽位的放置與驗證紀錄、分支解鎖紀錄會一起刪掉，無法復原。')) return;
   const res = await api(`/tech-tree/branches/${id}`, { method: 'DELETE' });
   if (res.status === 409) {
     const data = await res.json();
@@ -228,7 +228,7 @@ async function updateSlot(slotId, branchId, slotOrder, correctClueId) {
 }
 
 window.deleteSlot = async function (id) {
-  if (!confirm('確定要刪除這個槽位嗎？已經有隊伍互動過的槽位會被擋下來。')) return;
+  if (!confirm('確定要刪除這個槽位嗎？\n\n各隊在這一格的放置與驗證紀錄會一起刪掉，無法復原。')) return;
   const res = await api(`/tech-tree/slots/${id}`, { method: 'DELETE' });
   if (res.status === 409) {
     const data = await res.json();

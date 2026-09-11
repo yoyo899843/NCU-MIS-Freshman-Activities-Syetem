@@ -139,7 +139,7 @@ window.startEdit = function (id) {
 };
 
 window.deleteElder = async function (id) {
-  if (!confirm('確定要刪除這位候選人嗎？已經有隊伍投給他的話會被擋下來。')) return;
+  if (!confirm('確定要刪除這位候選人嗎？\n\n投給他的票會一起刪掉，那些隊伍可以重新投票。')) return;
   const res = await api(`/elders/${id}`, { method: 'DELETE' });
   if (res.status === 409) {
     const data = await res.json();

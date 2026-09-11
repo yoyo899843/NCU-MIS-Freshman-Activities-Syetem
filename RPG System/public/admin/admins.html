@@ -21,6 +21,7 @@
 <body>
 <h1>帳號管理</h1>
 <p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+<p class="hint">這一頁管的是工作人員（管理員、關主）的帳號。玩家的學派帳號請到 <a href="schools.html">學派（玩家帳號）管理</a>。</p>
 
 <div class="card">
   <p><strong>管理員</strong>：什麼都能做。<strong>這一級是固定的</strong>——只能在伺服器上用
@@ -154,7 +155,7 @@ window.resetPassword = async function (id) {
 };
 
 window.removeAccount = async function (id) {
-  if (!confirm('確定要刪除這個關主帳號嗎？')) return;
+  if (!confirm('確定要刪除這個關主帳號嗎？\n\n他會立刻被登出。他做過的操作仍會留在稽核紀錄裡。')) return;
 
   const resultEl = document.getElementById('result');
   resultEl.textContent = '';

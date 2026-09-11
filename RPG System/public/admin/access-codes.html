@@ -94,7 +94,7 @@ async function loadList() {
 }
 
 async function deleteCode(id) {
-  if (!confirm('確定要刪除這組權限碼嗎？')) return;
+  if (!confirm('確定要刪除這組權限碼嗎？\n\n各隊的兌換紀錄會一起刪掉；已經兌換拿到的線索、解鎖的關卡不受影響。')) return;
   const res = await fetch('/admin/api/access-codes/' + id, {
     method: 'DELETE',
     headers: { Authorization: 'Bearer ' + token }
