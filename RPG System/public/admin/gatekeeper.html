@@ -22,8 +22,11 @@
 <p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
 
 <div class="card">
-  <p>選一支隊伍，然後幫他們標記關卡解鎖／完成，或直接發線索給他們。管理員也可以用這頁。</p>
+  <p>選擇隊伍與關卡，判斷現場完成程度後標記進度，並派發該關卡指定的線索。每個關卡最多可設定四張派發線索；其他線索仍由玩家掃描 QR Code 取得。</p>
+  <label for="schoolSelect">隊伍</label>
   <select id="schoolSelect"></select>
+  <label for="checkpointSelect">關卡點（地點）</label>
+  <select id="checkpointSelect"></select>
   <p id="globalMsg" class="msg"></p>
 </div>
 
@@ -36,7 +39,8 @@
 </div>
 
 <div class="card">
-  <h3>線索</h3>
+  <h3 id="clueTitle">關卡派發線索</h3>
+  <p id="clueHint" class="msg"></p>
   <table>
     <thead><tr><th>線索</th><th>這支隊伍</th><th>操作</th></tr></thead>
     <tbody id="cluesBody"></tbody>
@@ -85,6 +89,9 @@ async function loadLists() {
   document.getElementById('schoolSelect').innerHTML = schools.map(s =>
     `<option value="${s.id}">${escapeHtml(s.display_name)}（${escapeHtml(s.username)}）</option>`
   ).join('') || '<option value="">（目前沒有任何學派帳號）</option>';
+  document.getElementById('checkpointSelect').innerHTML = checkpoints.map(c =>
+    `<option value="${c.id}">${escapeHtml(c.name)}</option>`
+  ).join('') || '<option value="">（目前沒有任何關卡）</option>';
 }
 
 // 這支隊伍目前的進度：關卡解鎖/完成、已經拿到哪些線索。
@@ -118,12 +125,21 @@ function renderTables() {
       </tr>`;
   }).join('') || '<tr><td colspan="3">目前沒有任何關卡</td></tr>';
 
-  document.getElementById('cluesBody').innerHTML = clues.map(c => `
+  const checkpointId = parseInt(document.getElementById('checkpointSelect').value, 10);
+  const checkpoint = checkpoints.find(c => c.id === checkpointId);
+  const grantableClues = clues.filter(c => c.checkpoint_id === checkpointId && c.staff_grant_enabled);
+  document.getElementById('clueTitle').textContent = checkpoint
+    ? `${checkpoint.name}｜關卡派發線索`
+    : '關卡派發線索';
+  document.getElementById('clueHint').textContent = checkpoint
+    ? `已設定 ${grantableClues.length}／4 張可派發線索；已擁有的線索不會重複發放。`
+    : '請先選擇關卡點。';
+  document.getElementById('cluesBody').innerHTML = grantableClues.map(c => `
       <tr>
         <td>${escapeHtml(c.name)}</td>
         <td>${progress.ownedClueIds.has(c.id) ? '已擁有' : '—'}</td>
-        <td class="row-actions"><button onclick="grantClue(${c.id})">發給這支隊伍</button></td>
-      </tr>`).join('') || '<tr><td colspan="3">目前沒有任何線索</td></tr>';
+        <td class="row-actions"><button ${progress.ownedClueIds.has(c.id) ? 'disabled' : ''} onclick="grantClue(${c.id})">${progress.ownedClueIds.has(c.id) ? '已發放' : '派發給這支隊伍'}</button></td>
+      </tr>`).join('') || '<tr><td colspan="3">此關卡尚未設定可由關主派發的線索</td></tr>';
 }
 
 function showMsg(text, ok) {
@@ -162,6 +178,8 @@ document.getElementById('schoolSelect').addEventListener('change', async () => {
   await loadProgress();
   renderTables();
 });
+
+document.getElementById('checkpointSelect').addEventListener('change', renderTables);
 
 (async () => {
   await loadLists();

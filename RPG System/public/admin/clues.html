@@ -28,6 +28,7 @@
   </select>
   <input id="description" placeholder="描述（選填）">
   <input id="acquisitionLocation" placeholder="獲得地點（關卡，選填）">
+  <label><input type="checkbox" id="staffGrantEnabled"> 可由關主派發（每個關卡最多設定 4 個；未勾選者僅能掃 QR 或兌換取得）</label>
   <input id="imageUrl" placeholder="圖片網址（選填）">
   <input id="qrToken" placeholder="QR 代碼（留空自動產生）">
 
@@ -49,7 +50,7 @@
   <h3>線索清單</h3>
   <table>
     <thead>
-      <tr><th>名稱</th><th>獲得地點</th><th>關聯關卡</th><th>QR 代碼</th><th></th></tr>
+      <tr><th>名稱</th><th>獲得地點</th><th>關聯關卡</th><th>關主派發</th><th>QR 代碼</th><th></th></tr>
     </thead>
     <tbody id="cluesBody"></tbody>
   </table>
@@ -100,6 +101,7 @@ async function loadClues() {
       <td>${escapeHtml(c.name)}</td>
       <td>${escapeHtml(c.acquisition_location || '—')}</td>
       <td><span class="checkpoint-tag">${escapeHtml(checkpointLabel(c))}</span></td>
+      <td>${c.staff_grant_enabled ? '可派發' : 'QR／權限碼'}</td>
       <td>${escapeHtml(c.qr_token)}</td>
       <td class="row-actions">
         <button onclick="startEdit(${c.id})">編輯</button>
@@ -107,7 +109,7 @@ async function loadClues() {
         <a href="qrcode-print.html?token=${encodeURIComponent(c.qr_token)}&name=${encodeURIComponent(c.name)}" target="_blank">查看 QR Code</a>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="5">目前沒有線索</td></tr>';
+  `).join('') || '<tr><td colspan="6">目前沒有線索</td></tr>';
   window.__clues = clues;
 }
 
@@ -121,6 +123,7 @@ function readForm() {
     checkpointId: document.getElementById('checkpointId').value || null,
     description: document.getElementById('description').value.trim(),
     acquisitionLocation: document.getElementById('acquisitionLocation').value.trim(),
+    staffGrantEnabled: document.getElementById('staffGrantEnabled').checked,
     imageUrl: document.getElementById('imageUrl').value.trim(),
     qrToken: document.getElementById('qrToken').value.trim()
   };
@@ -135,6 +138,7 @@ function resetForm() {
   document.getElementById('checkpointId').value = '';
   document.getElementById('description').value = '';
   document.getElementById('acquisitionLocation').value = '';
+  document.getElementById('staffGrantEnabled').checked = false;
   document.getElementById('imageUrl').value = '';
   document.getElementById('qrToken').value = '';
 }
@@ -150,6 +154,7 @@ window.startEdit = function (id) {
   document.getElementById('checkpointId').value = c.checkpoint_id || '';
   document.getElementById('description').value = c.description || '';
   document.getElementById('acquisitionLocation').value = c.acquisition_location || '';
+  document.getElementById('staffGrantEnabled').checked = !!c.staff_grant_enabled;
   document.getElementById('imageUrl').value = c.image_url || '';
   document.getElementById('qrToken').value = c.qr_token;
   window.scrollTo(0, 0);

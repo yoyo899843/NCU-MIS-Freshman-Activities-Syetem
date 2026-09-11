@@ -297,19 +297,23 @@ router.get('/schools/:schoolId/progress', asyncHandler(async (req, res) => {
   });
 }));
 
-// 直接發一個線索給某支隊伍（不用讓他們自己掃碼或兌換權限碼）。
-// acquired_via 記成 'staff'，跟自己掃到的 'scan'、自己兌換的 'code' 分開，
-// 之後查得出來這個線索是怎麼到這支隊伍手上的。
+// 派發關卡線索給某支隊伍。只有在線索管理中標示為「可由關主派發」且關聯此關卡
+// 的線索能走這條路；其他線索仍只能靠 QR 掃描或權限碼取得。
+// acquired_via 記成 'staff'，跟自己掃到的 'scan'、自己兌換的 'code' 分開。
 router.post('/schools/:schoolId/clues/:clueId', asyncHandler(async (req, res) => {
   const { schoolId, clueId } = req.params;
 
-  const { rows: exists } = await db.query(
-    `SELECT (SELECT COUNT(*) FROM schools WHERE id = $1)::int AS school_count,
-            (SELECT COUNT(*) FROM clues WHERE id = $2)::int AS clue_count`,
-    [schoolId, clueId]
+  const { rows: schoolRows } = await db.query('SELECT id FROM schools WHERE id = $1', [schoolId]);
+  if (schoolRows.length === 0) return res.status(404).json({ error: 'school not found' });
+  const { rows: clueRows } = await db.query(
+    `SELECT id, checkpoint_id, name FROM clues
+     WHERE id = $1 AND staff_grant_enabled = true AND checkpoint_id IS NOT NULL`,
+    [clueId]
   );
-  if (exists[0].school_count === 0) return res.status(404).json({ error: 'school not found' });
-  if (exists[0].clue_count === 0) return res.status(404).json({ error: 'clue not found' });
+  if (clueRows.length === 0) {
+    return res.status(403).json({ error: '這個線索不是可由關主派發的關卡線索' });
+  }
+  const clue = clueRows[0];
 
   // 已經有這個線索就當作成功（不重複發、也不報錯），回傳 alreadyOwned 讓前端可以提示。
   const { rows: inserted } = await db.query(
@@ -325,7 +329,7 @@ router.post('/schools/:schoolId/clues/:clueId', asyncHandler(async (req, res) =>
     await db.query(
       `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
        VALUES ($1, 'grant_clue_to_school', 'school_clue', $2, NULL, $3)`,
-      [req.admin.sub, `${schoolId}:${clueId}`, JSON.stringify({ acquiredVia: 'staff' })]
+      [req.admin.sub, `${schoolId}:${clueId}`, JSON.stringify({ acquiredVia: 'staff', checkpointId: clue.checkpoint_id, clueName: clue.name })]
     );
   }
 
@@ -533,11 +537,11 @@ function normalizeCode(value) {
   return String(value || '').trim().toUpperCase();
 }
 
-const CLUE_COLUMNS = 'id, checkpoint_id, name, description, acquisition_location, image_url, qr_token, created_at';
+const CLUE_COLUMNS = 'id, checkpoint_id, name, description, acquisition_location, staff_grant_enabled, image_url, qr_token, created_at';
 
 router.get('/clues', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT c.id, c.checkpoint_id, c.name, c.description, c.acquisition_location, c.image_url, c.qr_token, c.created_at,
+    `SELECT c.id, c.checkpoint_id, c.name, c.description, c.acquisition_location, c.staff_grant_enabled, c.image_url, c.qr_token, c.created_at,
             cp.name AS checkpoint_name
      FROM clues c
      LEFT JOIN checkpoints cp ON cp.id = c.checkpoint_id
@@ -565,10 +569,14 @@ function validateClueBody(body, checkpointIds) {
   if (acquisitionLocation && acquisitionLocation.length > 120) {
     return { error: '獲得地點不可超過 120 個字元' };
   }
+  const staffGrantEnabled = body.staffGrantEnabled === true;
+  if (staffGrantEnabled && checkpointId === null) {
+    return { error: '可由關主派發的線索必須關聯一個關卡' };
+  }
   const imageUrl = (body.imageUrl || '').trim() || null;
   const qrToken = normalizeCode(body.qrToken) || `CLUE-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
 
-  return { data: { checkpointId, name, description, acquisitionLocation, imageUrl, qrToken } };
+  return { data: { checkpointId, name, description, acquisitionLocation, staffGrantEnabled, imageUrl, qrToken } };
 }
 
 router.post('/clues', asyncHandler(async (req, res) => {
@@ -581,15 +589,16 @@ router.post('/clues', asyncHandler(async (req, res) => {
   const d = validated.data;
   try {
     const { rows } = await db.query(
-      `INSERT INTO clues (checkpoint_id, name, description, acquisition_location, image_url, qr_token)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING ${CLUE_COLUMNS}`,
-      [d.checkpointId, d.name, d.description, d.acquisitionLocation, d.imageUrl, d.qrToken]
+      `INSERT INTO clues (checkpoint_id, name, description, acquisition_location, staff_grant_enabled, image_url, qr_token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING ${CLUE_COLUMNS}`,
+      [d.checkpointId, d.name, d.description, d.acquisitionLocation, d.staffGrantEnabled, d.imageUrl, d.qrToken]
     );
     await audit(req.admin.sub, 'create_clue', 'clue', rows[0].id, null,
-      { checkpointId: rows[0].checkpoint_id, name: rows[0].name, description: rows[0].description, acquisitionLocation: rows[0].acquisition_location, qrToken: rows[0].qr_token });
+      { checkpointId: rows[0].checkpoint_id, name: rows[0].name, description: rows[0].description, acquisitionLocation: rows[0].acquisition_location, staffGrantEnabled: rows[0].staff_grant_enabled, qrToken: rows[0].qr_token });
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'QR 代碼已經被使用過了' });
+    if (err.code === 'P0001') return res.status(400).json({ error: err.message });
     throw err;
   }
 }));
@@ -608,6 +617,7 @@ router.patch('/clues/:id', asyncHandler(async (req, res) => {
     name: req.body.name ?? existing.name,
     description: req.body.description ?? existing.description,
     acquisitionLocation: req.body.acquisitionLocation ?? existing.acquisition_location,
+    staffGrantEnabled: req.body.staffGrantEnabled ?? existing.staff_grant_enabled,
     imageUrl: req.body.imageUrl ?? existing.image_url,
     qrToken: req.body.qrToken !== undefined ? normalizeCode(req.body.qrToken) : existing.qr_token
   };
@@ -618,23 +628,24 @@ router.patch('/clues/:id', asyncHandler(async (req, res) => {
   const d = validated.data;
   try {
     const { rows } = await db.query(
-      `UPDATE clues SET checkpoint_id=$1, name=$2, description=$3, acquisition_location=$4, image_url=$5, qr_token=$6
-       WHERE id = $7 RETURNING ${CLUE_COLUMNS}`,
-      [d.checkpointId, d.name, d.description, d.acquisitionLocation, d.imageUrl, d.qrToken, req.params.id]
+      `UPDATE clues SET checkpoint_id=$1, name=$2, description=$3, acquisition_location=$4, staff_grant_enabled=$5, image_url=$6, qr_token=$7
+       WHERE id = $8 RETURNING ${CLUE_COLUMNS}`,
+      [d.checkpointId, d.name, d.description, d.acquisitionLocation, d.staffGrantEnabled, d.imageUrl, d.qrToken, req.params.id]
     );
     await audit(req.admin.sub, 'update_clue', 'clue', req.params.id,
-      { checkpointId: existing.checkpoint_id, name: existing.name, description: existing.description, acquisitionLocation: existing.acquisition_location, qrToken: existing.qr_token },
-      { checkpointId: rows[0].checkpoint_id, name: rows[0].name, description: rows[0].description, acquisitionLocation: rows[0].acquisition_location, qrToken: rows[0].qr_token });
+      { checkpointId: existing.checkpoint_id, name: existing.name, description: existing.description, acquisitionLocation: existing.acquisition_location, staffGrantEnabled: existing.staff_grant_enabled, qrToken: existing.qr_token },
+      { checkpointId: rows[0].checkpoint_id, name: rows[0].name, description: rows[0].description, acquisitionLocation: rows[0].acquisition_location, staffGrantEnabled: rows[0].staff_grant_enabled, qrToken: rows[0].qr_token });
     res.json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'QR 代碼已經被使用過了' });
+    if (err.code === 'P0001') return res.status(400).json({ error: err.message });
     throw err;
   }
 }));
 
 router.delete('/clues/:id', asyncHandler(async (req, res) => {
   const { rows: existingRows } = await db.query(
-    'SELECT id, checkpoint_id, name, description, acquisition_location, qr_token FROM clues WHERE id = $1', [req.params.id]
+    'SELECT id, checkpoint_id, name, description, acquisition_location, staff_grant_enabled, qr_token FROM clues WHERE id = $1', [req.params.id]
   );
   if (existingRows.length === 0) return res.status(404).json({ error: 'clue not found' });
   try {
