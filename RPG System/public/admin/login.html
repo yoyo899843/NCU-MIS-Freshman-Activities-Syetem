@@ -30,7 +30,8 @@ document.getElementById('loginBtn').addEventListener('click', async () => {
     const data = await res.json();
     if (res.ok) {
       localStorage.setItem('adminToken', data.token);
-      location.href = 'index.html';
+      // 關主在現場只會用到關主操作頁，登入後直接帶過去選自己的關卡
+      location.href = data.adminRole === 'gatekeeper' ? 'gatekeeper.html' : 'index.html';
     } else {
       resultEl.textContent = data.error || `登入失敗 (${res.status})`;
     }

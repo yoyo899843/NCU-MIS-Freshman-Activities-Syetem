@@ -7,44 +7,84 @@
 <link rel="stylesheet" href="../style.css">
 <style>
   body { max-width: 720px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
-  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; }
-  th { background: var(--card-2); }
-  .row-actions button { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px 4px 0; }
-  select { display: block; width: 100%; padding: 8px; margin-bottom: 8px; }
-  .msg { font-size: 0.85rem; }
+  [hidden] { display: none !important; }
+  .back { display: inline-block; min-height: 44px; line-height: 44px; margin-bottom: 4px; }
+  .msg { font-size: 14px; margin: 0; }
+  .msg:empty { display: none; }
   .msg.ok { color: var(--accent); }
   .msg.error { color: var(--danger); }
+
+  /* 第一步：關卡清單，一關一顆大按鈕 */
+  .cp-list { display: grid; gap: 9px; }
+  .cp-list button {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    margin: 0; padding: 14px; text-align: left; letter-spacing: .03em;
+    background: var(--card-2); color: var(--fg); font-weight: 700;
+    border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  }
+  .cp-list button:hover { background: var(--card-3); }
+  .cp-list .count { font-size: 14px; font-weight: 400; color: var(--dim); white-space: nowrap; }
+
+  /* 第二步：鎖定的關卡放在最上面，整個操作過程都看得到自己在哪一關 */
+  .mine { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .mine h2 { margin: 2px 0 0; font-size: 22px; color: var(--accent); }
+  .mine button { width: auto; margin: 0; padding: 8px 14px; font-size: 14px; letter-spacing: 0; flex: none; }
+  select#schoolSelect { margin-bottom: 8px; }
+
+  .status-line { margin: 0 0 12px; }
+  .two-btn { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .two-btn button { margin: 0; }
+
+  .clue-list { display: grid; gap: 9px; }
+  .clue { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+          padding: 10px 12px; background: var(--card-2); border: 1px solid var(--line); }
+  .clue .nm { font-weight: 700; }
+  .clue button { width: auto; margin: 0; padding: 8px 14px; font-size: 15px; letter-spacing: .03em; flex: none; }
+  .tag.none { background: var(--card-3); color: var(--dim); }
+  .tag.done { background: #3a2c07; color: var(--amber); }
 </style>
 </head>
 <body>
 <h1>關主現場操作</h1>
-<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+<a class="back" href="index.html">&laquo; 回管理後台</a>
 
-<div class="card">
-  <p>選擇隊伍與關卡，判斷現場完成程度後標記進度，並派發該關卡指定的線索。每個關卡最多可設定四張派發線索；其他線索仍由玩家掃描 QR Code 取得。</p>
-  <label for="schoolSelect">隊伍</label>
-  <select id="schoolSelect"></select>
-  <label for="checkpointSelect">關卡點（地點）</label>
-  <select id="checkpointSelect"></select>
-  <p id="globalMsg" class="msg"></p>
-</div>
+<!-- 第一步：關主先點進自己負責的關卡。之後整頁只顯示這一關的東西，
+     不會在一長串關卡／線索裡點到別關的。 -->
+<section class="card" id="pickView" hidden>
+  <h2>你負責哪一關？</h2>
+  <p class="hint">先點你自己的關卡。之後這台裝置只會顯示這一關的進度按鈕和線索，重新整理也會記得。</p>
+  <div class="cp-list" id="cpList"><p class="hint">載入中…</p></div>
+</section>
 
-<div class="card">
-  <h3>關卡</h3>
-  <table>
-    <thead><tr><th>關卡</th><th>這支隊伍的狀態</th><th>操作</th></tr></thead>
-    <tbody id="checkpointsBody"></tbody>
-  </table>
-</div>
+<div id="workView" hidden>
+  <section class="card mine">
+    <div>
+      <span class="hint">你負責的關卡</span>
+      <h2 id="myName"></h2>
+    </div>
+    <button type="button" class="ghost" id="switchBtn">換關卡</button>
+  </section>
 
-<div class="card">
-  <h3 id="clueTitle">關卡派發線索</h3>
-  <p id="clueHint" class="msg"></p>
-  <table>
-    <thead><tr><th>線索</th><th>這支隊伍</th><th>操作</th></tr></thead>
-    <tbody id="cluesBody"></tbody>
-  </table>
+  <section class="card">
+    <label for="schoolSelect">現在來闖關的隊伍</label>
+    <select id="schoolSelect"></select>
+    <p id="globalMsg" class="msg" role="status"></p>
+  </section>
+
+  <section class="card">
+    <h3>本關進度</h3>
+    <p class="status-line">這支隊伍：<span id="cpStatus" class="tag none">—</span></p>
+    <div class="two-btn">
+      <button type="button" class="secondary" id="unlockBtn">標記解鎖</button>
+      <button type="button" id="completeBtn">標記完成</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>本關派發線索</h3>
+    <p id="clueHint" class="hint"></p>
+    <div class="clue-list" id="clueList"></div>
+  </section>
 </div>
 
 <script src="../authFetch.js"></script>
@@ -52,9 +92,14 @@
 const token = localStorage.getItem('adminToken');
 if (!token) location.href = 'login.html';
 
+// 這台裝置選定的關卡記在 localStorage：關主整場都拿同一台手機顧同一關，
+// 重新整理或螢幕關掉再打開都不用重選。
+const MY_CP_KEY = 'gatekeeperCheckpointId';
+
 let schools = [];
 let checkpoints = [];
 let clues = [];
+let myCheckpoint = null;
 let progress = { unlockedIds: new Set(), completedIds: new Set(), ownedClueIds: new Set() };
 
 async function api(path, options = {}) {
@@ -74,8 +119,13 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function selectedSchoolId() {
-  return parseInt(document.getElementById('schoolSelect').value, 10);
+function selectedSchool() {
+  const id = parseInt(document.getElementById('schoolSelect').value, 10);
+  return schools.find(s => s.id === id) || null;
+}
+
+function grantableCluesOf(checkpointId) {
+  return clues.filter(c => c.checkpoint_id === checkpointId && c.staff_grant_enabled);
 }
 
 async function loadLists() {
@@ -86,21 +136,43 @@ async function loadLists() {
   checkpoints = await checkpointsRes.json();
   clues = await cluesRes.json();
 
-  document.getElementById('schoolSelect').innerHTML = schools.map(s =>
-    `<option value="${s.id}">${escapeHtml(s.display_name)}（${escapeHtml(s.username)}）</option>`
-  ).join('') || '<option value="">（目前沒有任何學派帳號）</option>';
-  document.getElementById('checkpointSelect').innerHTML = checkpoints.map(c =>
-    `<option value="${c.id}">${escapeHtml(c.name)}</option>`
-  ).join('') || '<option value="">（目前沒有任何關卡）</option>';
+  // 預設不選任何隊伍：一打開就自動選第一隊的話，關主沒注意到就會把線索發錯隊
+  document.getElementById('schoolSelect').innerHTML = schools.length
+    ? '<option value="">— 請選擇隊伍 —</option>' + schools.map(s =>
+        `<option value="${s.id}">${escapeHtml(s.display_name)}（${escapeHtml(s.username)}）</option>`).join('')
+    : '<option value="">（目前沒有任何學派帳號）</option>';
+}
+
+function showPicker() {
+  myCheckpoint = null;
+  document.getElementById('workView').hidden = true;
+  document.getElementById('pickView').hidden = false;
+  document.getElementById('cpList').innerHTML = checkpoints.map(c => `
+    <button type="button" data-id="${c.id}">
+      <span>${escapeHtml(c.name)}</span>
+      <span class="count">可派發線索 ${grantableCluesOf(c.id).length} 張</span>
+    </button>`).join('') || '<p class="hint">目前沒有任何關卡，請管理員先到「關卡管理」新增。</p>';
+}
+
+function enterCheckpoint(id) {
+  myCheckpoint = checkpoints.find(c => c.id === id) || null;
+  if (!myCheckpoint) return showPicker();
+  localStorage.setItem(MY_CP_KEY, String(id));
+  document.getElementById('pickView').hidden = true;
+  document.getElementById('workView').hidden = false;
+  document.getElementById('myName').textContent = myCheckpoint.name;
+  document.title = `${myCheckpoint.name}｜關主現場操作`;
+  showMsg('', true);
+  render();
 }
 
 // 這支隊伍目前的進度：關卡解鎖/完成、已經拿到哪些線索。
 async function loadProgress() {
-  const schoolId = selectedSchoolId();
   progress = { unlockedIds: new Set(), completedIds: new Set(), ownedClueIds: new Set() };
-  if (!Number.isInteger(schoolId)) return;
+  const school = selectedSchool();
+  if (!school) return;
 
-  const res = await api(`/schools/${schoolId}/progress`);
+  const res = await api(`/schools/${school.id}/progress`);
   if (!res.ok) return;
   const data = await res.json();
 
@@ -109,37 +181,36 @@ async function loadProgress() {
   data.ownedClueIds.forEach(id => progress.ownedClueIds.add(id));
 }
 
-function renderTables() {
-  document.getElementById('checkpointsBody').innerHTML = checkpoints.map(c => {
-    const done = progress.completedIds.has(c.id);
-    const unlocked = progress.unlockedIds.has(c.id) || done;
-    const status = done ? '挑戰完成' : (unlocked ? '已解鎖' : '未解鎖');
-    return `
-      <tr>
-        <td>${escapeHtml(c.name)}</td>
-        <td>${status}</td>
-        <td class="row-actions">
-          <button onclick="markCheckpoint(${c.id}, 'unlock')">標記解鎖</button>
-          <button onclick="markCheckpoint(${c.id}, 'complete')">標記完成</button>
-        </td>
-      </tr>`;
-  }).join('') || '<tr><td colspan="3">目前沒有任何關卡</td></tr>';
+function render() {
+  if (!myCheckpoint) return;
+  const school = selectedSchool();
+  const cpId = myCheckpoint.id;
 
-  const checkpointId = parseInt(document.getElementById('checkpointSelect').value, 10);
-  const checkpoint = checkpoints.find(c => c.id === checkpointId);
-  const grantableClues = clues.filter(c => c.checkpoint_id === checkpointId && c.staff_grant_enabled);
-  document.getElementById('clueTitle').textContent = checkpoint
-    ? `${checkpoint.name}｜關卡派發線索`
-    : '關卡派發線索';
-  document.getElementById('clueHint').textContent = checkpoint
-    ? `已設定 ${grantableClues.length}／4 張可派發線索；已擁有的線索不會重複發放。`
-    : '請先選擇關卡點。';
-  document.getElementById('cluesBody').innerHTML = grantableClues.map(c => `
-      <tr>
-        <td>${escapeHtml(c.name)}</td>
-        <td>${progress.ownedClueIds.has(c.id) ? '已擁有' : '—'}</td>
-        <td class="row-actions"><button ${progress.ownedClueIds.has(c.id) ? 'disabled' : ''} onclick="grantClue(${c.id})">${progress.ownedClueIds.has(c.id) ? '已發放' : '派發給這支隊伍'}</button></td>
-      </tr>`).join('') || '<tr><td colspan="3">此關卡尚未設定可由關主派發的線索</td></tr>';
+  const done = progress.completedIds.has(cpId);
+  const unlocked = progress.unlockedIds.has(cpId) || done;
+  const statusEl = document.getElementById('cpStatus');
+  if (!school) {
+    statusEl.textContent = '請先選擇隊伍';
+    statusEl.className = 'tag none';
+  } else {
+    statusEl.textContent = done ? '挑戰完成' : (unlocked ? '已解鎖' : '未解鎖');
+    statusEl.className = 'tag' + (done ? ' done' : unlocked ? '' : ' none');
+  }
+  document.getElementById('unlockBtn').disabled = !school || unlocked;
+  document.getElementById('completeBtn').disabled = !school || done;
+
+  const grantable = grantableCluesOf(cpId);
+  document.getElementById('clueHint').textContent = grantable.length
+    ? `這一關設定了 ${grantable.length}／4 張可派發線索，已經發過的不會重複發放。`
+    : '';
+  document.getElementById('clueList').innerHTML = grantable.map(c => {
+    const owned = progress.ownedClueIds.has(c.id);
+    return `
+      <div class="clue">
+        <span class="nm">${escapeHtml(c.name)}</span>
+        <button type="button" data-clue="${c.id}" ${!school || owned ? 'disabled' : ''}>${owned ? '已發放' : '派發'}</button>
+      </div>`;
+  }).join('') || '<p class="hint">這一關還沒有設定可由關主派發的線索，請管理員到「線索管理」勾選。</p>';
 }
 
 function showMsg(text, ok) {
@@ -148,43 +219,63 @@ function showMsg(text, ok) {
   el.className = 'msg ' + (ok ? 'ok' : 'error');
 }
 
-window.markCheckpoint = async function (checkpointId, action) {
-  const schoolId = selectedSchoolId();
-  if (!Number.isInteger(schoolId)) return showMsg('請先選一支隊伍', false);
+async function markCheckpoint(action) {
+  const school = selectedSchool();
+  if (!school || !myCheckpoint) return showMsg('請先選一支隊伍', false);
 
-  const res = await api(`/schools/${schoolId}/checkpoints/${checkpointId}/${action}`, { method: 'POST' });
+  const res = await api(`/schools/${school.id}/checkpoints/${myCheckpoint.id}/${action}`, { method: 'POST' });
   const data = await res.json();
   if (!res.ok) return showMsg(data.error || `失敗 (${res.status})`, false);
 
-  showMsg(action === 'unlock' ? '已標記解鎖' : '已標記挑戰完成', true);
+  showMsg(`${school.display_name}：${action === 'unlock' ? '已標記解鎖' : '已標記挑戰完成'}`, true);
   await loadProgress();
-  renderTables();
-};
+  render();
+}
 
-window.grantClue = async function (clueId) {
-  const schoolId = selectedSchoolId();
-  if (!Number.isInteger(schoolId)) return showMsg('請先選一支隊伍', false);
+async function grantClue(clueId) {
+  const school = selectedSchool();
+  const clue = clues.find(c => c.id === clueId);
+  if (!school || !clue) return showMsg('請先選一支隊伍', false);
+  // 線索發出去就收不回來，送出前把「哪張、給誰」再念一次
+  if (!confirm(`把「${clue.name}」發給「${school.display_name}」？`)) return;
 
-  const res = await api(`/schools/${schoolId}/clues/${clueId}`, { method: 'POST' });
+  const res = await api(`/schools/${school.id}/clues/${clueId}`, { method: 'POST' });
   const data = await res.json();
   if (!res.ok) return showMsg(data.error || `失敗 (${res.status})`, false);
 
-  showMsg(data.alreadyOwned ? '這支隊伍本來就有這個線索了' : '已發給這支隊伍', true);
+  showMsg(data.alreadyOwned
+    ? `${school.display_name} 本來就有「${clue.name}」了`
+    : `已把「${clue.name}」發給 ${school.display_name}`, true);
   await loadProgress();
-  renderTables();
-};
+  render();
+}
 
-document.getElementById('schoolSelect').addEventListener('change', async () => {
-  await loadProgress();
-  renderTables();
+document.getElementById('cpList').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-id]');
+  if (btn) enterCheckpoint(parseInt(btn.dataset.id, 10));
 });
-
-document.getElementById('checkpointSelect').addEventListener('change', renderTables);
+document.getElementById('switchBtn').addEventListener('click', () => {
+  localStorage.removeItem(MY_CP_KEY);
+  showPicker();
+});
+document.getElementById('clueList').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-clue]');
+  if (btn) grantClue(parseInt(btn.dataset.clue, 10));
+});
+document.getElementById('unlockBtn').addEventListener('click', () => markCheckpoint('unlock'));
+document.getElementById('completeBtn').addEventListener('click', () => markCheckpoint('complete'));
+document.getElementById('schoolSelect').addEventListener('change', async () => {
+  showMsg('', true);
+  await loadProgress();
+  render();
+});
 
 (async () => {
   await loadLists();
-  await loadProgress();
-  renderTables();
+  const saved = parseInt(localStorage.getItem(MY_CP_KEY), 10);
+  // 記住的關卡被管理員刪掉了就回到選單，不要停在一個不存在的關卡上
+  if (checkpoints.some(c => c.id === saved)) enterCheckpoint(saved);
+  else showPicker();
 })();
 </script>
 </body>
