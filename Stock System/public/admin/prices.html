@@ -16,7 +16,7 @@
   <p class="hint">每一波結束後才設定下一筆價格。每檔可以「直接填新價格」或「填漲跌百分比」（以前一波價格為基準換算），兩欄擇一填即可；都留空表示這檔不改。</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>股票</th><th class="n">前一波價格</th><th>新價格</th><th>漲跌 %</th></tr></thead>
+      <thead><tr><th>股票</th><th class="n" id="basePriceHeading">前一波價格</th><th>新價格</th><th>漲跌 %</th></tr></thead>
       <tbody id="form"></tbody>
     </table>
   </div>
@@ -28,7 +28,7 @@
   <h2><i data-icon="list"></i>歷史股價</h2>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>波</th><th>股票</th><th class="n">前一波價格</th><th class="n">價格</th><th class="n">漲跌</th></tr></thead>
+      <thead><tr><th>波</th><th>股票</th><th class="n">比較基準</th><th class="n">價格</th><th class="n">漲跌</th></tr></thead>
       <tbody id="hist"></tbody>
     </table>
   </div>
@@ -73,7 +73,14 @@ if (requireAdminLogin()) {
     // 目標波次的前一波價格，讓主辦知道換算基準是多少
     const target = Number($('wave').value);
     const prevOf = {};
-    rows.filter(r => r.wave < target).forEach(r => { prevOf[r.stockId] = r.price; });
+    if (target === 1) {
+      // 第一波沒有「前一波」；初始設定的開盤價就是這一波的原價格。
+      rows.filter(r => r.wave === 1).forEach(r => { prevOf[r.stockId] = r.price; });
+      $('basePriceHeading').textContent = '原價格';
+    } else {
+      rows.filter(r => r.wave < target).forEach(r => { prevOf[r.stockId] = r.price; });
+      $('basePriceHeading').textContent = '前一波價格';
+    }
 
     // 每個輸入框都要有對得上的名稱：一列兩格沒有 <label>，螢幕報讀器只會唸「編輯文字」
     $('form').innerHTML = stocks.map(s => `
@@ -83,7 +90,7 @@ if (requireAdminLogin()) {
       <td><input id="c-${s.id}" type="number" step="0.01" inputmode="decimal" aria-label="${esc(s.name)} 漲跌百分比"></td></tr>`).join('');
 
     $('hist').innerHTML = rows.slice().reverse().map(r => `
-      <tr><td class="rank">${r.wave}</td><td>${esc(r.name)}</td><td class="n muted">${r.previousPrice === null ? '—' : money(r.previousPrice)}</td><td class="n">${money(r.price)}</td>
+      <tr><td class="rank">${r.wave}</td><td>${esc(r.name)}</td><td class="n muted">${r.previousPrice === null ? '原價格' : money(r.previousPrice)}</td><td class="n">${money(r.price)}</td>
       <td class="n">${chgHtml(r.changePct)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">尚無資料</td></tr>';
   }
 

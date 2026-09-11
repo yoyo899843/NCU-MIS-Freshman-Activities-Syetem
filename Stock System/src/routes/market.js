@@ -44,15 +44,14 @@ router.get('/stocks', asyncHandler(async (req, res) => {
   });
 }));
 
-// 新聞。預設回目前這一波，帶 ?all=1 回全部（玩家想回顧前幾波的情報）。
+// 新聞只回目前波次，避免玩家在交易前先看到後續波次的情報；完整清單僅由後台
+// /admin/api/news 提供給主辦管理。
 router.get('/news', asyncHandler(async (req, res) => {
   const { rows: st } = await db.query('SELECT wave FROM game_state WHERE id = 1');
-  const all = req.query.all === '1';
   const { rows } = await db.query(
-    all
-      ? `SELECT id, wave, title, body, published_at FROM news ORDER BY wave DESC, id DESC`
-      : `SELECT id, wave, title, body, published_at FROM news WHERE wave = $1 ORDER BY id DESC`,
-    all ? [] : [st[0].wave]
+    `SELECT id, wave, title, body, published_at FROM news
+     WHERE wave = $1 ORDER BY id DESC`,
+    [st[0].wave]
   );
   res.json(rows);
 }));

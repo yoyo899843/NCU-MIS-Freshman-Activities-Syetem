@@ -3,16 +3,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>新聞情報中心 - 賭大股票系統</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  .news-nav { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .news-nav button { min-width: 44px; min-height: 44px; padding: 0; border-radius: 50%; font-size: 30px; line-height: 1; }
+  .news-position { margin: 0; text-align: center; font-size: 14px; color: var(--dim); font-variant-numeric: tabular-nums; }
+</style>
 </head>
 <body>
 <a class="back" href="index.html"><i data-icon="back"></i>回首頁</a>
 <div class="pagehead">
   <h1>新聞情報中心</h1>
-  <label class="switch"><input type="checkbox" id="all"><span aria-hidden="true"></span>顯示所有波次</label>
+  <span class="phase idle" id="wave">載入中</span>
 </div>
-<p class="hint">判讀每則新聞對四間公司是利多還是利空，再決定這一波要買什麼。</p>
+<p class="hint">只顯示本波情報；用左右箭頭逐則判讀新聞對四間公司的利多或利空。</p>
 
 <section class="card" aria-live="polite">
+  <div class="news-nav" id="newsNav" hidden>
+    <button id="prevBtn" type="button" aria-label="上一則新聞">‹</button>
+    <p class="news-position" id="newsPosition"></p>
+    <button id="nextBtn" type="button" aria-label="下一則新聞">›</button>
+  </div>
   <div id="list"><p class="hint">載入中…</p></div>
 </section>
 
@@ -26,26 +36,49 @@
 <script src="ui.js"></script>
 <script src="app.js"></script>
 <script>
-// 只在內容真的變了才重畫：aria-live 區塊每 5 秒被整段換掉的話，
-// 螢幕報讀器會一直重唸同一則新聞。
+// 只在內容真的變了才重畫，並保留玩家目前正在讀的那一則，不會因為輪詢而跳回第一則。
 let lastSig = '';
-async function load() {
-  const { ok, body } = await api('/api/market/news' + ($('all').checked ? '?all=1' : ''));
-  if (!ok) return;
-  const sig = body.map(n => n.id).join(',') + '|' + $('all').checked;
-  if (sig === lastSig) return;
-  lastSig = sig;
-  $('list').innerHTML = body.length
-    ? body.map(n => `
-        <article class="news-item">
-          <span class="kick">第 ${n.wave} 波</span>
-          <h2>${esc(n.title)}</h2>
-          ${n.body ? `<p>${esc(n.body)}</p>` : ''}
-          <time datetime="${esc(n.published_at)}">${new Date(n.published_at).toLocaleString()}</time>
-        </article>`).join('')
-    : '<p class="hint">本波還沒有新聞，主持人發布後這裡會自動出現。</p>';
+let newsItems = [];
+let currentIndex = 0;
+
+function renderNews() {
+  const nav = $('newsNav');
+  if (!newsItems.length) {
+    nav.hidden = true;
+    $('list').innerHTML = '<p class="hint">本波還沒有新聞，主持人發布後這裡會自動出現。</p>';
+    return;
+  }
+  currentIndex = Math.max(0, Math.min(currentIndex, newsItems.length - 1));
+  const n = newsItems[currentIndex];
+  nav.hidden = false;
+  $('newsPosition').textContent = `本波第 ${currentIndex + 1}／${newsItems.length} 則`;
+  $('prevBtn').disabled = currentIndex === 0;
+  $('nextBtn').disabled = currentIndex === newsItems.length - 1;
+  $('list').innerHTML = `<article class="news-item">
+    <span class="kick">第 ${n.wave} 波</span>
+    <h2>${esc(n.title)}</h2>
+    ${n.body ? `<p>${esc(n.body)}</p>` : ''}
+    <time datetime="${esc(n.published_at)}">${new Date(n.published_at).toLocaleString()}</time>
+  </article>`;
 }
-$('all').addEventListener('change', load);
+
+async function load() {
+  const [news, state] = await Promise.all([api('/api/market/news'), api('/api/market/state')]);
+  if (!news.ok) return;
+  const wave = state.ok ? state.body.wave : '';
+  if (state.ok) $('wave').textContent = `第 ${wave} 波`;
+  // 波次變更時，即使兩波都還沒有新聞（id 清單同樣是空字串）也必須清掉舊畫面。
+  const sig = wave + '|' + news.body.map(n => n.id).join(',');
+  if (sig === lastSig) return;
+  const currentId = newsItems[currentIndex]?.id;
+  lastSig = sig;
+  newsItems = news.body;
+  const keepIndex = newsItems.findIndex(n => n.id === currentId);
+  currentIndex = keepIndex >= 0 ? keepIndex : 0;
+  renderNews();
+}
+$('prevBtn').addEventListener('click', () => { currentIndex -= 1; renderNews(); });
+$('nextBtn').addEventListener('click', () => { currentIndex += 1; renderNews(); });
 load();
 setInterval(load, 5000);
 </script>
