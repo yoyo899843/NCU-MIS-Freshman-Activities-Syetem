@@ -10,6 +10,7 @@ const { gatekeeperGuard, requireFullAdmin } = require('../middleware/gatekeeperG
 const asyncHandler = require('../middleware/asyncHandler');
 const { createLoginThrottle } = require('../loginThrottle');
 const { validateName } = require('../displayName');
+const { techTreeScore } = require('../scoring');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -1235,14 +1236,11 @@ router.get('/game/state', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
-// 計分：正確安裝且已鎖定的科技樹槽位每格 +10 分、答錯的檢查嘗試每次 -2 分（見 PLAN.md
-// 規格「計分：線索正確度總分－驗證扣分」）。不額外存一個累計分數欄位，每次都是即時從
+// 計分規則見 src/scoring.js：得分（放對分支的格數 × 5）與推理失誤分（放錯次數 × 2）
+// 分開列，總分＝得分 − 推理失誤分，依總分排名。不額外存累計分數欄位，每次都是即時從
 // school_slot_placements/school_check_attempts 算出來，避免跟實際資料兜不起來
-// （schema 設計就是這樣，見 migrations/001_init.sql 的說明）。分數可能是負的
-// （亂猜扣分的代價），主辦頒獎時要不要特別處理負分自行決定。
-const POINTS_PER_CORRECT_SLOT = 10;
-const PENALTY_PER_WRONG_ATTEMPT = 2;
-
+// （schema 設計就是這樣，見 migrations/001_init.sql 的說明）。總分可能是負的
+// （亂猜的代價），主辦頒獎時要不要特別處理負分自行決定。
 router.get('/scoreboard', asyncHandler(async (req, res) => {
   const { rows } = await db.query(`
     SELECT
@@ -1276,8 +1274,8 @@ router.get('/scoreboard', asyncHandler(async (req, res) => {
     wrongAttempts: r.wrong_attempts,
     cluesCollected: r.clues_collected,
     branchesUnlocked: r.branches_unlocked,
-    score: r.correct_slots * POINTS_PER_CORRECT_SLOT - r.wrong_attempts * PENALTY_PER_WRONG_ATTEMPT
-  })).sort((a, b) => b.score - a.score);
+    ...techTreeScore(r.correct_slots, r.wrong_attempts)
+  })).sort((a, b) => b.totalScore - a.totalScore);
 
   res.json(scoreboard);
 }));

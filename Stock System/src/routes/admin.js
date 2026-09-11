@@ -146,13 +146,17 @@ router.delete('/news/:id', requireAdmin, asyncHandler(async (req, res) => {
 
 router.get('/prices', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT p.stock_id, s.name, p.wave, p.price, p.change_pct
+    `SELECT p.stock_id, s.name, p.wave, p.price,
+            LAG(p.price) OVER (PARTITION BY p.stock_id ORDER BY p.wave) AS previous_price
      FROM stock_prices p JOIN stocks s ON s.id = p.stock_id
      ORDER BY p.wave, s.display_order`
   );
   res.json(rows.map(r => ({
     stockId: r.stock_id, name: r.name, wave: r.wave,
-    price: Number(r.price), changePct: r.change_pct === null ? null : Number(r.change_pct)
+    price: Number(r.price),
+    previousPrice: r.previous_price === null ? null : Number(r.previous_price),
+    changePct: r.previous_price === null ? null
+      : Number((((Number(r.price) - Number(r.previous_price)) / Number(r.previous_price)) * 100).toFixed(2))
   })));
 }));
 

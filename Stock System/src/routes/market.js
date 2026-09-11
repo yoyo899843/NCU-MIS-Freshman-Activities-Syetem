@@ -13,14 +13,16 @@ router.get('/state', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
-// 四檔股票的即時行情：最新股價、本波漲跌幅、以及歷史價格（畫 K 線/趨勢圖用）。
+// 四檔股票的即時行情：最新股價、前一個公布價格、漲跌幅，以及歷史價格。
 router.get('/stocks', asyncHandler(async (req, res) => {
   const { rows: st } = await db.query('SELECT wave FROM game_state WHERE id = 1');
   const wave = st[0].wave;
 
   const current = await effectivePrices(wave);
   const { rows: history } = await db.query(
-    `SELECT stock_id, wave, price, change_pct FROM stock_prices
+    `SELECT stock_id, wave, price,
+            LAG(price) OVER (PARTITION BY stock_id ORDER BY wave) AS previous_price
+     FROM stock_prices
      WHERE wave <= $1 ORDER BY stock_id, wave`,
     [wave]
   );
@@ -28,8 +30,11 @@ router.get('/stocks', asyncHandler(async (req, res) => {
   const byStock = {};
   history.forEach(h => {
     (byStock[h.stock_id] = byStock[h.stock_id] || []).push({
-      wave: h.wave, price: Number(h.price),
-      changePct: h.change_pct === null ? null : Number(h.change_pct)
+      wave: h.wave,
+      price: Number(h.price),
+      previousPrice: h.previous_price === null ? null : Number(h.previous_price),
+      changePct: h.previous_price === null ? null
+        : Number((((Number(h.price) - Number(h.previous_price)) / Number(h.previous_price)) * 100).toFixed(2))
     });
   });
 
@@ -80,7 +85,7 @@ router.get('/leaderboard', asyncHandler(async (req, res) => {
       h.rank = rank;
     });
     return {
-      stockId: s.id, name: s.name, price: s.price,
+      stockId: s.id, name: s.name, price: s.price, previousPrice: s.previousPrice, changePct: s.changePct,
       teams: holders.map(h => ({ rank: h.rank, name: h.name, shares: h.shares, value: h.value }))
     };
   });

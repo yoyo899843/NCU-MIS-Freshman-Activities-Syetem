@@ -65,7 +65,7 @@ if (requireLogin()) {
     return `<div class="stock">
       <span class="logo" aria-hidden="true">${esc(Array.from(p.name)[0])}</span>
       <div class="info"><div class="nm">${esc(p.name)}</div><div class="sub">${hist}</div></div>
-      <div class="right"><div class="px">${p.price === null ? '—' : money(p.price)}</div>${chgHtml(p.changePct)}</div>
+      <div class="right"><div class="px">${p.price === null ? '—' : money(p.price)}</div><div class="sub">${p.previousPrice === null ? '首次價格' : `前一波 ${money(p.previousPrice)}`}</div>${chgHtml(p.changePct)}</div>
     </div>`;
   }
 

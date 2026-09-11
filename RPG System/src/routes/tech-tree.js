@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const schoolAuth = require('../middleware/schoolAuth');
 const asyncHandler = require('../middleware/asyncHandler');
+const { techTreeScore } = require('../scoring');
 
 const router = express.Router();
 router.use(schoolAuth);
@@ -12,9 +13,11 @@ router.use(schoolAuth);
 
 // 每個分支＋底下槽位目前的狀態：這支隊伍放了什麼線索、有沒有鎖定（驗證正確）、
 // 分支本身有沒有解鎖（school_branch_unlocks 是不是有這一筆）。同一分支的格子
-// 沒有順序限制：線索放在該分支任一格都能驗證。scoreDeducted 是目前總共扣了多少
-// 分——刻意不開欄位存這個數字，直接從 school_check_attempts 的錯誤次數即時算，
-// 避免存了一份跟實際紀錄兜不起來的累計值（跟這個系統一貫的計分設計原則一致）。
+// 沒有順序限制：線索放在該分支任一格都能驗證。
+//
+// earnedScore／mistakeScore 見 src/scoring.js。刻意不開欄位存這兩個數字，直接從
+// 已鎖定的槽位數和 school_check_attempts 的錯誤次數即時算，避免存了一份跟實際
+// 紀錄兜不起來的累計值（跟這個系統一貫的計分設計原則一致）。
 router.get('/', asyncHandler(async (req, res) => {
   const schoolId = req.school.sub;
 
@@ -62,7 +65,9 @@ router.get('/', asyncHandler(async (req, res) => {
     };
   });
 
-  res.json({ errorScore: errorRows[0].error_count, branches });
+  const correctCount = slotRows.filter(s => s.is_locked).length;
+  const { earnedScore, mistakeScore } = techTreeScore(correctCount, errorRows[0].error_count);
+  res.json({ earnedScore, mistakeScore, branches });
 }));
 
 // 把手上的一張線索放進（或清空）一個槽位。已經鎖定（驗證成功過）的槽位不能再改，
@@ -118,7 +123,7 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
 
 // 檢查邏輯：一次檢查這支隊伍目前所有「已放置、還沒鎖定」的槽位（不是只檢查一格）。
 // 判定是「線索是否屬於這個分支」，而不是必須放在固定順序／固定格子。對的鎖定＋
-// 留下嘗試紀錄；錯的只留嘗試紀錄（用來算扣分），槽位維持原狀，隊伍可以換一張線索再試。
+// 留下嘗試紀錄；錯的只留嘗試紀錄（用來算推理失誤分），槽位維持原狀，隊伍可以換一張線索再試。
 // 檢查完之後，順便看看有沒有分支因此整條槽位都鎖定了、可以標記解鎖（一次解鎖後
 // 不會再收回，即使之後管理員又替該分支加了新槽位）。
 router.post('/check', asyncHandler(async (req, res) => {

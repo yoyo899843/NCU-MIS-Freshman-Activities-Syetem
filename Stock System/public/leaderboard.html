@@ -125,7 +125,7 @@ function renderHoldings(holdings) {
   $('panel-holdings').innerHTML = holdings.map((s, i) => `
     <section class="card">
       <h2><svg width="18" height="10" aria-hidden="true"><rect y="3.5" width="18" height="3" rx="1.5" fill="${SERIES_COLORS[i % SERIES_COLORS.length]}"/></svg>${esc(s.name)}
-        <span class="px">股價 ${s.price === null ? '尚未開盤' : money(s.price)}</span></h2>
+        <span class="px">股價 ${s.price === null ? '尚未開盤' : money(s.price)}${s.previousPrice === null ? '' : `（前一波 ${money(s.previousPrice)}）`}</span>${chgHtml(s.changePct)}</h2>
       <div class="table-wrap">
         <table>
           <thead><tr><th>名次</th><th>隊伍</th><th class="n">持股</th><th class="n">市值</th></tr></thead>

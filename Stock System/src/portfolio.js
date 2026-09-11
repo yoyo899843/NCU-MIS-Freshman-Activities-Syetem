@@ -2,7 +2,7 @@
 const db = require('./db');
 
 // 某一波的股價表（stockId -> { price, changePct, name }）。
-// 一律用「當下這一波」的價格計價：企劃裡每波開盤才更新價格，波中不變動。
+// 價格是在每波結束時才公布下一筆，波中不變動。
 async function pricesAt(wave, client = db) {
   const { rows } = await client.query(
     `SELECT s.id, s.name, s.display_order, p.price, p.change_pct
@@ -21,20 +21,42 @@ async function pricesAt(wave, client = db) {
   }));
 }
 
-// 某一波尚未設定價格的股票，改用最近一波已設定的價格。
+// 某一波尚未設定新價格時，改用最近一波已公布的收盤價；同時帶回該筆價格的
+// 前一筆價格。漲跌幅一律由兩個實際價格即時計算，不依賴管理端曾經手動填的百分比，
+// 讓「前價 → 現價」與畫面上的百分比永遠對得起來。
 async function effectivePrices(wave, client = db) {
-  const list = await pricesAt(wave, client);
-  const missing = list.filter(s => s.price === null);
-  if (missing.length === 0) return list;
-
   const { rows } = await client.query(
-    `SELECT DISTINCT ON (stock_id) stock_id, price
-     FROM stock_prices WHERE wave <= $1 AND stock_id = ANY($2::int[])
-     ORDER BY stock_id, wave DESC`,
-    [wave, missing.map(s => s.id)]
+    `SELECT s.id, s.name, s.display_order,
+            current_price.price, current_price.wave AS price_wave,
+            previous_price.price AS previous_price
+     FROM stocks s
+     LEFT JOIN LATERAL (
+       SELECT price, wave FROM stock_prices
+       WHERE stock_id = s.id AND wave <= $1
+       ORDER BY wave DESC LIMIT 1
+     ) current_price ON true
+     LEFT JOIN LATERAL (
+       SELECT price FROM stock_prices
+       WHERE stock_id = s.id AND wave < current_price.wave
+       ORDER BY wave DESC LIMIT 1
+     ) previous_price ON true
+     ORDER BY s.display_order, s.id`,
+    [wave]
   );
-  const fallback = Object.fromEntries(rows.map(r => [r.stock_id, Number(r.price)]));
-  return list.map(s => (s.price === null ? { ...s, price: fallback[s.id] ?? null } : s));
+  return rows.map(r => {
+    const price = r.price === null ? null : Number(r.price);
+    const previousPrice = r.previous_price === null ? null : Number(r.previous_price);
+    return {
+      id: r.id,
+      name: r.name,
+      price,
+      previousPrice,
+      priceWave: r.price_wave === null ? null : Number(r.price_wave),
+      changePct: price !== null && previousPrice !== null
+        ? Number((((price - previousPrice) / previousPrice) * 100).toFixed(2))
+        : null
+    };
+  });
 }
 
 // 一支隊伍目前的資產總覽：現金 + 各檔持股（含現值）。
@@ -50,7 +72,7 @@ async function portfolio(teamId, wave, client = db) {
   const positions = prices.map(s => {
     const shares = held[s.id] || 0;
     const value = s.price === null ? 0 : shares * s.price;
-    return { stockId: s.id, name: s.name, price: s.price, changePct: s.changePct, shares, value };
+    return { stockId: s.id, name: s.name, price: s.price, previousPrice: s.previousPrice, changePct: s.changePct, shares, value };
   });
 
   const cash = Number(teamRows[0].cash);
@@ -188,7 +210,7 @@ async function leaderboard(wave) {
   });
 
   return {
-    stocks: prices.map(s => ({ id: s.id, name: s.name, price: s.price, changePct: s.changePct })),
+    stocks: prices.map(s => ({ id: s.id, name: s.name, price: s.price, previousPrice: s.previousPrice, changePct: s.changePct })),
     teams
   };
 }

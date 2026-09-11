@@ -169,7 +169,7 @@ if (requireLogin()) {
       ? held.map(x => `<div class="stock">
           <span class="logo" aria-hidden="true">${esc(Array.from(x.name)[0])}</span>
           <div class="info"><div class="nm">${esc(x.name)}</div><div class="sub">持有 ${x.shares} 張 · 市值 ${money(x.value)}</div></div>
-          <div class="right"><div class="px">${x.price === null ? '—' : money(x.price)}</div>${chgHtml(x.changePct)}</div>
+          <div class="right"><div class="px">${x.price === null ? '—' : money(x.price)}</div><div class="sub">${x.previousPrice === null ? '首次價格' : `前一波 ${money(x.previousPrice)}`}</div>${chgHtml(x.changePct)}</div>
         </div>`).join('')
       : '<p class="hint">目前沒有持股。</p>';
 

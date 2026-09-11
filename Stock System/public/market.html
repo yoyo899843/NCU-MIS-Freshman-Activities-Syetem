@@ -10,7 +10,7 @@
 
 <section class="card">
   <h2><i data-icon="chart"></i>四檔走勢比較</h2>
-  <p class="hint">收盤價，每一波開盤時更新。指到某一波可以看當時的價格。</p>
+  <p class="hint">收盤價會在每一波結束後更新；畫面同時顯示前一波價格與漲跌幅。指到某一波可以看當時的價格。</p>
   <div id="chart"></div>
 </section>
 
@@ -55,7 +55,7 @@ async function load() {
              不把代號做成「白字疊在系列色上」：黃色那格只有 2.6:1，而且文字不該用系列色。 -->
         <div class="info"><h2 style="margin:0"><svg width="18" height="10" aria-hidden="true"><rect y="3.5" width="18" height="3" rx="1.5" fill="${SERIES_COLORS[i % SERIES_COLORS.length]}"/></svg>${esc(s.name)}</h2>
           <div class="sub">${s.history.map(h => money(h.price)).join(' → ') || '尚無價格'}</div></div>
-        <div class="right"><div class="px">${s.price === null ? '尚未開盤' : money(s.price)}</div>${chgHtml(s.changePct)}</div>
+        <div class="right"><div class="px">${s.price === null ? '尚未開盤' : money(s.price)}</div><div class="sub">${s.previousPrice === null ? '首次價格' : `前一波 ${money(s.previousPrice)}`}</div>${chgHtml(s.changePct)}</div>
       </div>
       <div class="hint" style="margin-bottom:4px">各波漲跌幅</div>
       <div class="bars">${changeBars(s.history, { w: cw })}</div>
