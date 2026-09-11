@@ -11,8 +11,8 @@ router.use(schoolAuth);
 // 這裡任何一支 API 都絕對不能把它回傳給玩家端，不然就等於直接洩題。
 
 // 每個分支＋底下槽位目前的狀態：這支隊伍放了什麼線索、有沒有鎖定（驗證正確）、
-// 分支本身有沒有解鎖（school_branch_unlocks 是不是有這一筆）、這一格目前排得到
-// 排不到（reachable，見下面順序限制的說明）。scoreDeducted 是目前總共扣了多少
+// 分支本身有沒有解鎖（school_branch_unlocks 是不是有這一筆）。同一分支的格子
+// 沒有順序限制：線索放在該分支任一格都能驗證。scoreDeducted 是目前總共扣了多少
 // 分——刻意不開欄位存這個數字，直接從 school_check_attempts 的錯誤次數即時算，
 // 避免存了一份跟實際紀錄兜不起來的累計值（跟這個系統一貫的計分設計原則一致）。
 router.get('/', asyncHandler(async (req, res) => {
@@ -44,24 +44,19 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const branches = branchRows.map(b => {
     const slots = slotRows.filter(s => s.branch_id === b.id);
-    // 順序限制：一個槽位「排得到」的條件是同一分支裡排在它前面（slot_order 較小）
-    // 的槽位全部都已經鎖定。第一格永遠排得到（沒有更前面的槽位）。
-    let blocked = false;
     return {
       id: b.id,
       name: b.name,
       displayOrder: b.display_order,
       unlocked: b.unlocked,
       slots: slots.map(s => {
-        const reachable = !blocked;
-        if (!s.is_locked) blocked = true;
         return {
           id: s.id,
           slotOrder: s.slot_order,
           placedClueId: s.placed_clue_id,
           placedClueName: s.placed_clue_name,
           isLocked: s.is_locked,
-          reachable
+          reachable: true
         };
       })
     };
@@ -74,9 +69,8 @@ router.get('/', asyncHandler(async (req, res) => {
 // 對應規格「對了鎖定變綠...不可再改」。只能放這支隊伍自己已經拿到的線索
 // （school_clues 裡有的），不能放別人手上、自己還沒拿到的線索。
 //
-// 順序限制：同一分支的槽位要照 slot_order 由小到大依序解鎖，前面的槽位還沒鎖定
-// （驗證正確）之前，不能跳著放線索到後面的槽位——但不用一次把整條分支排完，
-// 排到目前排得到的那一格、按檢查邏輯，之後隨時可以回來繼續排下一格。
+// 同一分支裡的格子不分先後：玩家只要把線索放在正確分支的任一格即可。槽位仍然
+// 會在驗證正確後鎖定，避免已確認的答案被改掉。
 router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
   const schoolId = req.school.sub;
   const slotId = parseInt(req.params.slotId, 10);
@@ -92,17 +86,6 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
   );
   if (placementRows[0]?.is_locked) {
     return res.status(409).json({ error: 'this slot is already locked in and cannot be changed' });
-  }
-
-  const { rows: earlierRows } = await db.query(
-    `SELECT COUNT(*)::int AS unfinished
-     FROM tech_tree_slots s
-     LEFT JOIN school_slot_placements ssp ON ssp.slot_id = s.id AND ssp.school_id = $1
-     WHERE s.branch_id = $2 AND s.slot_order < $3 AND COALESCE(ssp.is_locked, false) = false`,
-    [schoolId, slot.branch_id, slot.slot_order]
-  );
-  if (earlierRows[0].unfinished > 0) {
-    return res.status(409).json({ error: 'you must complete the earlier slots in this branch first' });
   }
 
   // clueId 是 null／沒帶 = 把這個槽位清空。
@@ -133,9 +116,9 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
   res.json({ slotId, placedClueId: rows[0].placed_clue_id, isLocked: rows[0].is_locked });
 }));
 
-// 檢查邏輯：一次檢查這支隊伍目前所有「已放置、還沒鎖定」的槽位（不是只檢查一格），
-// 對照 schema 設計（school_check_attempts 的用途說明）。對的鎖定＋留下嘗試紀錄；
-// 錯的只留嘗試紀錄（用來算扣分），槽位維持原狀，隊伍可以換一張線索再檢查一次。
+// 檢查邏輯：一次檢查這支隊伍目前所有「已放置、還沒鎖定」的槽位（不是只檢查一格）。
+// 判定是「線索是否屬於這個分支」，而不是必須放在固定順序／固定格子。對的鎖定＋
+// 留下嘗試紀錄；錯的只留嘗試紀錄（用來算扣分），槽位維持原狀，隊伍可以換一張線索再試。
 // 檢查完之後，順便看看有沒有分支因此整條槽位都鎖定了、可以標記解鎖（一次解鎖後
 // 不會再收回，即使之後管理員又替該分支加了新槽位）。
 router.post('/check', asyncHandler(async (req, res) => {
@@ -146,7 +129,7 @@ router.post('/check', asyncHandler(async (req, res) => {
     await client.query('BEGIN');
 
     const { rows: pending } = await client.query(
-      `SELECT ssp.slot_id, ssp.placed_clue_id, s.branch_id, s.correct_clue_id
+      `SELECT ssp.slot_id, ssp.placed_clue_id, s.branch_id
        FROM school_slot_placements ssp
        JOIN tech_tree_slots s ON s.id = ssp.slot_id
        WHERE ssp.school_id = $1 AND ssp.is_locked = false AND ssp.placed_clue_id IS NOT NULL
@@ -158,7 +141,25 @@ router.post('/check', asyncHandler(async (req, res) => {
     const touchedBranchIds = new Set();
 
     for (const slot of pending) {
-      const isCorrect = slot.placed_clue_id === slot.correct_clue_id;
+      // 同一張線索不能在同一分支占兩格，否則只要重複放一張正確線索就能把整條
+      // 分支解完。判定通過必須同時滿足「屬於這個分支」和「只放了一次」。
+      const { rows: matchingRows } = await client.query(
+        `SELECT
+           EXISTS(
+             SELECT 1 FROM tech_tree_slots
+             WHERE branch_id = $1 AND correct_clue_id = $2
+           ) AS belongs_to_branch,
+           (
+             SELECT COUNT(*)::int
+             FROM school_slot_placements sp
+             JOIN tech_tree_slots placed_slot ON placed_slot.id = sp.slot_id
+             WHERE sp.school_id = $3
+               AND placed_slot.branch_id = $1
+               AND sp.placed_clue_id = $2
+           ) AS placements_in_branch`,
+        [slot.branch_id, slot.placed_clue_id, schoolId]
+      );
+      const isCorrect = matchingRows[0].belongs_to_branch && matchingRows[0].placements_in_branch === 1;
       touchedBranchIds.add(slot.branch_id);
 
       await client.query(

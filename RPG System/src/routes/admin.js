@@ -17,6 +17,18 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 *
 // --- 簡單的登入失敗鎖定（見 src/loginThrottle.js：記憶體內、會定期清掉過期項目） ---
 const loginThrottle = createLoginThrottle();
 
+// 稽核帳沿用時空戰爭的格式：操作人、動作、目標，以及異動前後的資料都一起留下。
+// admin_actions 不會隨遊戲進度清除，讓活動結束後仍能追查是誰改了什麼。
+async function audit(adminId, actionType, targetType, targetId, beforeValue, afterValue) {
+  await db.query(
+    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [adminId, actionType, targetType, String(targetId),
+     beforeValue == null ? null : JSON.stringify(beforeValue),
+     afterValue == null ? null : JSON.stringify(afterValue)]
+  );
+}
+
 router.post('/login', asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
@@ -176,6 +188,20 @@ router.get('/me', (req, res) => {
     adminRole: req.admin.adminRole || 'admin'
   });
 });
+
+// 管理員稽核紀錄：關主無權查看，避免從紀錄得知其他隊伍或關主的操作狀況。
+router.get('/audit-logs', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(`
+    SELECT aa.id, aa.action_type, aa.target_type, aa.target_id,
+           aa.before_value, aa.after_value, aa.created_at,
+           au.email AS operator_email, au.display_name AS operator_name, au.role AS operator_role
+    FROM admin_actions aa
+    JOIN admin_users au ON au.id = aa.admin_user_id
+    ORDER BY aa.created_at DESC, aa.id DESC
+    LIMIT 500
+  `);
+  res.json(rows);
+}));
 
 // --- 關主也能做的現場操作（見 middleware/gatekeeperGuard.js 的白名單） ---
 
@@ -340,6 +366,8 @@ router.post('/schools', asyncHandler(async (req, res) => {
        RETURNING id, username, password, display_name, created_at`,
       [username.trim(), password, displayName.trim()]
     );
+    await audit(req.admin.sub, 'create_school', 'school', rows[0].id, null,
+      { username: rows[0].username, displayName: rows[0].display_name });
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'username already exists' });
@@ -377,13 +405,22 @@ router.patch('/schools/:id', asyncHandler(async (req, res) => {
       req.params.id
     ]
   );
+  await audit(req.admin.sub, 'update_school', 'school', req.params.id,
+    { username: existing.username, displayName: existing.display_name },
+    { username: rows[0].username, displayName: rows[0].display_name, passwordChanged: password !== undefined });
   res.json(rows[0]);
 }));
 
 router.delete('/schools/:id', asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await db.query(
+    'SELECT id, username, display_name FROM schools WHERE id = $1', [req.params.id]
+  );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'not found' });
   try {
     const { rowCount } = await db.query('DELETE FROM schools WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'not found' });
+    await audit(req.admin.sub, 'delete_school', 'school', req.params.id,
+      { username: existingRows[0].username, displayName: existingRows[0].display_name }, null);
     res.status(204).end();
   } catch (err) {
     // 這支隊伍已經留下遊戲進度（解鎖記錄、線索、兌換記錄等），FK 擋刪除，
@@ -431,6 +468,7 @@ router.post('/checkpoints', asyncHandler(async (req, res) => {
      RETURNING id, name, description, map_lat, map_lng, is_locked_by_default, created_at`,
     [d.name, d.description, d.mapLat, d.mapLng, d.isLockedByDefault]
   );
+  await audit(req.admin.sub, 'create_checkpoint', 'checkpoint', rows[0].id, null, rows[0]);
   res.status(201).json(rows[0]);
 }));
 
@@ -458,13 +496,21 @@ router.patch('/checkpoints/:id', asyncHandler(async (req, res) => {
      RETURNING id, name, description, map_lat, map_lng, is_locked_by_default, created_at`,
     [d.name, d.description, d.mapLat, d.mapLng, d.isLockedByDefault, req.params.id]
   );
+  await audit(req.admin.sub, 'update_checkpoint', 'checkpoint', req.params.id,
+    { name: existing.name, description: existing.description, mapLat: existing.map_lat, mapLng: existing.map_lng, isLockedByDefault: existing.is_locked_by_default },
+    rows[0]);
   res.json(rows[0]);
 }));
 
 router.delete('/checkpoints/:id', asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await db.query(
+    'SELECT id, name, description, map_lat, map_lng, is_locked_by_default FROM checkpoints WHERE id = $1', [req.params.id]
+  );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
   try {
     const { rowCount } = await db.query('DELETE FROM checkpoints WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'checkpoint not found' });
+    await audit(req.admin.sub, 'delete_checkpoint', 'checkpoint', req.params.id, existingRows[0], null);
     res.status(204).end();
   } catch (err) {
     // 已經有隊伍的解鎖/挑戰進度、掛著線索、或被權限碼指定為目標的關卡不能直接刪掉，
@@ -487,11 +533,11 @@ function normalizeCode(value) {
   return String(value || '').trim().toUpperCase();
 }
 
-const CLUE_COLUMNS = 'id, checkpoint_id, name, description, image_url, qr_token, created_at';
+const CLUE_COLUMNS = 'id, checkpoint_id, name, description, acquisition_location, image_url, qr_token, created_at';
 
 router.get('/clues', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT c.id, c.checkpoint_id, c.name, c.description, c.image_url, c.qr_token, c.created_at,
+    `SELECT c.id, c.checkpoint_id, c.name, c.description, c.acquisition_location, c.image_url, c.qr_token, c.created_at,
             cp.name AS checkpoint_name
      FROM clues c
      LEFT JOIN checkpoints cp ON cp.id = c.checkpoint_id
@@ -515,10 +561,14 @@ function validateClueBody(body, checkpointIds) {
   }
 
   const description = (body.description || '').trim() || null;
+  const acquisitionLocation = (body.acquisitionLocation || '').trim() || null;
+  if (acquisitionLocation && acquisitionLocation.length > 120) {
+    return { error: '獲得地點不可超過 120 個字元' };
+  }
   const imageUrl = (body.imageUrl || '').trim() || null;
   const qrToken = normalizeCode(body.qrToken) || `CLUE-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
 
-  return { data: { checkpointId, name, description, imageUrl, qrToken } };
+  return { data: { checkpointId, name, description, acquisitionLocation, imageUrl, qrToken } };
 }
 
 router.post('/clues', asyncHandler(async (req, res) => {
@@ -531,10 +581,12 @@ router.post('/clues', asyncHandler(async (req, res) => {
   const d = validated.data;
   try {
     const { rows } = await db.query(
-      `INSERT INTO clues (checkpoint_id, name, description, image_url, qr_token)
-       VALUES ($1,$2,$3,$4,$5) RETURNING ${CLUE_COLUMNS}`,
-      [d.checkpointId, d.name, d.description, d.imageUrl, d.qrToken]
+      `INSERT INTO clues (checkpoint_id, name, description, acquisition_location, image_url, qr_token)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING ${CLUE_COLUMNS}`,
+      [d.checkpointId, d.name, d.description, d.acquisitionLocation, d.imageUrl, d.qrToken]
     );
+    await audit(req.admin.sub, 'create_clue', 'clue', rows[0].id, null,
+      { checkpointId: rows[0].checkpoint_id, name: rows[0].name, description: rows[0].description, acquisitionLocation: rows[0].acquisition_location, qrToken: rows[0].qr_token });
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'QR 代碼已經被使用過了' });
@@ -555,6 +607,7 @@ router.patch('/clues/:id', asyncHandler(async (req, res) => {
     checkpointId: req.body.checkpointId !== undefined ? req.body.checkpointId : existing.checkpoint_id,
     name: req.body.name ?? existing.name,
     description: req.body.description ?? existing.description,
+    acquisitionLocation: req.body.acquisitionLocation ?? existing.acquisition_location,
     imageUrl: req.body.imageUrl ?? existing.image_url,
     qrToken: req.body.qrToken !== undefined ? normalizeCode(req.body.qrToken) : existing.qr_token
   };
@@ -565,10 +618,13 @@ router.patch('/clues/:id', asyncHandler(async (req, res) => {
   const d = validated.data;
   try {
     const { rows } = await db.query(
-      `UPDATE clues SET checkpoint_id=$1, name=$2, description=$3, image_url=$4, qr_token=$5
-       WHERE id = $6 RETURNING ${CLUE_COLUMNS}`,
-      [d.checkpointId, d.name, d.description, d.imageUrl, d.qrToken, req.params.id]
+      `UPDATE clues SET checkpoint_id=$1, name=$2, description=$3, acquisition_location=$4, image_url=$5, qr_token=$6
+       WHERE id = $7 RETURNING ${CLUE_COLUMNS}`,
+      [d.checkpointId, d.name, d.description, d.acquisitionLocation, d.imageUrl, d.qrToken, req.params.id]
     );
+    await audit(req.admin.sub, 'update_clue', 'clue', req.params.id,
+      { checkpointId: existing.checkpoint_id, name: existing.name, description: existing.description, acquisitionLocation: existing.acquisition_location, qrToken: existing.qr_token },
+      { checkpointId: rows[0].checkpoint_id, name: rows[0].name, description: rows[0].description, acquisitionLocation: rows[0].acquisition_location, qrToken: rows[0].qr_token });
     res.json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'QR 代碼已經被使用過了' });
@@ -577,9 +633,14 @@ router.patch('/clues/:id', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/clues/:id', asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await db.query(
+    'SELECT id, checkpoint_id, name, description, acquisition_location, qr_token FROM clues WHERE id = $1', [req.params.id]
+  );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'clue not found' });
   try {
     const { rowCount } = await db.query('DELETE FROM clues WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'clue not found' });
+    await audit(req.admin.sub, 'delete_clue', 'clue', req.params.id, existingRows[0], null);
     res.status(204).end();
   } catch (err) {
     // 已經被隊伍拿過（school_clues）、被用在權限碼（access_codes）或科技樹插槽正確答案
@@ -591,36 +652,29 @@ router.delete('/clues/:id', asyncHandler(async (req, res) => {
   }
 }));
 
-// CSV 欄位格式：關卡ID, 名稱, 描述, 圖片網址, QR代碼。
-// 「關卡ID」留空＝不屬於特定關卡（通用/隱藏線索）；「QR代碼」留空＝自動產生。
+// CSV 欄位格式：名稱, 描述, 獲得地點（關卡）, 圖片網址, QR代碼。
+// CSV 不使用系統內部 ID；「獲得地點（關卡）」是顯示給玩家看的文字；「QR代碼」留空＝自動產生。
 // 比照 Time-Space Warfare 題庫匯入的做法：用 csv-parse 的 stream/async-iterator 介面
 // 逐筆處理、每 20 筆一批寫入、批次間讓出 event loop，避免大檔案同步解析卡住玩家端連線
 // （這個系統雖然沒有 Socket.IO，但同一個原則還是適用——不要用同步阻塞迴圈處理上傳檔案）。
-function validateCsvRow(record, rowNumber, checkpointIds) {
+function validateCsvRow(record, rowNumber) {
   const name = (record['名稱'] || '').trim();
   if (!name) return { error: `第 ${rowNumber} 列：名稱為空` };
 
-  const checkpointRaw = (record['關卡ID'] || '').trim();
-  let checkpointId = null;
-  if (checkpointRaw) {
-    checkpointId = parseInt(checkpointRaw, 10);
-    if (!Number.isInteger(checkpointId) || !checkpointIds.has(checkpointId)) {
-      return { error: `第 ${rowNumber} 列：關卡ID「${checkpointRaw}」不存在` };
-    }
+  const acquisitionLocation = (record['獲得地點（關卡）'] || '').trim() || null;
+  if (acquisitionLocation && acquisitionLocation.length > 120) {
+    return { error: `第 ${rowNumber} 列：獲得地點不可超過 120 個字元` };
   }
 
   const description = (record['描述'] || '').trim() || null;
   const imageUrl = (record['圖片網址'] || '').trim() || null;
   const qrToken = normalizeCode(record['QR代碼']) || `CLUE-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
 
-  return { data: { checkpointId, name, description, imageUrl, qrToken } };
+  return { data: { checkpointId: null, name, description, acquisitionLocation, imageUrl, qrToken } };
 }
 
 router.post('/clues/import', upload.single('file'), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'file is required (multipart field name: file)' });
-
-  const { rows: checkpoints } = await db.query('SELECT id FROM checkpoints');
-  const checkpointIds = new Set(checkpoints.map(c => c.id));
 
   const result = { inserted: 0, failed: [] };
   const parser = parse(req.file.buffer, { columns: true, skip_empty_lines: true, trim: true, bom: true });
@@ -635,8 +689,8 @@ router.post('/clues/import', upload.single('file'), asyncHandler(async (req, res
       await client.query('BEGIN');
       for (const row of batch) {
         await client.query(
-          `INSERT INTO clues (checkpoint_id, name, description, image_url, qr_token) VALUES ($1,$2,$3,$4,$5)`,
-          [row.checkpointId, row.name, row.description, row.imageUrl, row.qrToken]
+          `INSERT INTO clues (checkpoint_id, name, description, acquisition_location, image_url, qr_token) VALUES ($1,$2,$3,$4,$5,$6)`,
+          [row.checkpointId, row.name, row.description, row.acquisitionLocation, row.imageUrl, row.qrToken]
         );
       }
       await client.query('COMMIT');
@@ -652,7 +706,7 @@ router.post('/clues/import', upload.single('file'), asyncHandler(async (req, res
 
   for await (const record of parser) {
     rowNumber += 1;
-    const validated = validateCsvRow(record, rowNumber, checkpointIds);
+    const validated = validateCsvRow(record, rowNumber);
     if (validated.error) {
       result.failed.push({ row: rowNumber, reason: validated.error });
       continue;
@@ -666,6 +720,8 @@ router.post('/clues/import', upload.single('file'), asyncHandler(async (req, res
   }
   await flushBatch();
 
+  await audit(req.admin.sub, 'import_clues', 'clue_csv', 'import', null,
+    { inserted: result.inserted, failed: result.failed.length });
   res.json(result);
 }));
 
@@ -720,6 +776,8 @@ router.post('/access-codes', asyncHandler(async (req, res) => {
         type === 'hidden_clue' ? targetClueId : null
       ]
     );
+    await audit(req.admin.sub, 'create_access_code', 'access_code', rows[0].id, null,
+      { code: rows[0].code, type: rows[0].type, targetCheckpointId: rows[0].target_checkpoint_id, targetClueId: rows[0].target_clue_id });
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'code already exists' });
@@ -728,9 +786,14 @@ router.post('/access-codes', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/access-codes/:id', asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await db.query(
+    'SELECT id, code, type, target_checkpoint_id, target_clue_id FROM access_codes WHERE id = $1', [req.params.id]
+  );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'not found' });
   try {
     const { rowCount } = await db.query('DELETE FROM access_codes WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'not found' });
+    await audit(req.admin.sub, 'delete_access_code', 'access_code', req.params.id, existingRows[0], null);
     res.status(204).end();
   } catch (err) {
     // 已經被兌換過的碼，school_code_redemptions 還留著兌換記錄（FK 擋刪除），
@@ -829,6 +892,8 @@ router.post('/access-codes/import', upload.single('file'), asyncHandler(async (r
   }
   await flushBatch();
 
+  await audit(req.admin.sub, 'import_access_codes', 'access_code_csv', 'import', null,
+    { inserted: result.inserted, failed: result.failed.length });
   res.json(result);
 }));
 
@@ -871,6 +936,7 @@ router.post('/tech-tree/branches', asyncHandler(async (req, res) => {
      VALUES ($1,$2,$3) RETURNING id, name, story_content, display_order`,
     [d.name, d.storyContent, d.displayOrder]
   );
+  await audit(req.admin.sub, 'create_tech_branch', 'tech_tree_branch', rows[0].id, null, rows[0]);
   res.status(201).json({ ...rows[0], slots: [] });
 }));
 
@@ -894,13 +960,19 @@ router.patch('/tech-tree/branches/:id', asyncHandler(async (req, res) => {
      WHERE id = $4 RETURNING id, name, story_content, display_order`,
     [d.name, d.storyContent, d.displayOrder, req.params.id]
   );
+  await audit(req.admin.sub, 'update_tech_branch', 'tech_tree_branch', req.params.id, existing, rows[0]);
   res.json(rows[0]);
 }));
 
 router.delete('/tech-tree/branches/:id', asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await db.query(
+    'SELECT id, name, story_content, display_order FROM tech_tree_branches WHERE id = $1', [req.params.id]
+  );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'branch not found' });
   try {
     const { rowCount } = await db.query('DELETE FROM tech_tree_branches WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'branch not found' });
+    await audit(req.admin.sub, 'delete_tech_branch', 'tech_tree_branch', req.params.id, existingRows[0], null);
     res.status(204).end();
   } catch (err) {
     // 底下還掛著槽位、或已經有隊伍解鎖過這個分支，FK 擋下來——先刪掉底下的槽位
@@ -943,6 +1015,7 @@ router.post('/tech-tree/slots', asyncHandler(async (req, res) => {
        VALUES ($1,$2,$3) RETURNING id, branch_id, slot_order, correct_clue_id`,
       [d.branchId, d.slotOrder, d.correctClueId]
     );
+    await audit(req.admin.sub, 'create_tech_slot', 'tech_tree_slot', rows[0].id, null, rows[0]);
     res.status(201).json(rows[0]);
   } catch (err) {
     // 同一個分支裡順序不能重複——重複的話玩家端「排得到/排不到」的判定會沒有
@@ -980,6 +1053,7 @@ router.patch('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
        WHERE id = $4 RETURNING id, branch_id, slot_order, correct_clue_id`,
       [d.branchId, d.slotOrder, d.correctClueId, req.params.id]
     );
+    await audit(req.admin.sub, 'update_tech_slot', 'tech_tree_slot', req.params.id, existing, rows[0]);
     res.json(rows[0]);
   } catch (err) {
     if (err.code === '23505') {
@@ -990,9 +1064,14 @@ router.patch('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await db.query(
+    'SELECT id, branch_id, slot_order, correct_clue_id FROM tech_tree_slots WHERE id = $1', [req.params.id]
+  );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'slot not found' });
   try {
     const { rowCount } = await db.query('DELETE FROM tech_tree_slots WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'slot not found' });
+    await audit(req.admin.sub, 'delete_tech_slot', 'tech_tree_slot', req.params.id, existingRows[0], null);
     res.status(204).end();
   } catch (err) {
     // 已經有隊伍放過線索/檢查過這一格，FK 擋下來，避免默默把玩過的進度弄不見。
@@ -1023,6 +1102,7 @@ router.post('/elders', asyncHandler(async (req, res) => {
     'INSERT INTO elders (name, description) VALUES ($1, $2) RETURNING id, name, description',
     [name.trim(), (description || '').trim() || null]
   );
+  await audit(req.admin.sub, 'create_elder', 'elder', rows[0].id, null, rows[0]);
   res.status(201).json(rows[0]);
 }));
 
@@ -1039,13 +1119,19 @@ router.patch('/elders/:id', asyncHandler(async (req, res) => {
     'UPDATE elders SET name = $1, description = $2 WHERE id = $3 RETURNING id, name, description',
     [name, description, req.params.id]
   );
+  await audit(req.admin.sub, 'update_elder', 'elder', req.params.id, existing, rows[0]);
   res.json(rows[0]);
 }));
 
 router.delete('/elders/:id', asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await db.query(
+    'SELECT id, name, description FROM elders WHERE id = $1', [req.params.id]
+  );
+  if (existingRows.length === 0) return res.status(404).json({ error: 'elder not found' });
   try {
     const { rowCount } = await db.query('DELETE FROM elders WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'elder not found' });
+    await audit(req.admin.sub, 'delete_elder', 'elder', req.params.id, existingRows[0], null);
     res.status(204).end();
   } catch (err) {
     // 已經有隊伍投給這位候選人，FK 擋刪除，避免默默把已經投出去的票變成指向不存在的人。
@@ -1082,6 +1168,7 @@ router.post('/game/start', asyncHandler(async (req, res) => {
     `UPDATE game_state SET status = 'in_progress', started_at = now(), ended_at = NULL
      WHERE id = 1 RETURNING status, started_at, ended_at, voting_unlocked_at, voting_closed_at`
   );
+  await audit(req.admin.sub, 'start_game', 'game_state', 1, current[0], rows[0]);
   res.json(rows[0]);
 }));
 
@@ -1094,6 +1181,7 @@ router.post('/game/end', asyncHandler(async (req, res) => {
     `UPDATE game_state SET status = 'ended', ended_at = now()
      WHERE id = 1 RETURNING status, started_at, ended_at, voting_unlocked_at, voting_closed_at`
   );
+  await audit(req.admin.sub, 'end_game', 'game_state', 1, current[0], rows[0]);
   res.json(rows[0]);
 }));
 
@@ -1103,21 +1191,29 @@ router.post('/game/end', asyncHandler(async (req, res) => {
 // 開放時順便把 voting_closed_at 清空，所以「關閉後再開放」也是走這支 API，
 // 效果等於重新開放投票（votes.js 判斷開放與否是看 unlocked 有值且 closed 沒值）。
 router.post('/game/open-voting', asyncHandler(async (req, res) => {
+  const { rows: before } = await db.query(
+    'SELECT voting_unlocked_at, voting_closed_at FROM game_state WHERE id = 1'
+  );
   const { rows } = await db.query(
     `UPDATE game_state
      SET voting_unlocked_at = COALESCE(voting_unlocked_at, now()), voting_closed_at = NULL
      WHERE id = 1 RETURNING voting_unlocked_at, voting_closed_at`
   );
+  await audit(req.admin.sub, 'open_voting', 'game_state', 1, before[0], rows[0]);
   res.json({ votingUnlockedAt: rows[0].voting_unlocked_at, votingClosedAt: rows[0].voting_closed_at });
 }));
 
 // 手動關閉投票：投完票不代表遊戲結束，主辦可能想在收齊各隊意見後把投票關掉，
 // 避免有隊伍事後反悔亂改。重複呼叫是安全的（COALESCE 保留第一次關閉的時間）。
 router.post('/game/close-voting', asyncHandler(async (req, res) => {
+  const { rows: before } = await db.query(
+    'SELECT voting_unlocked_at, voting_closed_at FROM game_state WHERE id = 1'
+  );
   const { rows } = await db.query(
     `UPDATE game_state SET voting_closed_at = COALESCE(voting_closed_at, now())
      WHERE id = 1 RETURNING voting_unlocked_at, voting_closed_at`
   );
+  await audit(req.admin.sub, 'close_voting', 'game_state', 1, before[0], rows[0]);
   res.json({ votingUnlockedAt: rows[0].voting_unlocked_at, votingClosedAt: rows[0].voting_closed_at });
 }));
 

@@ -20,7 +20,7 @@ router.post('/scan', asyncHandler(async (req, res) => {
   // 掃碼掃到的一定原樣正確，但這一頁也支援手動輸入（相機不能用時的備援），
   // 所以跟權限碼一樣不分大小寫——存進去時已經統一成大寫。
   const { rows: clueRows } = await db.query(
-    'SELECT id, name, description, image_url, checkpoint_id FROM clues WHERE qr_token = $1',
+    'SELECT id, name, description, acquisition_location, image_url, checkpoint_id FROM clues WHERE qr_token = $1',
     [qrToken.trim().toUpperCase()]
   );
   if (clueRows.length === 0) {
@@ -52,7 +52,7 @@ router.post('/scan', asyncHandler(async (req, res) => {
 // 線索庫：依取得時間序列出這支隊伍已經拿到的所有線索（不論是掃碼還是兌換權限碼拿到的）。
 router.get('/vault', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT c.id, c.name, c.description, c.image_url, c.checkpoint_id, sc.acquired_at, sc.acquired_via
+    `SELECT c.id, c.name, c.description, c.acquisition_location, c.image_url, c.checkpoint_id, sc.acquired_at, sc.acquired_via
      FROM school_clues sc
      JOIN clues c ON c.id = sc.clue_id
      WHERE sc.school_id = $1

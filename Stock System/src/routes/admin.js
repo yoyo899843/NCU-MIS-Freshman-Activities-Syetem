@@ -61,6 +61,21 @@ router.get('/me', (req, res) => {
   });
 });
 
+// 稽核帳的檢視入口。交易、存款與持股本身各有不可竄改的明細表；這裡記的是
+// 工作人員做的審核、覆寫與市場設定操作，格式與時空戰爭一致。
+router.get('/audit-logs', requireAdmin, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(`
+    SELECT aa.id, aa.action_type, aa.target_type, aa.target_id,
+           aa.before_value, aa.after_value, aa.created_at,
+           au.email AS operator_email, au.display_name AS operator_name, au.role AS operator_role
+    FROM admin_actions aa
+    LEFT JOIN admin_users au ON au.id = aa.admin_user_id
+    ORDER BY aa.created_at DESC, aa.id DESC
+    LIMIT 500
+  `);
+  res.json(rows);
+}));
+
 /* ---------------- 遊戲進程 ---------------- */
 
 router.get('/state', asyncHandler(async (req, res) => {
@@ -447,10 +462,15 @@ router.delete('/admins/:id', requireAdmin, asyncHandler(async (req, res) => {
     }
   }
 
-  // admin_actions.admin_user_id 是 nullable 的外鍵，稽核紀錄要留著（誰做了什麼
-  // 不該因為帳號被刪就消失），所以先把關聯解開再刪帳號。
-  await db.query('UPDATE admin_actions SET admin_user_id = NULL WHERE admin_user_id = $1', [id]);
-  await db.query('UPDATE deposits SET reviewed_by = NULL WHERE reviewed_by = $1', [id]);
+  // 比照時空戰爭：一旦帳號留下過稽核紀錄，就不能刪除，否則 log 只會剩下
+  // 「已刪除帳號」而失去最重要的責任歸屬。需要停用時改用重設密碼即可。
+  const { rows: actionRows } = await db.query(
+    'SELECT COUNT(*)::int AS count FROM admin_actions WHERE admin_user_id = $1', [id]
+  );
+  if (actionRows[0].count > 0) {
+    return res.status(409).json({ error: '這個帳號已經有操作紀錄，不能刪除（可改用重設密碼停用）' });
+  }
+
   await db.query('DELETE FROM admin_users WHERE id = $1', [id]);
   await audit(req.admin.sub, 'delete_admin', 'admin_user', id,
     { email: target[0].email, role: target[0].role }, null);

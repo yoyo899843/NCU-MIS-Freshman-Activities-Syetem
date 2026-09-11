@@ -22,10 +22,12 @@
 <div class="card">
   <h3 id="formTitle">新增線索</h3>
   <input id="name" placeholder="名稱">
+  <label for="checkpointId">關聯關卡（選填，影響關卡線索進度）</label>
   <select id="checkpointId">
-    <option value="">（不屬於任何關卡／通用或隱藏線索）</option>
+    <option value="">（不關聯關卡／通用或隱藏線索）</option>
   </select>
   <input id="description" placeholder="描述（選填）">
+  <input id="acquisitionLocation" placeholder="獲得地點（關卡，選填）">
   <input id="imageUrl" placeholder="圖片網址（選填）">
   <input id="qrToken" placeholder="QR 代碼（留空自動產生）">
 
@@ -36,7 +38,7 @@
 
 <div class="card">
   <h3>CSV 批次匯入</h3>
-  <p style="font-size:0.85rem">欄位格式：關卡ID, 名稱, 描述, 圖片網址, QR代碼（關卡ID 留空＝不屬於特定關卡，QR代碼 留空會自動產生）</p>
+  <p style="font-size:0.85rem">欄位格式：名稱, 描述, 獲得地點（關卡）, 圖片網址, QR代碼（不需要系統 ID；獲得地點可留空，QR 代碼留空會自動產生）</p>
   <p class="nav"><a href="sample-clues.csv" download>下載範例 CSV</a></p>
   <input type="file" id="csvFile" accept=".csv">
   <button id="importBtn">上傳匯入</button>
@@ -47,7 +49,7 @@
   <h3>線索清單</h3>
   <table>
     <thead>
-      <tr><th>名稱</th><th>歸屬</th><th>QR 代碼</th><th></th></tr>
+      <tr><th>名稱</th><th>獲得地點</th><th>關聯關卡</th><th>QR 代碼</th><th></th></tr>
     </thead>
     <tbody id="cluesBody"></tbody>
   </table>
@@ -96,7 +98,8 @@ async function loadClues() {
   body.innerHTML = clues.map(c => `
     <tr>
       <td>${escapeHtml(c.name)}</td>
-      <td><span class="checkpoint-tag">${checkpointLabel(c)}</span></td>
+      <td>${escapeHtml(c.acquisition_location || '—')}</td>
+      <td><span class="checkpoint-tag">${escapeHtml(checkpointLabel(c))}</span></td>
       <td>${escapeHtml(c.qr_token)}</td>
       <td class="row-actions">
         <button onclick="startEdit(${c.id})">編輯</button>
@@ -104,7 +107,7 @@ async function loadClues() {
         <a href="qrcode-print.html?token=${encodeURIComponent(c.qr_token)}&name=${encodeURIComponent(c.name)}" target="_blank">查看 QR Code</a>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="4">目前沒有線索</td></tr>';
+  `).join('') || '<tr><td colspan="5">目前沒有線索</td></tr>';
   window.__clues = clues;
 }
 
@@ -117,6 +120,7 @@ function readForm() {
     name: document.getElementById('name').value.trim(),
     checkpointId: document.getElementById('checkpointId').value || null,
     description: document.getElementById('description').value.trim(),
+    acquisitionLocation: document.getElementById('acquisitionLocation').value.trim(),
     imageUrl: document.getElementById('imageUrl').value.trim(),
     qrToken: document.getElementById('qrToken').value.trim()
   };
@@ -130,6 +134,7 @@ function resetForm() {
   document.getElementById('name').value = '';
   document.getElementById('checkpointId').value = '';
   document.getElementById('description').value = '';
+  document.getElementById('acquisitionLocation').value = '';
   document.getElementById('imageUrl').value = '';
   document.getElementById('qrToken').value = '';
 }
@@ -144,6 +149,7 @@ window.startEdit = function (id) {
   document.getElementById('name').value = c.name;
   document.getElementById('checkpointId').value = c.checkpoint_id || '';
   document.getElementById('description').value = c.description || '';
+  document.getElementById('acquisitionLocation').value = c.acquisition_location || '';
   document.getElementById('imageUrl').value = c.image_url || '';
   document.getElementById('qrToken').value = c.qr_token;
   window.scrollTo(0, 0);

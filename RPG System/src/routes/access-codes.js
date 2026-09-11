@@ -83,7 +83,7 @@ router.post('/redeem', asyncHandler(async (req, res) => {
         [schoolId, accessCode.target_clue_id]
       );
       const { rows: clueRows } = await client.query(
-        'SELECT id, name, description, image_url, checkpoint_id FROM clues WHERE id = $1',
+        'SELECT id, name, description, acquisition_location, image_url, checkpoint_id FROM clues WHERE id = $1',
         [accessCode.target_clue_id]
       );
       result = { type: 'hidden_clue', clue: clueRows[0] };

@@ -40,14 +40,21 @@ if (!token) {
       }
       const listEl = document.getElementById('list');
       const viaLabel = { scan: 'QR 掃描', code: '權限碼兌換' };
+      const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[char]));
       data.forEach(clue => {
         const item = document.createElement('div');
         item.className = 'card';
         const time = new Date(clue.acquired_at).toLocaleString('zh-TW');
+        const location = clue.acquisition_location
+          ? `<p style="font-size:0.85rem;color:var(--dim)">獲得地點：${escapeHtml(clue.acquisition_location)}</p>`
+          : '';
         item.innerHTML = `
-          <strong>${clue.name}</strong>
-          <p>${clue.description || ''}</p>
-          <p style="font-size:0.85rem;color:var(--dim)">取得方式：${viaLabel[clue.acquired_via] || clue.acquired_via} ／ ${time}</p>
+          <strong>${escapeHtml(clue.name)}</strong>
+          <p>${escapeHtml(clue.description)}</p>
+          ${location}
+          <p style="font-size:0.85rem;color:var(--dim)">取得方式：${escapeHtml(viaLabel[clue.acquired_via] || clue.acquired_via)} ／ ${time}</p>
         `;
         listEl.appendChild(item);
       });

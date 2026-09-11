@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>操作稽核紀錄 - 賭大股票系統</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  .audit-table { width:100%; border-collapse:collapse; }
+  .audit-table th, .audit-table td { padding:9px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+  .meta { color:var(--dim); font-size:.85rem; }
+  pre { max-width:340px; max-height:180px; overflow:auto; white-space:pre-wrap; word-break:break-word; background:var(--card-2); padding:8px; border-radius:8px; }
+</style></head>
+<body class="wide">
+<div class="pagehead"><h1>操作稽核紀錄</h1><a class="back" href="index.html">← 回後台</a></div>
+<section class="card">
+  <p class="hint">保留最近 500 筆工作人員操作，包含帳號、目標與異動前後資料。</p>
+  <div class="actions"><button class="sm" id="refreshBtn">重新整理</button></div>
+  <p id="status" class="hint">載入中...</p>
+  <div style="overflow-x:auto"><table class="audit-table">
+    <thead><tr><th>時間</th><th>操作帳號</th><th>動作</th><th>目標</th><th>異動資料</th></tr></thead>
+    <tbody id="logsBody"></tbody>
+  </table></div>
+</section>
+<script src="admin.js"></script>
+<script>
+if (requireAdminLogin()) {
+  const actionLabels = {
+    update_state: '更新遊戲進程', create_news: '發布新聞', delete_news: '刪除新聞', set_prices: '設定股價',
+    approve_deposit: '核准存款', reject_deposit: '駁回存款', create_team: '新增隊伍', override_cash: '覆寫餘額',
+    reset_team_pin: '重設隊伍 PIN', delete_team: '刪除隊伍', create_admin: '新增管理帳號',
+    reset_admin_password: '重設管理密碼', delete_admin: '刪除管理帳號'
+  };
+  const details = (before, after) => `<details><summary>查看資料</summary><pre>${esc(JSON.stringify({ before: before || null, after: after || null }, null, 2))}</pre></details>`;
+  async function load() {
+    const { ok, body, status } = await api('/audit-logs');
+    if (!ok) { $('status').textContent = body.error || `載入失敗（${status}）`; return; }
+    $('logsBody').innerHTML = body.map(log => `<tr>
+      <td class="meta">${new Date(log.created_at).toLocaleString()}</td>
+      <td>${esc(log.operator_name || log.operator_email || '（已刪除帳號）')}<br><span class="meta">${esc(log.operator_email || '')}</span></td>
+      <td>${esc(actionLabels[log.action_type] || log.action_type)}</td>
+      <td>${esc(log.target_type)}<br><span class="meta">${esc(log.target_id)}</span></td>
+      <td>${details(log.before_value, log.after_value)}</td>
+    </tr>`).join('') || '<tr><td colspan="5">目前沒有操作紀錄</td></tr>';
+    $('status').textContent = `共 ${body.length} 筆紀錄`;
+  }
+  $('refreshBtn').addEventListener('click', load);
+  load();
+}
+</script>
+</body></html>

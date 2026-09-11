@@ -52,25 +52,43 @@ router.get('/news', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-// 全場總資產排行榜（現金 ＋ 股票現值）。
+// 排行榜：全場總資產排行，加上四間公司各自的持股排行（誰是最大股東）。
 //
 // 這支不用登入，跟行情和新聞同一個理由：企劃要的是投影在大螢幕上「以便最後
-// 公布名次」，而大螢幕那台電腦沒有隊伍帳號。管理端也有一支同名的
-// （/admin/api/leaderboard），差別在這裡不回任何隊伍的私有資訊——只有名次、
-// 隊名、現金、股票現值、總資產，跟現場投影出來的東西一模一樣。
+// 公布名次」，而大螢幕那台電腦沒有隊伍帳號。
+//
+// 各公司持股排行會公開每隊在各檔持有幾張——這是主辦要的玩法，代價是交易時間
+// 大家看得到領先的隊伍押在哪一檔。現金、成交明細仍然只在後台
+// （/admin/api/leaderboard）看得到。
 router.get('/leaderboard', asyncHandler(async (req, res) => {
   const { rows } = await db.query('SELECT wave, total_waves, phase FROM game_state WHERE id = 1');
   const board = await leaderboard(rows[0].wave);
 
-  // positions（每隊各檔持有幾張）刻意在這裡拿掉。
-  //
-  // 這一頁是投影出去給全場看的，而持股是還沒實現的部位——公開之後，最後一波
-  // 交易時間大家只要盯著螢幕就知道領先的那隊押在哪一檔，變成互相跟單/狙擊，
-  // 「依據新聞自己判斷」那一段就沒意義了。後台的 /admin/api/leaderboard 才回
-  // 明細，那是給工作人員結算與查帳用的。
+  // 每間公司一張榜：只列有持股的隊伍，依張數排，同張數並列、名次跳號（1,1,3），
+  // 跟總資產榜的並列規則一樣。
+  const holdings = board.stocks.map(s => {
+    const holders = board.teams
+      .map(t => {
+        const p = t.positions.find(x => x.stockId === s.id);
+        return { teamId: t.teamId, name: t.name, shares: p.shares, value: p.value };
+      })
+      .filter(h => h.shares > 0)
+      .sort((a, b) => b.shares - a.shares || a.teamId - b.teamId);
+    let rank = 0, prev = null;
+    holders.forEach((h, i) => {
+      if (h.shares !== prev) { rank = i + 1; prev = h.shares; }
+      h.rank = rank;
+    });
+    return {
+      stockId: s.id, name: s.name, price: s.price,
+      teams: holders.map(h => ({ rank: h.rank, name: h.name, shares: h.shares, value: h.value }))
+    };
+  });
+
   res.json({
     ...rows[0],
-    teams: board.teams.map(({ positions, ...rest }) => rest)
+    teams: board.teams.map(({ positions, ...rest }) => rest),
+    holdings
   });
 }));
 

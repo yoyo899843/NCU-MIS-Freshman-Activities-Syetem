@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>總資產排行榜 - 賭大股票系統</title>
+<title>排行榜 - 賭大股票系統</title>
 <link rel="stylesheet" href="style.css">
 <style>
   /* 這一頁是投影用的：尺寸跟著視窗走（vw / clamp），1024×768 的投影機到 4K
@@ -20,7 +20,7 @@
   .board .rank { width: 3em; font-size: 1.1em; }
   /* 前三名：名次旁加獎牌標籤，不是只把整列染色——顏色在投影機上常常會偏掉 */
   .medal { display: inline-block; font-size: .55em; font-weight: 800; padding: .15em .6em; border-radius: 999px;
-           vertical-align: middle; margin-left: .5em; }
+           vertical-align: middle; margin-left: .5em; white-space: nowrap; }
   .medal.g1 { background: #fdf1dc; color: #7a4a05; }
   .medal.g2 { background: #eef2f8; color: #3c4658; }
   .medal.g3 { background: #fbeee6; color: #7c3a12; }
@@ -28,15 +28,36 @@
   .board td.total { font-weight: 800; color: var(--blue); }
   .board .card { padding: clamp(10px, 1.4vw, 24px); }
   #updated { font-size: clamp(12px, 1vw, 16px); }
+
+  /* 兩種排行的切換。投影時通常直接開 leaderboard.html#holdings，不用有人去點 */
+  .viewtabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; margin-bottom: 14px;
+              background: #e3e9f3; border-radius: 14px; max-width: 560px; }
+  .viewtabs button { background: transparent; color: var(--dim); border-radius: 10px;
+                     font-size: clamp(15px, 1.3vw, 20px); padding: 10px 12px; }
+  .viewtabs button:hover { background: #d6deeb; color: var(--fg); }
+  .viewtabs button[aria-selected="true"] { background: #fff; color: var(--fg); box-shadow: 0 1px 3px rgba(11,19,36,.14); }
+
+  /* 各公司持股：投影的寬螢幕上排成 2×2，四張榜一次看完；手機上一張接一張 */
+  .hgrid { display: grid; gap: 0 clamp(12px, 1.6vw, 24px);
+           grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); }
+  .hgrid table { font-size: clamp(15px, 1.35vw, 24px); }
+  .hgrid h2 { font-size: clamp(18px, 1.7vw, 28px); margin-bottom: .4em; flex-wrap: wrap; }
+  .hgrid h2 .px { margin-left: auto; font-size: .7em; font-weight: 600; color: var(--dim); }
+  .hgrid .medal { font-size: .7em; }
 </style>
 </head>
 <body class="board">
 <header class="bankcard">
-  <div><p class="brand">賭大股票</p><h1>總資產排行榜</h1></div>
+  <div><p class="brand">賭大股票</p><h1 id="title">總資產排行榜</h1></div>
   <div class="meta">第 <b id="wave">—</b> / <span id="totalWaves">—</span> 波<br><span id="phase"></span></div>
 </header>
 
-<section class="card">
+<div class="viewtabs" role="tablist" aria-label="排行榜種類">
+  <button type="button" role="tab" id="tab-total" aria-controls="panel-total" aria-selected="true">總資產</button>
+  <button type="button" role="tab" id="tab-holdings" aria-controls="panel-holdings" aria-selected="false" tabindex="-1">各公司持股</button>
+</div>
+
+<section class="card" id="panel-total" role="tabpanel" aria-labelledby="tab-total">
   <div class="table-wrap">
     <table>
       <thead><tr><th>名次</th><th>隊伍</th><th class="n">現金</th><th class="n">股票現值</th><th class="n">總資產</th></tr></thead>
@@ -44,23 +65,50 @@
     </table>
   </div>
 </section>
+
+<div class="hgrid" id="panel-holdings" role="tabpanel" aria-labelledby="tab-holdings" hidden>
+  <p class="hint">載入中…</p>
+</div>
+
 <p class="foot"><span id="updated"></span>　·　<a href="index.html">回首頁</a></p>
 
 <script src="ui.js"></script>
 <script src="app.js"></script>
 <script>
 // 這一頁不需要登入：大螢幕那台電腦沒有隊伍帳號，而名次本來就是要公開投影的。
-// 用的是 /api/market/leaderboard（公開，不含各隊持股），不是管理端那支。
+// 用的是 /api/market/leaderboard（公開，不含成交明細），不是管理端那支。
 const MEDAL = { 1: ['g1', '冠軍'], 2: ['g2', '亞軍'], 3: ['g3', '季軍'] };
-async function load() {
-  const { ok, body } = await api('/api/market/leaderboard');
-  if (!ok) return;
-  $('wave').textContent = body.wave;
-  $('totalWaves').textContent = body.total_waves;
-  $('phase').textContent = PHASE_LABEL[body.phase] || body.phase;
-  $('updated').textContent = '更新於 ' + new Date().toLocaleTimeString('zh-TW');
+const VIEWS = {
+  total:    { title: '總資產排行榜' },
+  holdings: { title: '各公司持股排行' }
+};
 
-  $('rows').innerHTML = body.teams.map(t => {
+// 目前的分頁記在網址 #holdings 上：投影機那台開好書籤就是持股榜，重新整理也不會跳回去
+function setView(view, focus) {
+  if (!VIEWS[view]) view = 'total';
+  Object.keys(VIEWS).forEach(v => {
+    const on = v === view;
+    $('tab-' + v).setAttribute('aria-selected', on);
+    $('tab-' + v).tabIndex = on ? 0 : -1;
+    $('panel-' + v).hidden = !on;
+  });
+  $('title').textContent = VIEWS[view].title;
+  document.title = VIEWS[view].title + ' - 賭大股票系統';
+  history.replaceState(null, '', view === 'total' ? location.pathname : '#' + view);
+  if (focus) $('tab-' + view).focus();
+}
+document.querySelectorAll('[role="tab"]').forEach(tab => {
+  tab.addEventListener('click', () => setView(tab.id.slice(4)));
+  // 分頁的標準鍵盤操作：左右鍵切換
+  tab.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    setView(tab.id === 'tab-total' ? 'holdings' : 'total', true);
+  });
+});
+setView(location.hash.slice(1));
+
+function renderTotal(teams) {
+  $('rows').innerHTML = teams.map(t => {
     const m = MEDAL[t.rank];
     return `<tr class="${t.rank === 1 ? 'top1' : ''}">
       <td class="rank">${t.rank}</td>
@@ -70,6 +118,39 @@ async function load() {
       <td class="n total">${money(t.total)}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="5" class="muted">還沒有隊伍</td></tr>';
+}
+
+function renderHoldings(holdings) {
+  // 公司名稱前的色線跟個股頁走勢圖同一個顏色，位置照股票順序，不照排名
+  $('panel-holdings').innerHTML = holdings.map((s, i) => `
+    <section class="card">
+      <h2><svg width="18" height="10" aria-hidden="true"><rect y="3.5" width="18" height="3" rx="1.5" fill="${SERIES_COLORS[i % SERIES_COLORS.length]}"/></svg>${esc(s.name)}
+        <span class="px">股價 ${s.price === null ? '尚未開盤' : money(s.price)}</span></h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>名次</th><th>隊伍</th><th class="n">持股</th><th class="n">市值</th></tr></thead>
+          <tbody>${s.teams.map(t => `
+            <tr class="${t.rank === 1 ? 'top1' : ''}">
+              <td class="rank">${t.rank}</td>
+              <td>${esc(t.name)}${t.rank === 1 ? '<span class="medal g1">最大股東</span>' : ''}</td>
+              <td class="n">${money(t.shares)} 張</td>
+              <td class="n">${money(t.value)}</td>
+            </tr>`).join('') || '<tr><td colspan="4" class="muted">還沒有隊伍持有</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>`).join('') || '<p class="hint">還沒有股票</p>';
+}
+
+async function load() {
+  const { ok, body } = await api('/api/market/leaderboard');
+  if (!ok) return;
+  $('wave').textContent = body.wave;
+  $('totalWaves').textContent = body.total_waves;
+  $('phase').textContent = PHASE_LABEL[body.phase] || body.phase;
+  $('updated').textContent = '更新於 ' + new Date().toLocaleTimeString('zh-TW');
+  renderTotal(body.teams);
+  renderHoldings(body.holdings || []);
 }
 load();
 setInterval(load, 5000);
