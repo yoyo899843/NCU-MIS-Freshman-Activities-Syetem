@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>戰況板 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="admin.css">
+<script src="layout.js" defer></script>
 <style>
   body { max-width: 720px; }
   th, td { white-space: nowrap; }
@@ -15,9 +17,8 @@
   tr:first-child td.score { color: var(--accent); }
 </style>
 </head>
-<body>
+<body class="admin-shell">
 <h1>戰況板</h1>
-<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
 <p style="font-size:0.85rem;color:var(--dim)">計分方式：線索放對分支（同一分支任一格都算）每格得 5 分；放錯分支每次記 2 點推理失誤分；沒放的格子不計分。總分＝得分 − 推理失誤分，依總分排名（可能是負的）。即時計算，不是累計存好的固定值。</p>
 
 <div class="card">

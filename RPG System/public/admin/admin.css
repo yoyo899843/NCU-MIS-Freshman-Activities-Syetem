@@ -1,0 +1,69 @@
+/* 後台共用版面（搭配 layout.js）。色票沿用 ../style.css 的變數。
+   平板／手機：頂端「選單」列，導覽從左邊滑出。
+   電腦（>= 1024px）：左側固定側欄，內容區最寬 1080px。 */
+
+/* 蓋掉 style.css 的 480px，以及各頁自己寫的 body { max-width: ... } */
+body.admin-shell { max-width: none; margin: 0; padding: 0 16px 48px; }
+.admin-main { max-width: 1080px; margin: 0 auto; }
+[hidden] { display: none !important; }
+
+.skip-link { position: absolute; left: -9999px; top: 8px; z-index: 2000; background: var(--accent); color: var(--on-accent); padding: 8px 12px; }
+.skip-link:focus { left: 8px; }
+
+/* ---- 頂端列（平板／手機） ---- */
+.admin-topbar {
+  position: sticky; top: 0; z-index: 900;
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 -16px 16px; padding: 8px 16px;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+}
+.menu-btn {
+  display: inline-flex; align-items: center; gap: 8px; width: auto; margin: 0;
+  padding: 8px 14px; background: var(--card-2); color: var(--fg);
+  border: 1px solid var(--line); font-weight: 700; letter-spacing: .04em;
+}
+.menu-btn:hover { background: var(--card-3); }
+.topbar-title { color: var(--dim); font-size: 14px; letter-spacing: .06em; }
+
+/* ---- 導覽（平板／手機是抽屜，電腦是固定側欄） ---- */
+.admin-nav {
+  position: fixed; top: 0; bottom: 0; left: 0; z-index: 1000;
+  width: min(300px, 86vw); overflow-y: auto; overscroll-behavior: contain;
+  padding: 20px 14px 24px; background: var(--card); border-right: 1px solid var(--line);
+  transform: translateX(-100%); transition: transform .2s ease-out;
+  display: flex; flex-direction: column;
+}
+body.nav-open .admin-nav { transform: none; }
+.nav-scrim { position: fixed; inset: 0; z-index: 999; background: rgba(0, 0, 0, .55); }
+
+.nav-brand { margin: 0 0 6px; color: var(--accent); font-weight: 700; line-height: 1.4; letter-spacing: .04em; }
+.nav-who { margin: 0 0 18px; font-size: 14px; color: var(--dim); }
+.nav-role { display: inline-block; margin-right: 6px; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: #12351f; color: var(--accent); }
+.nav-section { margin-bottom: 18px; }
+.nav-title { margin: 0 0 6px; padding: 0 10px; font-size: 12px; letter-spacing: .14em; color: var(--dim); }
+.admin-nav a {
+  display: flex; align-items: center; min-height: 44px; padding: 0 10px;
+  color: var(--fg); text-decoration: none; border-left: 3px solid transparent;
+}
+.admin-nav a:hover { background: var(--card-3); }
+.admin-nav a[aria-current="page"] { border-left-color: var(--accent); background: var(--card-2); color: var(--accent); font-weight: 700; }
+.nav-logout { margin: auto 0 0; background: transparent; color: var(--dim); border: 1px solid var(--line); font-weight: 400; }
+.nav-logout:hover { background: var(--card-3); color: var(--fg); }
+
+@media (prefers-reduced-motion: reduce) { .admin-nav { transition: none; } }
+
+/* ---- 電腦 ---- */
+@media (min-width: 1024px) {
+  body.admin-shell { padding: 28px 40px 56px calc(240px + 40px); }
+  .admin-topbar, .nav-scrim { display: none !important; }
+  .admin-nav { width: 240px; transform: none; transition: none; }
+
+  /* 寬螢幕上按鈕、輸入框不要撐滿整張卡片：一顆 1000px 寬的按鈕很難一眼看出是按鈕 */
+  .admin-main .card > button,
+  .admin-main .card > .inline-form > button,
+  .admin-main .card > .reset-zone > button { display: inline-block; width: auto; min-width: 180px; padding-inline: 24px; margin-right: 8px; }
+  .admin-main .card > input,
+  .admin-main .card > select,
+  .admin-main .card > textarea { max-width: 640px; }
+  .admin-main .card > textarea { max-width: none; }
+}

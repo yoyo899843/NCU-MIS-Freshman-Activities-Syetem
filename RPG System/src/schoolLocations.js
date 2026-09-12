@@ -25,6 +25,11 @@ function removeLocation(schoolId) {
   locations.delete(schoolId);
 }
 
+// 後台重置遊戲時整個清空：重置後地圖上不該還看得到上一場各隊最後的位置
+function clearLocations() {
+  locations.clear();
+}
+
 function getAllLocations() {
   const now = Date.now();
   const result = [];
@@ -41,4 +46,4 @@ function getAllLocations() {
   return result;
 }
 
-module.exports = { setLocation, removeLocation, getAllLocations };
+module.exports = { setLocation, removeLocation, clearLocations, getAllLocations };

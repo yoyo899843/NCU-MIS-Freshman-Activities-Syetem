@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>長老候選人管理 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="admin.css">
+<script src="layout.js" defer></script>
 <style>
   body { max-width: 640px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
@@ -17,9 +19,8 @@
   .voting-status.not-open { color: var(--dim); }
 </style>
 </head>
-<body>
+<body class="admin-shell">
 <h1>長老候選人管理</h1>
-<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
 
 <div class="card">
   <p>投票狀態：<span id="votingStatus" class="voting-status">讀取中...</span></p>

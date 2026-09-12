@@ -11,7 +11,8 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { createLoginThrottle } = require('../loginThrottle');
 const { validateName } = require('../displayName');
 const { techTreeScore } = require('../scoring');
-const { removeLocation } = require('../schoolLocations');
+const { logAction } = require('../activityLog');
+const { removeLocation, clearLocations } = require('../schoolLocations');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -19,17 +20,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 *
 // --- 簡單的登入失敗鎖定（見 src/loginThrottle.js：記憶體內、會定期清掉過期項目） ---
 const loginThrottle = createLoginThrottle();
 
-// 稽核帳沿用時空戰爭的格式：操作人、動作、目標，以及異動前後的資料都一起留下。
-// admin_actions 不會隨遊戲進度清除，讓活動結束後仍能追查是誰改了什麼。
-async function audit(adminId, actionType, targetType, targetId, beforeValue, afterValue) {
-  await db.query(
-    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [adminId, actionType, targetType, String(targetId),
-     beforeValue == null ? null : JSON.stringify(beforeValue),
-     afterValue == null ? null : JSON.stringify(afterValue)]
-  );
-}
+// 後台操作一律寫進 log 檔（src/activityLog.js）：誰、做了什麼、對誰，不存資料庫。
 
 router.post('/login', asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
@@ -111,11 +102,7 @@ router.post('/admins', requireFullAdmin, asyncHandler(async (req, res) => {
       [email.trim(), passwordHash, (displayName || '').trim() || null]
     );
 
-    await db.query(
-      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-       VALUES ($1, 'create_gatekeeper', 'admin_user', $2, NULL, $3)`,
-      [req.admin.sub, String(rows[0].id), JSON.stringify({ email: rows[0].email, role: 'gatekeeper' })]
-    );
+    logAction(req.admin, '新增關主帳號', rows[0].display_name || rows[0].email);
 
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -132,7 +119,7 @@ router.patch('/admins/:id/password', requireFullAdmin, asyncHandler(async (req, 
   }
 
   const { rows: existingRows } = await db.query(
-    'SELECT id, role FROM admin_users WHERE id = $1', [req.params.id]
+    'SELECT id, email, display_name, role FROM admin_users WHERE id = $1', [req.params.id]
   );
   if (existingRows.length === 0) return res.status(404).json({ error: 'admin user not found' });
   if (existingRows[0].role !== 'gatekeeper') {
@@ -142,19 +129,15 @@ router.patch('/admins/:id/password', requireFullAdmin, asyncHandler(async (req, 
   const passwordHash = await bcrypt.hash(password, 12);
   await db.query('UPDATE admin_users SET password_hash = $1 WHERE id = $2', [passwordHash, req.params.id]);
 
-  await db.query(
-    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-     VALUES ($1, 'reset_gatekeeper_password', 'admin_user', $2, NULL, NULL)`,
-    [req.admin.sub, String(req.params.id)]
-  );
+  logAction(req.admin, '重設關主密碼', existingRows[0].display_name || existingRows[0].email);
 
   res.json({ id: Number(req.params.id), passwordReset: true });
 }));
 
-// 刪除關主帳號。同樣不能刪管理員。他留下的稽核紀錄會保留（操作者存有 email 快照，見 migrations/012）。
+// 刪除關主帳號。同樣不能刪管理員。他之前的操作都已經寫在 log 檔裡，不受影響。
 router.delete('/admins/:id', requireFullAdmin, asyncHandler(async (req, res) => {
   const { rows: existingRows } = await db.query(
-    'SELECT id, email, role FROM admin_users WHERE id = $1', [req.params.id]
+    'SELECT id, email, display_name, role FROM admin_users WHERE id = $1', [req.params.id]
   );
   if (existingRows.length === 0) return res.status(404).json({ error: 'admin user not found' });
   if (existingRows[0].role !== 'gatekeeper') {
@@ -163,11 +146,7 @@ router.delete('/admins/:id', requireFullAdmin, asyncHandler(async (req, res) => 
 
   await db.query('DELETE FROM admin_users WHERE id = $1', [req.params.id]);
 
-  await db.query(
-    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-     VALUES ($1, 'delete_gatekeeper', 'admin_user', $2, $3, NULL)`,
-    [req.admin.sub, String(req.params.id), JSON.stringify({ email: existingRows[0].email })]
-  );
+  logAction(req.admin, '刪除關主帳號', existingRows[0].display_name || existingRows[0].email);
 
   res.status(204).end();
 }));
@@ -182,36 +161,20 @@ router.get('/me', (req, res) => {
   });
 });
 
-// 管理員稽核紀錄：關主無權查看，避免從紀錄得知其他隊伍或關主的操作狀況。
-router.get('/audit-logs', requireFullAdmin, asyncHandler(async (req, res) => {
-  const { rows } = await db.query(`
-    SELECT aa.id, aa.action_type, aa.target_type, aa.target_id,
-           aa.before_value, aa.after_value, aa.created_at,
-           COALESCE(au.email, aa.operator_email) AS operator_email,
-           COALESCE(au.display_name, aa.operator_name) AS operator_name,
-           au.role AS operator_role, (au.id IS NULL) AS operator_deleted
-    FROM admin_actions aa
-    -- LEFT JOIN：操作者的帳號被刪掉之後紀錄還在，改用寫入當下存的快照（見 migrations/012）
-    LEFT JOIN admin_users au ON au.id = aa.admin_user_id
-    ORDER BY aa.created_at DESC, aa.id DESC
-    LIMIT 500
-  `);
-  res.json(rows);
-}));
-
 // --- 關主也能做的現場操作（見 middleware/gatekeeperGuard.js 的白名單） ---
 
 // 幫某支隊伍把某個關卡標記成已解鎖（原本要靠關卡解鎖碼兌換）。
 router.post('/schools/:schoolId/checkpoints/:checkpointId/unlock', asyncHandler(async (req, res) => {
   const { schoolId, checkpointId } = req.params;
 
-  const { rows: exists } = await db.query(
-    `SELECT (SELECT COUNT(*) FROM schools WHERE id = $1)::int AS school_count,
-            (SELECT COUNT(*) FROM checkpoints WHERE id = $2)::int AS checkpoint_count`,
+  // 順便把名稱查出來寫 log；查不到名稱＝不存在
+  const { rows: names } = await db.query(
+    `SELECT (SELECT display_name FROM schools WHERE id = $1) AS school_name,
+            (SELECT name FROM checkpoints WHERE id = $2) AS checkpoint_name`,
     [schoolId, checkpointId]
   );
-  if (exists[0].school_count === 0) return res.status(404).json({ error: 'school not found' });
-  if (exists[0].checkpoint_count === 0) return res.status(404).json({ error: 'checkpoint not found' });
+  if (names[0].school_name === null) return res.status(404).json({ error: 'school not found' });
+  if (names[0].checkpoint_name === null) return res.status(404).json({ error: 'checkpoint not found' });
 
   // 已經解鎖過就保留原本的解鎖時間，不要被覆寫成現在。
   const { rows } = await db.query(
@@ -223,11 +186,7 @@ router.post('/schools/:schoolId/checkpoints/:checkpointId/unlock', asyncHandler(
     [schoolId, checkpointId]
   );
 
-  await db.query(
-    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-     VALUES ($1, 'unlock_checkpoint_for_school', 'school_checkpoint', $2, NULL, $3)`,
-    [req.admin.sub, `${schoolId}:${checkpointId}`, JSON.stringify(rows[0])]
-  );
+  logAction(req.admin, `標記解鎖「${names[0].checkpoint_name}」`, names[0].school_name);
 
   res.json(rows[0]);
 }));
@@ -237,13 +196,14 @@ router.post('/schools/:schoolId/checkpoints/:checkpointId/unlock', asyncHandler(
 router.post('/schools/:schoolId/checkpoints/:checkpointId/complete', asyncHandler(async (req, res) => {
   const { schoolId, checkpointId } = req.params;
 
-  const { rows: exists } = await db.query(
-    `SELECT (SELECT COUNT(*) FROM schools WHERE id = $1)::int AS school_count,
-            (SELECT COUNT(*) FROM checkpoints WHERE id = $2)::int AS checkpoint_count`,
+  // 順便把名稱查出來寫 log；查不到名稱＝不存在
+  const { rows: names } = await db.query(
+    `SELECT (SELECT display_name FROM schools WHERE id = $1) AS school_name,
+            (SELECT name FROM checkpoints WHERE id = $2) AS checkpoint_name`,
     [schoolId, checkpointId]
   );
-  if (exists[0].school_count === 0) return res.status(404).json({ error: 'school not found' });
-  if (exists[0].checkpoint_count === 0) return res.status(404).json({ error: 'checkpoint not found' });
+  if (names[0].school_name === null) return res.status(404).json({ error: 'school not found' });
+  if (names[0].checkpoint_name === null) return res.status(404).json({ error: 'checkpoint not found' });
 
   const { rows } = await db.query(
     `INSERT INTO school_checkpoint_progress
@@ -257,11 +217,7 @@ router.post('/schools/:schoolId/checkpoints/:checkpointId/complete', asyncHandle
     [schoolId, checkpointId]
   );
 
-  await db.query(
-    `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-     VALUES ($1, 'complete_checkpoint_for_school', 'school_checkpoint', $2, NULL, $3)`,
-    [req.admin.sub, `${schoolId}:${checkpointId}`, JSON.stringify(rows[0])]
-  );
+  logAction(req.admin, `標記完成「${names[0].checkpoint_name}」`, names[0].school_name);
 
   res.json(rows[0]);
 }));
@@ -299,7 +255,7 @@ router.get('/schools/:schoolId/progress', asyncHandler(async (req, res) => {
 router.post('/schools/:schoolId/clues/:clueId', asyncHandler(async (req, res) => {
   const { schoolId, clueId } = req.params;
 
-  const { rows: schoolRows } = await db.query('SELECT id FROM schools WHERE id = $1', [schoolId]);
+  const { rows: schoolRows } = await db.query('SELECT id, display_name FROM schools WHERE id = $1', [schoolId]);
   if (schoolRows.length === 0) return res.status(404).json({ error: 'school not found' });
   const { rows: clueRows } = await db.query(
     `SELECT id, checkpoint_id, name FROM clues
@@ -321,13 +277,7 @@ router.post('/schools/:schoolId/clues/:clueId', asyncHandler(async (req, res) =>
   );
   const alreadyOwned = inserted.length === 0;
 
-  if (!alreadyOwned) {
-    await db.query(
-      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-       VALUES ($1, 'grant_clue_to_school', 'school_clue', $2, NULL, $3)`,
-      [req.admin.sub, `${schoolId}:${clueId}`, JSON.stringify({ acquiredVia: 'staff', checkpointId: clue.checkpoint_id, clueName: clue.name })]
-    );
-  }
+  if (!alreadyOwned) logAction(req.admin, `派發線索「${clue.name}」`, schoolRows[0].display_name);
 
   res.json({ schoolId: Number(schoolId), clueId: Number(clueId), alreadyOwned });
 }));
@@ -383,8 +333,7 @@ router.post('/schools', asyncHandler(async (req, res) => {
        RETURNING id, username, password, display_name, created_at`,
       [u.username, p.password, n.name]
     );
-    await audit(req.admin.sub, 'create_school', 'school', rows[0].id, null,
-      { username: rows[0].username, displayName: rows[0].display_name });
+    logAction(req.admin, '新增學派帳號', rows[0].display_name);
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: '這個帳號已經有人用了' });
@@ -431,9 +380,11 @@ router.patch('/schools/:id', asyncHandler(async (req, res) => {
         req.params.id
       ]
     );
-    await audit(req.admin.sub, 'update_school', 'school', req.params.id,
-      { username: existing.username, displayName: existing.display_name },
-      { username: rows[0].username, displayName: rows[0].display_name, passwordChanged: changes.password !== undefined });
+    // 只記改了哪幾個欄位，不記內容（密碼尤其不能進 log）；改名的話把新舊名字都留下
+    const changedFields = [['username', '帳號'], ['password', '密碼'], ['displayName', '名稱']]
+      .filter(([key]) => changes[key] !== undefined).map(([, label]) => label).join('、');
+    logAction(req.admin, `修改學派帳號（${changedFields}）`,
+      existing.display_name === rows[0].display_name ? rows[0].display_name : `${existing.display_name} → ${rows[0].display_name}`);
     res.json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: '這個帳號已經有人用了' });
@@ -441,8 +392,8 @@ router.patch('/schools/:id', asyncHandler(async (req, res) => {
   }
 }));
 
-// 刪帳號時會跟著刪掉的遊戲紀錄（migrations/012 的 ON DELETE CASCADE）。
-// 這裡只用來在刪之前數一下各有幾筆，寫進稽核紀錄，事後查得到刪掉了什麼。
+// 一支隊伍的所有遊戲紀錄。刪學派帳號時由資料庫一起刪（migrations/012 的 ON DELETE CASCADE），
+// 重置遊戲（/game/reset）則是整張表清空、帳號留著。
 const SCHOOL_PROGRESS_TABLES = [
   ['school_checkpoint_progress', '關卡進度'],
   ['school_clues', '線索'],
@@ -455,40 +406,13 @@ const SCHOOL_PROGRESS_TABLES = [
 
 // 刪除學派帳號，連同這一隊所有遊戲紀錄（包含長老投票，投票結果會跟著變）。
 router.delete('/schools/:id', asyncHandler(async (req, res) => {
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows: existingRows } = await client.query(
-      'SELECT id, username, display_name FROM schools WHERE id = $1 FOR UPDATE', [req.params.id]
-    );
-    if (existingRows.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: '找不到這個學派帳號' });
-    }
-    const school = existingRows[0];
-
-    const deletedProgress = {};
-    for (const [table, label] of SCHOOL_PROGRESS_TABLES) {
-      const { rows } = await client.query(`SELECT COUNT(*)::int AS n FROM ${table} WHERE school_id = $1`, [school.id]);
-      if (rows[0].n > 0) deletedProgress[label] = rows[0].n;
-    }
-
-    await client.query('DELETE FROM schools WHERE id = $1', [school.id]);
-    await client.query(
-      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
-       VALUES ($1, 'delete_school', 'school', $2, $3, NULL)`,
-      [req.admin.sub, String(school.id),
-       JSON.stringify({ username: school.username, displayName: school.display_name, deletedProgress })]
-    );
-    await client.query('COMMIT');
-    removeLocation(school.id);
-    res.status(204).end();
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
+  const { rows } = await db.query(
+    'DELETE FROM schools WHERE id = $1 RETURNING id, display_name', [req.params.id]
+  );
+  if (rows.length === 0) return res.status(404).json({ error: '找不到這個學派帳號' });
+  removeLocation(rows[0].id);
+  logAction(req.admin, '刪除學派帳號', rows[0].display_name);
+  res.status(204).end();
 }));
 
 // 關卡管理：清單同時給這頁的管理表格、以及線索/科技樹管理畫面的下拉選單用
@@ -527,7 +451,7 @@ router.post('/checkpoints', asyncHandler(async (req, res) => {
      RETURNING id, name, description, map_lat, map_lng, is_locked_by_default, created_at`,
     [d.name, d.description, d.mapLat, d.mapLng, d.isLockedByDefault]
   );
-  await audit(req.admin.sub, 'create_checkpoint', 'checkpoint', rows[0].id, null, rows[0]);
+  logAction(req.admin, '新增關卡', rows[0].name);
   res.status(201).json(rows[0]);
 }));
 
@@ -555,9 +479,7 @@ router.patch('/checkpoints/:id', asyncHandler(async (req, res) => {
      RETURNING id, name, description, map_lat, map_lng, is_locked_by_default, created_at`,
     [d.name, d.description, d.mapLat, d.mapLng, d.isLockedByDefault, req.params.id]
   );
-  await audit(req.admin.sub, 'update_checkpoint', 'checkpoint', req.params.id,
-    { name: existing.name, description: existing.description, mapLat: existing.map_lat, mapLng: existing.map_lng, isLockedByDefault: existing.is_locked_by_default },
-    rows[0]);
+  logAction(req.admin, '修改關卡', rows[0].name);
   res.json(rows[0]);
 }));
 
@@ -570,7 +492,7 @@ router.delete('/checkpoints/:id', asyncHandler(async (req, res) => {
   if (existingRows.length === 0) return res.status(404).json({ error: 'checkpoint not found' });
   const { rowCount } = await db.query('DELETE FROM checkpoints WHERE id = $1', [req.params.id]);
   if (rowCount === 0) return res.status(404).json({ error: 'checkpoint not found' });
-  await audit(req.admin.sub, 'delete_checkpoint', 'checkpoint', req.params.id, existingRows[0], null);
+  logAction(req.admin, '刪除關卡', existingRows[0].name);
   res.status(204).end();
 }));
 
@@ -641,8 +563,7 @@ router.post('/clues', asyncHandler(async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING ${CLUE_COLUMNS}`,
       [d.checkpointId, d.name, d.description, d.acquisitionLocation, d.staffGrantEnabled, d.imageUrl, d.qrToken]
     );
-    await audit(req.admin.sub, 'create_clue', 'clue', rows[0].id, null,
-      { checkpointId: rows[0].checkpoint_id, name: rows[0].name, description: rows[0].description, acquisitionLocation: rows[0].acquisition_location, staffGrantEnabled: rows[0].staff_grant_enabled, qrToken: rows[0].qr_token });
+    logAction(req.admin, '新增線索', rows[0].name);
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'QR 代碼已經被使用過了' });
@@ -680,9 +601,7 @@ router.patch('/clues/:id', asyncHandler(async (req, res) => {
        WHERE id = $8 RETURNING ${CLUE_COLUMNS}`,
       [d.checkpointId, d.name, d.description, d.acquisitionLocation, d.staffGrantEnabled, d.imageUrl, d.qrToken, req.params.id]
     );
-    await audit(req.admin.sub, 'update_clue', 'clue', req.params.id,
-      { checkpointId: existing.checkpoint_id, name: existing.name, description: existing.description, acquisitionLocation: existing.acquisition_location, staffGrantEnabled: existing.staff_grant_enabled, qrToken: existing.qr_token },
-      { checkpointId: rows[0].checkpoint_id, name: rows[0].name, description: rows[0].description, acquisitionLocation: rows[0].acquisition_location, staffGrantEnabled: rows[0].staff_grant_enabled, qrToken: rows[0].qr_token });
+    logAction(req.admin, '修改線索', rows[0].name);
     res.json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'QR 代碼已經被使用過了' });
@@ -700,7 +619,7 @@ router.delete('/clues/:id', asyncHandler(async (req, res) => {
   if (existingRows.length === 0) return res.status(404).json({ error: 'clue not found' });
   const { rowCount } = await db.query('DELETE FROM clues WHERE id = $1', [req.params.id]);
   if (rowCount === 0) return res.status(404).json({ error: 'clue not found' });
-  await audit(req.admin.sub, 'delete_clue', 'clue', req.params.id, existingRows[0], null);
+  logAction(req.admin, '刪除線索', existingRows[0].name);
   res.status(204).end();
 }));
 
@@ -772,8 +691,7 @@ router.post('/clues/import', upload.single('file'), asyncHandler(async (req, res
   }
   await flushBatch();
 
-  await audit(req.admin.sub, 'import_clues', 'clue_csv', 'import', null,
-    { inserted: result.inserted, failed: result.failed.length });
+  logAction(req.admin, '匯入線索 CSV', `成功 ${result.inserted} 筆`);
   res.json(result);
 }));
 
@@ -828,8 +746,7 @@ router.post('/access-codes', asyncHandler(async (req, res) => {
         type === 'hidden_clue' ? targetClueId : null
       ]
     );
-    await audit(req.admin.sub, 'create_access_code', 'access_code', rows[0].id, null,
-      { code: rows[0].code, type: rows[0].type, targetCheckpointId: rows[0].target_checkpoint_id, targetClueId: rows[0].target_clue_id });
+    logAction(req.admin, '新增權限碼', rows[0].code);
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'code already exists' });
@@ -845,7 +762,7 @@ router.delete('/access-codes/:id', asyncHandler(async (req, res) => {
   if (existingRows.length === 0) return res.status(404).json({ error: 'not found' });
   const { rowCount } = await db.query('DELETE FROM access_codes WHERE id = $1', [req.params.id]);
   if (rowCount === 0) return res.status(404).json({ error: 'not found' });
-  await audit(req.admin.sub, 'delete_access_code', 'access_code', req.params.id, existingRows[0], null);
+  logAction(req.admin, '刪除權限碼', existingRows[0].code);
   res.status(204).end();
 }));
 
@@ -936,8 +853,7 @@ router.post('/access-codes/import', upload.single('file'), asyncHandler(async (r
   }
   await flushBatch();
 
-  await audit(req.admin.sub, 'import_access_codes', 'access_code_csv', 'import', null,
-    { inserted: result.inserted, failed: result.failed.length });
+  logAction(req.admin, '匯入權限碼 CSV', `成功 ${result.inserted} 筆`);
   res.json(result);
 }));
 
@@ -980,7 +896,7 @@ router.post('/tech-tree/branches', asyncHandler(async (req, res) => {
      VALUES ($1,$2,$3) RETURNING id, name, story_content, display_order`,
     [d.name, d.storyContent, d.displayOrder]
   );
-  await audit(req.admin.sub, 'create_tech_branch', 'tech_tree_branch', rows[0].id, null, rows[0]);
+  logAction(req.admin, '新增科技樹分支', rows[0].name);
   res.status(201).json({ ...rows[0], slots: [] });
 }));
 
@@ -1004,7 +920,7 @@ router.patch('/tech-tree/branches/:id', asyncHandler(async (req, res) => {
      WHERE id = $4 RETURNING id, name, story_content, display_order`,
     [d.name, d.storyContent, d.displayOrder, req.params.id]
   );
-  await audit(req.admin.sub, 'update_tech_branch', 'tech_tree_branch', req.params.id, existing, rows[0]);
+  logAction(req.admin, '修改科技樹分支', rows[0].name);
   res.json(rows[0]);
 }));
 
@@ -1016,7 +932,7 @@ router.delete('/tech-tree/branches/:id', asyncHandler(async (req, res) => {
   if (existingRows.length === 0) return res.status(404).json({ error: 'branch not found' });
   const { rowCount } = await db.query('DELETE FROM tech_tree_branches WHERE id = $1', [req.params.id]);
   if (rowCount === 0) return res.status(404).json({ error: 'branch not found' });
-  await audit(req.admin.sub, 'delete_tech_branch', 'tech_tree_branch', req.params.id, existingRows[0], null);
+  logAction(req.admin, '刪除科技樹分支', existingRows[0].name);
   res.status(204).end();
 }));
 
@@ -1028,6 +944,16 @@ function validateSlotBody(body, branchIds, clueIds) {
   if (!Number.isInteger(correctClueId) || !clueIds.has(correctClueId)) return { error: '指定的正確答案線索不存在' };
 
   return { data: { branchId, correctClueId } };
+}
+
+// log 用的槽位名稱：「分支名：答案線索名」
+async function slotLabel(branchId, clueId) {
+  const { rows } = await db.query(
+    `SELECT (SELECT name FROM tech_tree_branches WHERE id = $1) AS branch,
+            (SELECT name FROM clues WHERE id = $2) AS clue`,
+    [branchId, clueId]
+  );
+  return `${rows[0].branch ?? '?'}：${rows[0].clue ?? '?'}`;
 }
 
 // 槽位不分順序（線索放在所屬分支任一格都算對），主辦不用填順序。slot_order 只拿來
@@ -1049,7 +975,7 @@ router.post('/tech-tree/slots', asyncHandler(async (req, res) => {
      RETURNING id, branch_id, slot_order, correct_clue_id`,
     [d.branchId, d.correctClueId]
   );
-  await audit(req.admin.sub, 'create_tech_slot', 'tech_tree_slot', rows[0].id, null, rows[0]);
+  logAction(req.admin, '新增科技樹槽位', await slotLabel(rows[0].branch_id, rows[0].correct_clue_id));
   res.status(201).json(rows[0]);
 }));
 
@@ -1081,7 +1007,7 @@ router.patch('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
      WHERE id = $3 RETURNING id, branch_id, slot_order, correct_clue_id`,
     [d.branchId, d.correctClueId, req.params.id, movedBranch]
   );
-  await audit(req.admin.sub, 'update_tech_slot', 'tech_tree_slot', req.params.id, existing, rows[0]);
+  logAction(req.admin, '修改科技樹槽位', await slotLabel(rows[0].branch_id, rows[0].correct_clue_id));
   res.json(rows[0]);
 }));
 
@@ -1093,7 +1019,7 @@ router.delete('/tech-tree/slots/:id', asyncHandler(async (req, res) => {
   if (existingRows.length === 0) return res.status(404).json({ error: 'slot not found' });
   const { rowCount } = await db.query('DELETE FROM tech_tree_slots WHERE id = $1', [req.params.id]);
   if (rowCount === 0) return res.status(404).json({ error: 'slot not found' });
-  await audit(req.admin.sub, 'delete_tech_slot', 'tech_tree_slot', req.params.id, existingRows[0], null);
+  logAction(req.admin, '刪除科技樹槽位', await slotLabel(existingRows[0].branch_id, existingRows[0].correct_clue_id));
   res.status(204).end();
 }));
 
@@ -1117,7 +1043,7 @@ router.post('/elders', asyncHandler(async (req, res) => {
     'INSERT INTO elders (name, description) VALUES ($1, $2) RETURNING id, name, description',
     [name.trim(), (description || '').trim() || null]
   );
-  await audit(req.admin.sub, 'create_elder', 'elder', rows[0].id, null, rows[0]);
+  logAction(req.admin, '新增長老候選人', rows[0].name);
   res.status(201).json(rows[0]);
 }));
 
@@ -1134,7 +1060,7 @@ router.patch('/elders/:id', asyncHandler(async (req, res) => {
     'UPDATE elders SET name = $1, description = $2 WHERE id = $3 RETURNING id, name, description',
     [name, description, req.params.id]
   );
-  await audit(req.admin.sub, 'update_elder', 'elder', req.params.id, existing, rows[0]);
+  logAction(req.admin, '修改長老候選人', rows[0].name);
   res.json(rows[0]);
 }));
 
@@ -1146,7 +1072,7 @@ router.delete('/elders/:id', asyncHandler(async (req, res) => {
   if (existingRows.length === 0) return res.status(404).json({ error: 'elder not found' });
   const { rowCount } = await db.query('DELETE FROM elders WHERE id = $1', [req.params.id]);
   if (rowCount === 0) return res.status(404).json({ error: 'elder not found' });
-  await audit(req.admin.sub, 'delete_elder', 'elder', req.params.id, existingRows[0], null);
+  logAction(req.admin, '刪除長老候選人', existingRows[0].name);
   res.status(204).end();
 }));
 
@@ -1176,10 +1102,12 @@ router.post('/game/start', asyncHandler(async (req, res) => {
     `UPDATE game_state SET status = 'in_progress', started_at = now(), ended_at = NULL
      WHERE id = 1 RETURNING status, started_at, ended_at, voting_unlocked_at, voting_closed_at`
   );
-  await audit(req.admin.sub, 'start_game', 'game_state', 1, current[0], rows[0]);
+  logAction(req.admin, '開始遊戲');
   res.json(rows[0]);
 }));
 
+// 結束遊戲只凍結狀態，不清任何資料——結束之後主辦還要看戰況板的最終分數和投票結果。
+// 要清空進度重新開始一場，用下面的 /game/reset。
 router.post('/game/end', asyncHandler(async (req, res) => {
   const { rows: current } = await db.query('SELECT status FROM game_state WHERE id = 1');
   if (current[0].status !== 'in_progress') {
@@ -1189,7 +1117,7 @@ router.post('/game/end', asyncHandler(async (req, res) => {
     `UPDATE game_state SET status = 'ended', ended_at = now()
      WHERE id = 1 RETURNING status, started_at, ended_at, voting_unlocked_at, voting_closed_at`
   );
-  await audit(req.admin.sub, 'end_game', 'game_state', 1, current[0], rows[0]);
+  logAction(req.admin, '結束遊戲');
   res.json(rows[0]);
 }));
 
@@ -1207,7 +1135,7 @@ router.post('/game/open-voting', asyncHandler(async (req, res) => {
      SET voting_unlocked_at = COALESCE(voting_unlocked_at, now()), voting_closed_at = NULL
      WHERE id = 1 RETURNING voting_unlocked_at, voting_closed_at`
   );
-  await audit(req.admin.sub, 'open_voting', 'game_state', 1, before[0], rows[0]);
+  logAction(req.admin, '開放投票');
   res.json({ votingUnlockedAt: rows[0].voting_unlocked_at, votingClosedAt: rows[0].voting_closed_at });
 }));
 
@@ -1221,8 +1149,52 @@ router.post('/game/close-voting', asyncHandler(async (req, res) => {
     `UPDATE game_state SET voting_closed_at = COALESCE(voting_closed_at, now())
      WHERE id = 1 RETURNING voting_unlocked_at, voting_closed_at`
   );
-  await audit(req.admin.sub, 'close_voting', 'game_state', 1, before[0], rows[0]);
+  logAction(req.admin, '關閉投票');
   res.json({ votingUnlockedAt: rows[0].voting_unlocked_at, votingClosedAt: rows[0].voting_closed_at });
+}));
+
+// 重置遊戲：清掉所有隊伍的遊戲進度，帳號與遊戲設定都保留，遊戲狀態回到「未開始」。
+//
+// 清掉的：SCHOOL_PROGRESS_TABLES 那七張表（關卡進度、線索、權限碼兌換、科技樹放置與
+//   驗證、分支解鎖、長老投票），加上地圖即時位置、投票開關與遊戲開始／結束時間。
+// 保留的：學派帳號（含密碼）、關卡、線索、權限碼、科技樹、長老、工作人員帳號、操作紀錄檔。
+//
+// 分數是從進度即時算的（src/scoring.js），進度清掉後戰況板自然歸零，不用另外處理。
+// body 要帶 { confirm: '重置遊戲' }：這個操作收不回來，後台頁面會要主辦手打這四個字，
+// 伺服器端也檢查一次，避免被誤觸或其他頁面誤呼叫。
+router.post('/game/reset', requireFullAdmin, asyncHandler(async (req, res) => {
+  if ((req.body || {}).confirm !== '重置遊戲') {
+    return res.status(400).json({ error: '請輸入「重置遊戲」確認' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    // 鎖住遊戲狀態那一列，兩個主辦同時按也只會一個一個來
+    await client.query('SELECT 1 FROM game_state WHERE id = 1 FOR UPDATE');
+
+    const cleared = {};
+    for (const [table, label] of SCHOOL_PROGRESS_TABLES) {
+      const { rowCount } = await client.query(`DELETE FROM ${table}`);
+      if (rowCount > 0) cleared[label] = rowCount;
+    }
+
+    const { rows } = await client.query(
+      `UPDATE game_state
+       SET status = 'not_started', started_at = NULL, ended_at = NULL,
+           voting_unlocked_at = NULL, voting_closed_at = NULL
+       WHERE id = 1 RETURNING status, started_at, ended_at, voting_unlocked_at, voting_closed_at`
+    );
+    await client.query('COMMIT');
+    clearLocations();
+    logAction(req.admin, '重置遊戲', '所有隊伍');
+    res.json({ state: rows[0], cleared });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }));
 
 router.get('/game/state', asyncHandler(async (req, res) => {

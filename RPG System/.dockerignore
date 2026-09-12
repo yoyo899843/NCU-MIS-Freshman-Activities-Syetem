@@ -1,0 +1,6 @@
+# node_modules 由 Dockerfile 的 deps 階段安裝，不要把開發機上的複製進去
+node_modules/
+# 主機上的操作紀錄是用 volume 掛進容器的，不打包進 image
+logs/
+# 密碼只給 compose 做變數代換，不需要、也不該進 image
+.env

@@ -5,15 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>權限碼管理 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="admin.css">
+<script src="layout.js" defer></script>
 <style>
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { border: 1px solid var(--line); padding: 6px; text-align: left; }
   select { display: block; width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; font-size: 1rem; }
 </style>
 </head>
-<body>
+<body class="admin-shell">
 <h1>權限碼管理</h1>
-<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
 
 <div class="card">
   <p>新增權限碼：<code>checkpoint_unlock</code> 需要填「目標關卡 ID」，<code>hidden_clue</code> 需要填「目標線索 ID」（關卡/線索本身的管理介面尚未開發，ID 先對照資料庫或測試種子資料填寫）。</p>

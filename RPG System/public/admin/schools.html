@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>學派（玩家帳號）管理 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="admin.css">
+<script src="layout.js" defer></script>
 <style>
   body { max-width: 900px; }
   .table-wrap { overflow-x: auto; }
@@ -20,9 +22,8 @@
   .field-grid { display: grid; gap: 0 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 </style>
 </head>
-<body>
-<h1>學派（玩家帳號）管理</h1>
-<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
+<body class="admin-shell">
+<h1>學派（玩家帳號）</h1>
 
 <div class="card">
   <h3>新增學派帳號</h3>
@@ -134,7 +135,7 @@ async function saveEdit(id) {
   if (!NAME_PATTERN.test(displayName)) return showMsg('listMsg', NAME_RULE, false);
   if (password && password.length < 8) return showMsg('listMsg', '新密碼至少要 8 個字元', false);
 
-  // 只送真的有改的欄位，稽核紀錄才看得出這次改了什麼
+  // 只送真的有改的欄位，操作紀錄才看得出這次改了哪些欄位
   const body = {};
   if (username !== row.username) body.username = username;
   if (displayName !== row.display_name) body.displayName = displayName;

@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>管理後台 - 資管皇家學院數位探查儀</title>
+<title>遊戲控制 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="admin.css">
+<script src="layout.js" defer></script>
 <style>
   .status-badge {
     display: inline-block;
@@ -19,26 +21,18 @@
   .voting-badge { background: #626b75; }
   .voting-badge.open { background: #2a7d2a; }
   .voting-badge.closed { background: #a85400; }
+  .reset-zone { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line); }
+  button.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+  button.danger:hover { background: var(--danger); color: #1a0508; }
+  .msg { font-size: 14px; margin: 8px 0 0; }
+  .msg:empty { display: none; }
+  .msg.ok { color: var(--accent); }
+  .msg.error { color: var(--danger); }
 </style>
 </head>
-<body>
-<h1>管理後台</h1>
-<div class="card">
-  <p>目前身分：<strong id="roleLabel">載入中...</strong></p>
-  <p class="nav">
-    <a href="schools.html" class="admin-only" style="display:none">學派（玩家帳號）管理</a>
-    <a href="checkpoints.html" class="admin-only" style="display:none">關卡管理</a>
-    <a href="clues.html" class="admin-only" style="display:none">線索管理</a>
-    <a href="access-codes.html" class="admin-only" style="display:none">權限碼管理</a>
-    <a href="tech-tree.html" class="admin-only" style="display:none">科技樹管理</a>
-    <a href="elders.html" class="admin-only" style="display:none">長老候選人管理</a>
-    <a href="admins.html" class="admin-only" style="display:none">帳號管理</a>
-    <a href="audit-logs.html" class="admin-only" style="display:none">操作稽核紀錄</a>
-    <a href="scoreboard.html">戰況板</a>
-    <a href="gatekeeper.html">關主現場操作</a>
-  </p>
-  <p id="gatekeeperNote" style="display:none;font-size:0.85rem;color:var(--amber)">你目前是「關主」，可以用「關主現場操作」幫隊伍標記關卡、發線索，以及查看戰況板；設定類的功能（學派、關卡、線索、權限碼、科技樹、長老、遊戲進程）只有管理員能改。</p>
-</div>
+<body class="admin-shell">
+<h1>遊戲控制</h1>
+<p id="gatekeeperNote" class="card" style="display:none;color:var(--amber)">你目前是「關主」，請從選單進入「關主現場操作」幫隊伍標記關卡、派發線索，或查看戰況板。設定類的功能（遊戲內容、帳號、遊戲進程）只有管理員能改。</p>
 
 <div class="card admin-only" style="display:none">
   <h3>遊戲進程控制</h3>
@@ -47,6 +41,15 @@
   <button id="startBtn">開始遊戲</button>
   <button id="endBtn">強制結束遊戲</button>
   <p id="controlResult" class="error"></p>
+
+  <div class="reset-zone">
+    <h3>重置遊戲</h3>
+    <p class="hint">清掉所有隊伍的遊戲進度：關卡進度、線索、權限碼兌換、科技樹紀錄、長老投票、地圖位置，遊戲狀態回到「未開始」、投票回到「尚未開放」。
+      <strong>學派帳號與密碼、關卡、線索、權限碼、科技樹、長老、工作人員帳號都會保留。</strong>
+      結束遊戲不會清任何資料；要看的最終分數和投票結果，請在重置前先記下來。</p>
+    <button id="resetBtn" type="button" class="danger">重置遊戲（清除所有進度）</button>
+    <p id="resetResult" class="msg" role="status"></p>
+  </div>
 </div>
 
 <div class="card admin-only" style="display:none">
@@ -57,10 +60,6 @@
   <button id="closeVotingBtn">關閉投票</button>
   <p id="votingResult" class="error"></p>
   <div id="votingResults" style="margin-top:8px"></div>
-</div>
-
-<div class="card">
-  <button id="logoutBtn">登出</button>
 </div>
 
 <script src="../authFetch.js"></script>
@@ -159,6 +158,44 @@ document.getElementById('endBtn').addEventListener('click', async () => {
   renderState(data);
 });
 
+document.getElementById('resetBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('resetResult');
+  // 收不回來的操作：要主辦手打確認字，不是按一下「確定」就好（伺服器也會再檢查一次）
+  const typed = prompt(
+    '重置後所有隊伍的遊戲進度都會清掉，無法復原（帳號與遊戲設定會保留）。\n\n' +
+    '確定要重置，請輸入「重置遊戲」：'
+  );
+  if (typed === null) return;
+  if (typed.trim() !== '重置遊戲') {
+    resultEl.textContent = '輸入的字不符，沒有重置';
+    resultEl.className = 'msg error';
+    return;
+  }
+
+  const btn = document.getElementById('resetBtn');
+  btn.disabled = true;
+  try {
+    const res = await api('/game/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: '重置遊戲' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      resultEl.textContent = data.error || `失敗 (${res.status})`;
+      resultEl.className = 'msg error';
+      return;
+    }
+    const summary = Object.entries(data.cleared).map(([label, n]) => `${label} ${n} 筆`).join('、');
+    resultEl.textContent = '已重置遊戲。' + (summary ? `清除了：${summary}。` : '本來就沒有任何進度。');
+    resultEl.className = 'msg ok';
+    renderState(data.state);
+    await loadVotingResults();
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 document.getElementById('openVotingBtn').addEventListener('click', async () => {
   const resultEl = document.getElementById('votingResult');
   const res = await api('/game/open-voting', { method: 'POST' });
@@ -186,11 +223,6 @@ document.getElementById('closeVotingBtn').addEventListener('click', async () => 
   await loadVotingResults();
 });
 
-document.getElementById('logoutBtn').addEventListener('click', () => {
-  localStorage.removeItem('adminToken');
-  location.href = 'login.html';
-});
-
 // 依目前登入者的權限層級決定要顯示哪些東西。純前端隱藏只是介面上的體貼，
 // 真正的權限是後端 middleware/gatekeeperGuard.js 在擋，關主就算自己打 API
 // 也一樣會被 403 擋下來。
@@ -198,7 +230,6 @@ async function loadMe() {
   const res = await api('/me');
   const me = await res.json();
   const isAdmin = me.adminRole === 'admin';
-  document.getElementById('roleLabel').textContent = isAdmin ? '管理員' : '關主';
   document.getElementById('gatekeeperNote').style.display = isAdmin ? 'none' : '';
   document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
   return isAdmin;

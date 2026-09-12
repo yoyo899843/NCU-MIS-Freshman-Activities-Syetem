@@ -19,6 +19,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:?請先在這個資料夾 cp .env.example .env 並填好內容}
     ports:
       - "9003:3000"
+    # 後台操作紀錄（src/activityLog.js）寫在容器的 /app/logs/actions.log，
+    # 掛到主機這個資料夾的 logs/，重建容器也不會不見，直接在伺服器上看：
+    #   tail -f logs/actions.log
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       db:
         condition: service_healthy

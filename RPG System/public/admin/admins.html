@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>帳號管理 - 資管皇家學院數位探查儀</title>
+<title>工作人員帳號 - 資管皇家學院數位探查儀</title>
 <link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="admin.css">
+<script src="layout.js" defer></script>
 <style>
   body { max-width: 760px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
@@ -18,10 +20,9 @@
   .fixed-note { font-size: 0.8rem; color: var(--dim); }
 </style>
 </head>
-<body>
-<h1>帳號管理</h1>
-<p class="nav"><a href="index.html">&laquo; 回管理後台</a></p>
-<p class="hint">這一頁管的是工作人員（管理員、關主）的帳號。玩家的學派帳號請到 <a href="schools.html">學派（玩家帳號）管理</a>。</p>
+<body class="admin-shell">
+<h1>工作人員帳號</h1>
+<p class="hint">這一頁管的是工作人員（管理員、關主）的帳號。玩家的學派帳號在 <a href="schools.html">學派（玩家帳號）</a>。</p>
 
 <div class="card">
   <p><strong>管理員</strong>：什麼都能做。<strong>這一級是固定的</strong>——只能在伺服器上用
@@ -155,7 +156,7 @@ window.resetPassword = async function (id) {
 };
 
 window.removeAccount = async function (id) {
-  if (!confirm('確定要刪除這個關主帳號嗎？\n\n他會立刻被登出。他做過的操作仍會留在稽核紀錄裡。')) return;
+  if (!confirm('確定要刪除這個關主帳號嗎？\n\n他會立刻被登出。他做過的操作仍會留在伺服器的操作紀錄檔裡。')) return;
 
   const resultEl = document.getElementById('result');
   resultEl.textContent = '';
