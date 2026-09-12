@@ -1,6 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const { parse } = require('csv-parse');
 const db = require('../db');
 const adminAuth = require('../middleware/adminAuth');
 const { bankerGuard, requireAdmin } = require('../middleware/bankerGuard');
@@ -10,6 +12,9 @@ const { leaderboard, effectivePrices, portfolio } = require('../portfolio');
 
 const router = express.Router();
 const loginThrottle = createLoginThrottle();
+// 記憶體儲存：新聞 CSV 最多幾十列，不需要落地成暫存檔。2MB 上限純粹是防手滑
+// 上傳錯檔（例如整份簡報）把記憶體吃掉。
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
 const PHASES = ['news', 'gambling', 'deposit', 'trading', 'closed'];
 
@@ -190,6 +195,287 @@ router.delete('/news/:id', requireAdmin, asyncHandler(async (req, res) => {
   if (rowCount === 0) return res.status(404).json({ error: '找不到這則新聞' });
   await audit(req.admin.sub, 'delete_news', 'news', req.params.id, null, null);
   res.status(204).end();
+}));
+
+/* ---------------- 新聞匯入／匯出 ---------------- */
+
+// 新聞是活動前就寫好的稿：三波 × 四間公司的利多利空，大多在 Excel 裡排版、校稿、
+// 給企劃確認。之前只能一則一則在後台貼上去，改一個錯字要重新找到那一列。
+// 匯出／匯入把那份 Excel 直接當成資料來源，順便也是一份可以帶走的備份。
+//
+// 欄位順序與名稱兩邊共用同一份定義，匯出的檔案必然能再匯回來。
+const NEWS_CSV_COLUMNS = ['波次', '標題', '內文', '發布時間'];
+const NEWS_CSV_REQUIRED_COLUMNS = ['標題'];
+
+// 時間一律以台北時間呈現與解讀。
+//
+// 容器沒有設 TZ，所以伺服器的本地時間是 UTC，但後台表格是用瀏覽器的
+// toLocaleString() 畫的（現場的機器都在台灣）。如果匯出直接吐 UTC，同一則新聞
+// 在畫面上和在 Excel 裡會差八小時，校稿的人會以為資料錯了。
+const NEWS_CSV_TZ = 'Asia/Taipei';
+
+// 匯出用的極簡 CSV 組字器。只有這裡要用，不值得為它再拉一個 csv-stringify 進來。
+// 三件事必須做對：含逗號／雙引號／換行的欄位整欄用雙引號包起來、內容裡的雙引號
+// 寫成兩個、行尾用 CRLF（Excel 對只有 LF 的檔案相容性較差）。
+function toCsvRow(values) {
+  return values.map(v => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }).join(',');
+}
+
+// 匯出。順序用「波次由小到大」而不是後台列表的由大到小：在 Excel 裡讀的人是
+// 照活動流程從第 1 波看下來的。
+router.get('/news/export', requireAdmin, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT wave, title, body,
+            to_char(published_at AT TIME ZONE $1::text, 'YYYY-MM-DD HH24:MI:SS') AS published_local
+     FROM news ORDER BY wave, id`,
+    [NEWS_CSV_TZ]
+  );
+  // 檔名的時間戳也交給資料庫算，理由同上（伺服器本地時間是 UTC），而且
+  // node:alpine 的 ICU 資料不保證完整，不能倚賴 Node 這邊的時區轉換。
+  const { rows: stampRows } = await db.query(
+    `SELECT to_char(now() AT TIME ZONE $1::text, 'YYYYMMDD-HH24MI') AS stamp`, [NEWS_CSV_TZ]
+  );
+
+  const lines = [toCsvRow(NEWS_CSV_COLUMNS)];
+  for (const r of rows) lines.push(toCsvRow([r.wave, r.title, r.body, r.published_local]));
+
+  const filename = `news-${stampRows[0].stamp}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent('新聞-' + stampRows[0].stamp + '.csv')}`);
+  // 開頭的 BOM 不能省。少了它，繁中版 Excel 會把 UTF-8 當成 Big5 讀，
+  // 打開來整份都是亂碼——而使用者第一個念頭會是「系統匯出壞了」。
+  res.send('\uFEFF' + lines.join('\r\n') + (lines.length > 1 ? '\r\n' : ''));
+}));
+
+// 「發布時間」欄接受 2026-09-13 09:30:00，也接受 Excel 常見的 2026/9/13 9:30。
+// 時間可省略（當天 00:00:00），整欄留空就用匯入當下的時間。
+const NEWS_DATETIME_RE = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
+
+// 回傳 'YYYY-MM-DD HH:MI:SS' 字串（台北時間，由 SQL 端轉成 timestamptz）。
+//
+// 這裡自己驗一次日期真偽（2026-02-30、25 點這種），不是多餘的防禦：交給 Postgres
+// 擋的話會在 INSERT 時丟例外，而寫入是每 20 筆一個交易，一格打錯會讓那一整批
+// 20 則新聞全部進不去。錯在哪一列要在驗證階段就講清楚。
+function parseNewsDateTime(raw) {
+  const m = NEWS_DATETIME_RE.exec(raw);
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const [h, mi, s] = [Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0)];
+  const probe = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d
+      || probe.getUTCHours() !== h || probe.getUTCMinutes() !== mi || probe.getUTCSeconds() !== s) {
+    return null;
+  }
+  const p2 = n => String(n).padStart(2, '0');
+  return `${y}-${p2(mo)}-${p2(d)} ${p2(h)}:${p2(mi)}:${p2(s)}`;
+}
+
+function validateNewsCsvRow(record, rowNumber, currentWave, totalWaves) {
+  const title = (record['標題'] || '').trim();
+  if (!title) return { error: `第 ${rowNumber} 列：標題為空` };
+
+  const waveRaw = (record['波次'] || '').trim();
+  const wave = waveRaw ? Number(waveRaw) : currentWave;
+  if (!Number.isInteger(wave) || wave < 1 || wave > totalWaves) {
+    return { error: `第 ${rowNumber} 列：波次「${waveRaw}」不正確，必須是 1 到 ${totalWaves} 的整數（留空代表目前第 ${currentWave} 波）` };
+  }
+
+  const publishedAtRaw = (record['發布時間'] || '').trim();
+  let publishedAt = null;
+  if (publishedAtRaw) {
+    publishedAt = parseNewsDateTime(publishedAtRaw);
+    if (!publishedAt) {
+      return { error: `第 ${rowNumber} 列：發布時間「${publishedAtRaw}」看不懂，格式請用 2026-09-13 09:30:00（時間可省略），或整欄留空` };
+    }
+  }
+
+  return { data: { wave, title, body: (record['內文'] || '').trim(), publishedAt } };
+}
+
+// multer 自己的錯誤（最常見的是超過 2MB）預設會一路往上拋，最後被 app.js 的錯誤
+// 處理器吞成 500，使用者只看到 internal server error，猜不到問題在自己的檔案。
+function uploadNewsCsv(req, res, next) {
+  upload.single('file')(req, res, err => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({
+        error: err.code === 'LIMIT_FILE_SIZE'
+          ? '檔案太大（上限 2MB）。新聞 CSV 不會有這個大小，請確認是不是選錯檔案。'
+          : `檔案上傳失敗：${err.message}`,
+        hint: '請上傳單一個 .csv 檔（表單欄位名稱為 file）。'
+      });
+    }
+    next(err);
+  });
+}
+
+// 匯入是「附加」，不會清掉或覆蓋既有新聞——同一份檔案上傳兩次就會有兩份。
+// 這是刻意的：覆蓋式匯入一旦誤按就把校稿好的稿子全刪了，而重複的那幾則在列表上
+// 一眼看得到、單筆刪掉就好。
+router.post('/news/import', requireAdmin, uploadNewsCsv, asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: '請選擇要上傳的 CSV 檔案（表單欄位名稱：file）' });
+
+  // 先只讀第一行確認欄位對不對。不先擋的話，格式完全不同的檔案會一路跑到逐列
+  // 驗證，然後每一列都回報「標題為空」——訊息是對的但毫無幫助，使用者只會覺得
+  // 「我標題明明有填」。真正的問題是整份檔案的欄位不對，要在這裡就講清楚。
+  let header;
+  try {
+    const headerParser = parse(req.file.buffer, { to_line: 1, trim: true, bom: true, relax_column_count: true });
+    header = [];
+    for await (const row of headerParser) header = row;
+  } catch (err) {
+    return res.status(400).json({
+      error: '檔案格式有誤：這份檔案無法當成 CSV 讀取。',
+      hint: '請確認上傳的是 UTF-8 編碼的 .csv 檔（Excel 請用「另存新檔 → CSV UTF-8」），不是 .xlsx 或其他格式。'
+    });
+  }
+
+  if (header.length === 0) {
+    return res.status(400).json({
+      error: '檔案格式有誤：檔案是空的，讀不到標題列。',
+      hint: '第一行必須是欄位名稱，可以直接下載頁面上的範例 CSV 對照。'
+    });
+  }
+
+  // Excel 繁中版另存 CSV 很容易存成 Big5，那份檔案用 UTF-8 讀進來每個中文字都會
+  // 變成 U+FFFD。這種情況若只回「缺少必要欄位」，訊息裡還會附上一串亂碼，
+  // 使用者完全猜不到真正該做的是換一種編碼另存。
+  if (header.some(h => typeof h === 'string' && h.includes('\uFFFD'))) {
+    return res.status(400).json({
+      error: '檔案格式有誤：檔案的文字編碼不是 UTF-8（中文變成亂碼）。',
+      hint: 'Excel 請用「另存新檔 → CSV UTF-8（逗號分隔）」，不要用一般的「CSV（逗號分隔）」，' +
+            '後者在繁體中文版存出來是 Big5，中文會全部讀不出來。'
+    });
+  }
+
+  // csv-parse 5.x 的 columns 路徑有一個原型汙染的已知問題（GHSA-8cw4-87c7-c6xx），
+  // 觸發條件是欄名叫 __proto__ 這類名字。修掉它要升到 7.x（跨大版本，另外兩個
+  // 系統也都還在 5.x），所以在這裡先把那幾個欄名擋掉——正常的新聞檔不會有這種欄位。
+  const UNSAFE_COLUMNS = ['__proto__', 'constructor', 'prototype'];
+  if (header.some(h => UNSAFE_COLUMNS.includes(h))) {
+    return res.status(400).json({ error: '檔案格式有誤：標題列含有不允許的欄位名稱。' });
+  }
+
+  const missing = NEWS_CSV_REQUIRED_COLUMNS.filter(c => !header.includes(c));
+  if (missing.length > 0) {
+    return res.status(400).json({
+      error: `檔案格式有誤：缺少必要欄位「${missing.join('」「')}」。`,
+      hint: `這份檔案的第一行讀到的欄位是：${header.map(h => h || '(空白)').join('、')}。` +
+            `必要欄位為「${NEWS_CSV_REQUIRED_COLUMNS.join('」「')}」，另可選填「波次」「內文」「發布時間」。` +
+            '可以直接下載頁面上的範例 CSV 對照。'
+    });
+  }
+
+  const { rows: st } = await db.query('SELECT wave, total_waves FROM game_state WHERE id = 1');
+  const currentWave = st[0].wave;
+  const totalWaves = st[0].total_waves;
+
+  const result = { inserted: 0, failed: [] };
+
+  // relax_column_count：某一列欄位數跟標題不一樣時不要整份中止。沒有這個選項，
+  // csv-parse 會丟 CSV_RECORD_INCONSISTENT_COLUMNS 穿出這支 handler，前端只看到
+  // 500。而這是最常見的匯入失敗原因：標題或內文裡打了逗號卻沒有用雙引號括起來。
+  // info: true 讓每列附帶 info.error 與 info.lines，改成跟其他驗證錯誤一樣逐列列出。
+  const parser = parse(req.file.buffer, {
+    columns: true, skip_empty_lines: true, trim: true, bom: true,
+    relax_column_count: true, info: true
+  });
+
+  let batch = [];
+
+  const flushBatch = async () => {
+    if (batch.length === 0) return;
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      for (const row of batch) {
+        await client.query(
+          `INSERT INTO news (wave, title, body, published_at)
+           VALUES ($1, $2, $3, COALESCE($4::timestamp AT TIME ZONE $5::text, now()))`,
+          [row.wave, row.title, row.body, row.publishedAt, NEWS_CSV_TZ]
+        );
+      }
+      await client.query('COMMIT');
+      result.inserted += batch.length;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      result.failed.push({ row: null, reason: '資料庫寫入失敗（這一批全數略過）：' + err.message });
+    } finally {
+      client.release();
+      batch = [];
+    }
+  };
+
+  // 基準是「這份檔案自己的標題列有幾欄」，不是寫死的 4。寫死的話，只填了
+  // 「標題」一欄的檔案一旦有列出錯，會回報「應該 4 欄」——那個數字跟使用者
+  // 手上的檔案對不起來，只會更混亂。
+  const EXPECTED_COLUMNS = header.length;
+
+  try {
+    for await (const { record, info } of parser) {
+      // 列號用 info.lines，不要自己累加：欄位裡若有被雙引號包住的換行（新聞內文
+      // 很常換行），自己數的號碼會跟使用者在 Excel 裡看到的列號對不上。
+      const rowNumber = info.lines;
+
+      if (info.error && info.error.code === 'CSV_RECORD_INCONSISTENT_COLUMNS') {
+        // 欄位數要數 info.error.record 這個原始陣列。columns:true 會把多出來的值
+        // 直接丟掉，數 Object.keys(record) 會得到「應該 4 欄，這一列是 4 欄」。
+        const got = Array.isArray(info.error.record) ? info.error.record.length : Object.keys(record).length;
+        result.failed.push({
+          row: rowNumber,
+          reason: `第 ${rowNumber} 列：欄位數不對（應該 ${EXPECTED_COLUMNS} 欄，這一列是 ${got} 欄）。` +
+            (got > EXPECTED_COLUMNS
+              ? '最常見的原因是標題或內文裡有逗號卻沒有用雙引號「"」括起來。'
+              : '這一列的欄位少了，請對照範例檔補齊。')
+        });
+        continue;
+      }
+
+      const validated = validateNewsCsvRow(record, rowNumber, currentWave, totalWaves);
+      if (validated.error) {
+        result.failed.push({ row: rowNumber, reason: validated.error });
+        continue;
+      }
+      batch.push(validated.data);
+
+      if (batch.length >= 20) {
+        await flushBatch();
+        await new Promise(resolve => setImmediate(resolve)); // 讓出 event loop：玩家端還在輪詢新聞
+      }
+    }
+  } catch (err) {
+    // 走到這裡代表整份檔案在這個位置就解析不下去了（例如雙引號沒有成對關好，
+    // 剖析器判斷不出這個欄位到哪裡結束），不是某一列的資料問題。這種情況一定要
+    // 回 4xx：錯在使用者上傳的檔案，訊息要講得出第幾行、什麼問題。
+    if (err && typeof err.code === 'string' && err.code.startsWith('CSV_')) {
+      await flushBatch(); // 出錯之前已經驗過的照樣寫進去，不要一起丟掉
+      if (result.inserted > 0) {
+        await audit(req.admin.sub, 'import_news', 'news', null, null,
+          { inserted: result.inserted, failed: result.failed.length, aborted: true });
+      }
+      return res.status(400).json({
+        error: `CSV 檔案解析失敗（第 ${err.lines || '?'} 行附近）：${err.message}`,
+        hint: err.code === 'CSV_QUOTE_NOT_CLOSED'
+          ? '有一個雙引號沒有成對關好。欄位內容若含逗號、換行或雙引號，整個欄位要用雙引號括起來，內容裡的雙引號則要寫成兩個（""）。'
+          : '請確認檔案是 UTF-8 編碼的標準 CSV，欄位順序與範例檔一致。',
+        inserted: result.inserted,
+        failed: result.failed
+      });
+    }
+    throw err; // 不是 CSV 的問題（例如資料庫掛了）就照原本的方式往上拋
+  }
+
+  await flushBatch();
+
+  // 一次匯入只留一筆稽核紀錄。逐則記的話，匯入 60 則新聞會把稽核頁（只顯示最近
+  // 500 筆）洗掉一大半，反而看不到真正需要追的人為操作。
+  await audit(req.admin.sub, 'import_news', 'news', null, null,
+    { inserted: result.inserted, failed: result.failed.length });
+  res.json(result);
 }));
 
 /* ---------------- 股價 ---------------- */

@@ -21,6 +21,40 @@
   <button id="btn" type="submit" style="max-width:240px">發布</button>
 </form>
 
+<!-- 活動前的新聞稿多半是在 Excel 裡寫好、校過的。這一區讓那份檔案直接變成資料，
+     也讓現有的新聞可以整份帶走備份。 -->
+<section class="card">
+  <h2><i data-icon="download"></i>匯出與匯入</h2>
+
+  <h3 style="font-size:16px;margin:4px 0 8px">匯出</h3>
+  <p class="hint">把目前所有新聞（含尚未輪到的波次）存成一份 UTF-8 CSV，可以直接用 Excel 打開。</p>
+  <button id="exportBtn" class="ghost" type="button" style="max-width:260px;margin-top:10px">
+    <i data-icon="download" data-size="sm"></i>匯出全部新聞（CSV）
+  </button>
+  <p class="error" id="exportErr" role="alert"></p>
+  <p class="ok-msg" id="exportOk" role="status"></p>
+
+  <h3 style="font-size:16px;margin:18px 0 8px">匯入</h3>
+  <p class="hint">
+    欄位：<strong>波次, 標題, 內文, 發布時間</strong>。只有「標題」必填；波次留空＝目前這一波，
+    發布時間留空＝匯入當下。發布時間格式為 2026-09-13 09:30:00（台北時間，時間可省略）。
+  </p>
+  <p class="hint" style="margin-top:6px">
+    <a href="sample-news.csv" download>下載範例 CSV</a>　·　
+    Excel 請用「另存新檔 → CSV UTF-8（逗號分隔）」，一般的「CSV（逗號分隔）」在繁中版存出來是 Big5，中文會讀不出來。
+  </p>
+  <p class="notice">匯入是<strong>附加</strong>，不會覆蓋或清空既有新聞。同一份檔案上傳兩次就會有兩份。</p>
+  <div class="inline" style="margin-top:4px">
+    <input type="file" id="csvFile" accept=".csv,text/csv" style="flex:1 1 240px">
+    <button id="importBtn" type="button"><i data-icon="upload" data-size="sm"></i>上傳匯入</button>
+  </div>
+  <p class="error" id="importErr" role="alert"></p>
+  <p class="ok-msg" id="importOk" role="status"></p>
+  <!-- 逐列的失敗原因要全部列出來，不能只說「失敗 N 筆」：使用者要回去改的是
+       Excel 裡的第幾列。 -->
+  <ul class="hint" id="importFailed" style="margin:0 0 12px;padding-left:20px"></ul>
+</section>
+
 <section class="card">
   <h2><i data-icon="list"></i>已發布</h2>
   <div class="table-wrap">
@@ -56,6 +90,53 @@ if (requireAdminLogin()) {
     await api('/news/' + id, { method: 'DELETE' });
     await load();
   };
+
+  $('exportBtn').addEventListener('click', async () => {
+    $('exportErr').textContent = ''; $('exportOk').textContent = '';
+    $('exportBtn').disabled = true;
+    try {
+      const r = await download('/news/export', `新聞-${fileStamp()}.csv`);
+      if (!r.ok) { $('exportErr').textContent = r.error; return; }
+      $('exportOk').textContent = '已匯出，請在瀏覽器的下載清單裡找這個檔案。';
+    } finally {
+      $('exportBtn').disabled = false;
+    }
+  });
+
+  $('importBtn').addEventListener('click', async () => {
+    $('importErr').textContent = ''; $('importOk').textContent = '';
+    $('importFailed').innerHTML = '';
+
+    const file = $('csvFile').files[0];
+    if (!file) { $('importErr').textContent = '請先選擇要上傳的 CSV 檔案。'; return; }
+
+    const form = new FormData();
+    form.append('file', file);
+
+    $('importBtn').disabled = true;
+    try {
+      const { ok, body } = await api('/news/import', { method: 'POST', body: form });
+
+      // 整份檔案就退回來的情況（欄位不對、編碼不對、雙引號沒關好）：error 是主訊息，
+      // hint 是「該怎麼修」。兩句都要顯示，只給前半句的話使用者不知道下一步做什麼。
+      if (!ok) {
+        $('importErr').textContent = (body.error || '匯入失敗') + (body.hint ? '　' + body.hint : '');
+      } else {
+        $('importOk').textContent =
+          `匯入完成：成功 ${body.inserted} 則，失敗 ${body.failed.length} 則。`;
+        $('csvFile').value = '';
+      }
+
+      // 逐列的失敗原因，成功與失敗兩種回應都可能帶。
+      if (body.failed && body.failed.length) {
+        $('importFailed').innerHTML = body.failed
+          .map(f => `<li>${esc(f.reason)}</li>`).join('');
+      }
+      await load();
+    } finally {
+      $('importBtn').disabled = false;
+    }
+  });
 
   async function load() {
     const st = await api('/state');
