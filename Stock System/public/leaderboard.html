@@ -13,7 +13,11 @@
   .board .bankcard .brand { font-size: clamp(13px, 1.1vw, 18px); }
   .board .bankcard .meta { text-align: right; font-size: clamp(14px, 1.3vw, 22px); color: var(--navy-dim); }
   .board .bankcard .meta b { color: var(--gold-lt); font-family: var(--font-num); }
-  .board .home-btn { width: auto; margin: 10px 0 0 auto; }
+  /* 這是投影頁的次要動作：用同色系細框，不與排行榜標題及波次資訊搶視覺焦點。 */
+  .board .home-btn { display: inline-flex; width: auto; min-height: 38px; margin: 10px 0 0 auto; padding: 7px 13px;
+                     border: 1px solid rgba(255,255,255,.38); border-radius: 999px; background: transparent; color: #fff;
+                     font-size: clamp(13px, 1vw, 16px); font-weight: 600; box-shadow: none; }
+  .board .home-btn:hover { background: rgba(255,255,255,.13); border-color: rgba(255,255,255,.7); color: #fff; }
   .board table { font-size: clamp(16px, 2vw, 34px); }
   .board th { font-size: clamp(13px, 1.1vw, 20px); padding: .6em .5em; }
   .board td { padding: .55em .5em; }
