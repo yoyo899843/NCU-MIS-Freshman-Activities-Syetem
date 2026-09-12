@@ -33,6 +33,19 @@
   <p class="error" id="stateErr" role="alert"></p>
 </section>
 
+<section class="card admin-only" hidden>
+  <h2><i data-icon="x"></i>重置遊戲</h2>
+  <p class="notice">會保留隊伍帳號、PIN、主辦與銀行關主帳號；但會清空所有現金、持股、新聞、申報、成交、結算價與舊稽核紀錄，並回到第 1 波新聞階段。</p>
+  <label for="resetConfirm">輸入 <strong>RESET</strong> 以確認</label>
+  <div class="inline">
+    <input id="resetConfirm" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="resetHelp resetErr">
+    <button id="resetBtn" class="danger" type="button" disabled>重置遊戲資料</button>
+  </div>
+  <p class="helper" id="resetHelp">這個動作無法復原。</p>
+  <p class="error" id="resetErr" role="alert"></p>
+  <p class="ok-msg" id="resetOk" role="status"></p>
+</section>
+
 <h2 style="margin-top:6px">功能</h2>
 <nav class="tiles wide" aria-label="功能">
   <a class="tile" href="bank.html"><i data-icon="bank"></i><span>實體銀行對帳<small>核准或駁回各隊的存款申報</small></span></a>
@@ -67,6 +80,25 @@ if (requireAdminLogin()) {
       render(body);
     } finally {
       $('stateBtn').disabled = false;
+    }
+  });
+
+  $('resetConfirm').addEventListener('input', () => {
+    $('resetBtn').disabled = $('resetConfirm').value !== 'RESET';
+  });
+  $('resetBtn').addEventListener('click', async () => {
+    $('resetErr').textContent = ''; $('resetOk').textContent = '';
+    $('resetBtn').disabled = true;
+    try {
+      const { ok, body } = await api('/reset', {
+        method: 'POST', body: JSON.stringify({ confirmation: $('resetConfirm').value })
+      });
+      if (!ok) { $('resetErr').textContent = body.error || '重置失敗'; return; }
+      $('resetConfirm').value = '';
+      $('resetOk').textContent = `遊戲已重置；保留 ${body.preserved.teams} 支隊伍與 ${body.preserved.admins} 個工作人員帳號。`;
+      render(body.state);
+    } finally {
+      $('resetBtn').disabled = $('resetConfirm').value !== 'RESET';
     }
   });
 

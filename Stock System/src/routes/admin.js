@@ -107,6 +107,56 @@ router.patch('/state', requireAdmin, asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
+// 遊戲重置只清掉「本局資料」，帳號本身（隊名／PIN、主辦與銀行關主）必須保留，
+// 才不用在下一場重新建帳。確認字串也在伺服器再次驗證，不能只靠前端按鈕防呆。
+router.post('/reset', requireAdmin, asyncHandler(async (req, res) => {
+  if ((req.body || {}).confirmation !== 'RESET') {
+    return res.status(400).json({ error: '請輸入 RESET 以確認重置遊戲' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const [{ rows: stateRows }, { rows: countRows }] = await Promise.all([
+      client.query('SELECT wave, total_waves, phase FROM game_state WHERE id = 1'),
+      client.query(
+        `SELECT
+           (SELECT COUNT(*)::int FROM news) AS news,
+           (SELECT COUNT(*)::int FROM deposits) AS deposits,
+           (SELECT COUNT(*)::int FROM trades) AS trades,
+           (SELECT COUNT(*)::int FROM holdings WHERE shares > 0) AS holdings,
+           (SELECT COUNT(*)::int FROM stock_prices) AS prices,
+           (SELECT COUNT(*)::int FROM teams) AS teams,
+           (SELECT COUNT(*)::int FROM admin_users) AS admins`
+      )
+    ]);
+
+    // 不刪 teams 或 admin_users：隊伍 PIN 與工作人員帳號是跨局設定。
+    await client.query('TRUNCATE TABLE trades, deposits, holdings, news, stock_prices, admin_actions RESTART IDENTITY');
+    await client.query('UPDATE teams SET cash = 0');
+    await client.query('UPDATE stocks SET initial_price = 100');
+    const { rows: afterState } = await client.query(
+      "UPDATE game_state SET wave = 1, phase = 'news' WHERE id = 1 RETURNING wave, total_waves, phase"
+    );
+
+    // 稽核表剛被清空，因此這會成為新一局保留下來的第一筆管理紀錄。
+    await client.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, before_value, after_value)
+       VALUES ($1, 'reset_game', 'game_state', '1', $2, $3)`,
+      [req.admin.sub,
+       JSON.stringify({ state: stateRows[0], cleared: countRows[0] }),
+       JSON.stringify({ state: afterState[0], initialPrice: 100, preserved: { teams: countRows[0].teams, admins: countRows[0].admins } })]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, state: afterState[0], preserved: { teams: countRows[0].teams, admins: countRows[0].admins } });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
 /* ---------------- 新聞 ---------------- */
 
 router.get('/news', asyncHandler(async (req, res) => {
