@@ -13,6 +13,7 @@
   .board .bankcard .brand { font-size: clamp(13px, 1.1vw, 18px); }
   .board .bankcard .meta { text-align: right; font-size: clamp(14px, 1.3vw, 22px); color: var(--navy-dim); }
   .board .bankcard .meta b { color: var(--gold-lt); font-family: var(--font-num); }
+  .board .home-btn { width: auto; margin: 10px 0 0 auto; }
   .board table { font-size: clamp(16px, 2vw, 34px); }
   .board th { font-size: clamp(13px, 1.1vw, 20px); padding: .6em .5em; }
   .board td { padding: .55em .5em; }
@@ -49,7 +50,9 @@
 <body class="board">
 <header class="bankcard">
   <div><p class="brand">賭大股票</p><h1 id="title">總資產排行榜</h1></div>
-  <div class="meta">第 <b id="wave">—</b> / <span id="totalWaves">—</span> 波<br><span id="phase"></span></div>
+  <div class="meta">第 <b id="wave">—</b> / <span id="totalWaves">—</span> 波<br><span id="phase"></span>
+    <a class="btn ghost sm home-btn" href="index.html"><i data-icon="back" data-size="sm"></i>回首頁</a>
+  </div>
 </header>
 
 <div class="viewtabs" role="tablist" aria-label="排行榜種類">

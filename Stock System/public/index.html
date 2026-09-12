@@ -3,6 +3,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>賭大股票系統</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  .news-nav { display:grid; grid-template-columns:48px minmax(0,1fr) 48px; align-items:center; gap:8px; margin-bottom:14px; }
+  .news-nav button { min-width:44px; min-height:44px; padding:0; border-radius:50%; font-size:30px; line-height:1; }
+  .news-position { margin:0; text-align:center; font-size:14px; color:var(--dim); font-variant-numeric:tabular-nums; }
+</style>
 </head>
 <body>
 <div class="top">
@@ -39,7 +44,12 @@
 
 <section class="card" id="newsCard" hidden>
   <h2><i data-icon="news"></i>本波新聞</h2>
-  <div id="news"></div>
+  <div class="news-nav" id="newsNav" hidden>
+    <button id="prevNewsBtn" type="button" aria-label="上一則新聞">‹</button>
+    <p class="news-position" id="newsPosition" aria-live="polite"></p>
+    <button id="nextNewsBtn" type="button" aria-label="下一則新聞">›</button>
+  </div>
+  <div id="news" aria-live="polite"></div>
   <a class="btn ghost sm" href="news.html" style="margin-top:12px">瀏覽本波新聞</a>
 </section>
 
@@ -51,6 +61,9 @@
 <script>
 if (requireLogin()) {
   const info = JSON.parse(localStorage.getItem('teamInfo') || 'null');
+  let newsItems = [];
+  let newsIndex = 0;
+  let newsSig = '';
   if (info) $('who').textContent = info.displayName;
 
   $('logoutBtn').addEventListener('click', () => {
@@ -69,6 +82,26 @@ if (requireLogin()) {
     </div>`;
   }
 
+  // 首頁只放一則摘要，讓玩家快速切換；完整新聞仍在情報中心以清單上下閱讀。
+  function renderHomeNews() {
+    if (!newsItems.length) {
+      $('newsCard').hidden = true;
+      return;
+    }
+    newsIndex = Math.max(0, Math.min(newsIndex, newsItems.length - 1));
+    const n = newsItems[newsIndex];
+    $('newsCard').hidden = false;
+    $('newsNav').hidden = false;
+    $('newsPosition').textContent = `本波第 ${newsIndex + 1}／${newsItems.length} 則`;
+    $('prevNewsBtn').disabled = newsIndex === 0;
+    $('nextNewsBtn').disabled = newsIndex === newsItems.length - 1;
+    $('news').innerHTML = `<div class="news-item"><span class="kick">第 ${n.wave} 波</span>
+      <h3>${esc(n.title)}</h3>${n.body ? `<p>${esc(n.body)}</p>` : ''}</div>`;
+  }
+
+  $('prevNewsBtn').addEventListener('click', () => { newsIndex -= 1; renderHomeNews(); });
+  $('nextNewsBtn').addEventListener('click', () => { newsIndex += 1; renderHomeNews(); });
+
   async function load() {
     const { ok, body } = await api('/api/team/portfolio');
     if (!ok) return;
@@ -85,13 +118,16 @@ if (requireLogin()) {
     if (d.ok) $('depositState').innerHTML = depositSteps(d.body.phase, d.body.deposit);
 
     const n = await api('/api/market/news');
-    if (n.ok && n.body.length) {
-      const top = n.body[0];
-      $('newsCard').hidden = false;
-      $('news').innerHTML = `<div class="news-item"><span class="kick">第 ${top.wave} 波</span>
-        <h3>${esc(top.title)}</h3>${top.body ? `<p>${esc(top.body)}</p>` : ''}</div>`;
-    } else {
-      $('newsCard').hidden = true;
+    if (n.ok) {
+      const sig = `${body.wave}|${n.body.map(item => item.id).join(',')}`;
+      if (sig !== newsSig) {
+        const currentId = newsItems[newsIndex]?.id;
+        newsSig = sig;
+        newsItems = n.body;
+        const keepIndex = newsItems.findIndex(item => item.id === currentId);
+        newsIndex = keepIndex >= 0 ? keepIndex : 0;
+        renderHomeNews();
+      }
     }
     $('clock').textContent = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
   }
