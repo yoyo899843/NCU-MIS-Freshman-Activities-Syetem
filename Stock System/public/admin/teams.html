@@ -32,6 +32,27 @@
   <p class="error" id="addErr" role="alert" style="margin-top:12px"></p>
 </section>
 
+<section class="card admin-only" id="assetEditor" hidden>
+  <h2><i data-icon="wallet"></i>直接編輯隊伍資產</h2>
+  <p class="hint">設定後的現金與各檔持股會直接覆寫帳戶資料。儲存時會留下異動前後的稽核紀錄。</p>
+  <form id="assetForm" onsubmit="return false">
+    <div style="max-width:360px"><label for="assetTeam">隊伍</label><select id="assetTeam"></select></div>
+    <div style="max-width:360px"><label for="assetCash">可用現金</label><input id="assetCash" type="number" min="0" step="0.01" inputmode="decimal" aria-describedby="assetPreview"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>股票</th><th class="n">目前價格</th><th class="n">設定持有張數</th></tr></thead>
+        <tbody id="assetHoldings"></tbody>
+      </table>
+    </div>
+    <p class="notice" id="assetPreview" aria-live="polite" style="margin-top:12px"></p>
+    <label for="assetNote">調整備註（選填）</label>
+    <textarea id="assetNote" rows="2" placeholder="例如：現場核帳後補正"></textarea>
+    <p class="error" id="assetErr" role="alert"></p>
+    <p class="ok-msg" id="assetOk" role="status"></p>
+    <button id="assetSaveBtn" type="submit" style="max-width:240px">儲存資產</button>
+  </form>
+</section>
+
 <section class="card">
   <h2><i data-icon="key"></i>隊伍帳號</h2>
   <div class="table-wrap">
@@ -60,6 +81,8 @@ if (requireAdminLogin()) {
   let isAdmin = false;
   let teams = [];
   let lastBoard = null;   // 最近一次的排行榜資料，切換「顯示市值」時重畫用
+  let assetPositions = [];
+  let assetLoadedFor = null;
   const nameOf = id => (teams.find(t => t.id === id) || {}).display_name || '';
 
   $('addForm').addEventListener('submit', async () => {
@@ -73,16 +96,70 @@ if (requireAdminLogin()) {
     await load();
   });
 
-  window.overrideCash = async function (id) {
-    const v = prompt('新的可用現金餘額');
-    if (v === null) return;
-    $('cashErr').textContent = '';
-    const { ok, body } = await api(`/teams/${id}/cash`, {
-      method: 'PATCH', body: JSON.stringify({ cash: Number(v) })
-    });
-    if (!ok) { $('cashErr').textContent = body.error || '覆寫失敗'; return; }
-    await load();
+  // 資產編輯器的總額是預覽；真正寫入時仍由伺服器驗證並在交易鎖內完成。
+  function updateAssetPreview() {
+    const cash = Number($('assetCash').value);
+    const stockValue = assetPositions.reduce((sum, p) => {
+      const shares = Number($('asset-' + p.stockId)?.value);
+      return sum + (Number.isFinite(shares) && shares >= 0 ? shares * p.price : 0);
+    }, 0);
+    $('assetPreview').textContent = `預覽總資產：現金 ${money(Number.isFinite(cash) && cash >= 0 ? cash : 0)} ＋ 股票市值 ${money(stockValue)} ＝ ${money((Number.isFinite(cash) && cash >= 0 ? cash : 0) + stockValue)}`;
+  }
+
+  async function loadAssetEditor(force = false) {
+    const id = Number($('assetTeam').value);
+    if (!id || (!force && assetLoadedFor === id)) return;
+    $('assetErr').textContent = '';
+    const { ok, body } = await api(`/teams/${id}/portfolio`);
+    // 切換隊伍時，較早送出的請求可能比較晚回來；不能讓它覆蓋現在選取的隊伍。
+    if (Number($('assetTeam').value) !== id) return;
+    if (!ok) { $('assetErr').textContent = body.error || '資產載入失敗'; return; }
+    assetLoadedFor = id;
+    assetPositions = body.positions || [];
+    $('assetCash').value = body.cash;
+    $('assetNote').value = '';
+    $('assetHoldings').innerHTML = assetPositions.map(p => `
+      <tr><td><strong>${esc(p.name)}</strong></td><td class="n">${money(p.price)}</td>
+      <td><input id="asset-${p.stockId}" type="number" min="0" step="1" inputmode="numeric" value="${p.shares}" aria-label="${esc(p.name)} 持有張數"></td></tr>`).join('');
+    $('assetHoldings').querySelectorAll('input').forEach(input => input.addEventListener('input', updateAssetPreview));
+    updateAssetPreview();
+  }
+
+  function syncAssetTeamOptions() {
+    if (!isAdmin) return;
+    const selected = $('assetTeam').value;
+    $('assetTeam').innerHTML = teams.map(t => `<option value="${t.id}">${esc(t.display_name)}</option>`).join('');
+    if (selected && teams.some(t => String(t.id) === selected)) $('assetTeam').value = selected;
+    const id = Number($('assetTeam').value);
+    if (id && assetLoadedFor !== id) loadAssetEditor();
+  }
+
+  window.editAssets = async function (id) {
+    $('assetTeam').value = String(id);
+    await loadAssetEditor(true);
+    $('assetEditor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('assetCash').focus();
   };
+
+  $('assetTeam').addEventListener('change', () => loadAssetEditor(true));
+  $('assetCash').addEventListener('input', updateAssetPreview);
+  $('assetForm').addEventListener('submit', async () => {
+    const id = Number($('assetTeam').value);
+    $('assetErr').textContent = ''; $('assetOk').textContent = '';
+    const holdings = assetPositions.map(p => ({ stockId: p.stockId, shares: Number($('asset-' + p.stockId).value) }));
+    $('assetSaveBtn').disabled = true;
+    try {
+      const { ok, body } = await api(`/teams/${id}/assets`, {
+        method: 'PATCH', body: JSON.stringify({ cash: Number($('assetCash').value), holdings, note: $('assetNote').value })
+      });
+      if (!ok) { $('assetErr').textContent = body.error || '儲存失敗'; return; }
+      $('assetOk').textContent = `已儲存「${body.displayName}」的資產，並寫入稽核紀錄。`;
+      await load();
+      await loadAssetEditor(true);
+    } finally {
+      $('assetSaveBtn').disabled = false;
+    }
+  });
 
   // 現場一定會有隊伍把 PIN 忘掉。沒有這顆按鈕就只能去翻資料庫。
   window.resetPin = async function (id) {
@@ -165,10 +242,11 @@ if (requireAdminLogin()) {
     const ts = await api('/teams');
     if (ts.ok) {
       teams = ts.body;
+      syncAssetTeamOptions();
       $('teams').innerHTML = ts.body.map(t => `
         <tr><td><strong>${esc(t.display_name)}</strong></td><td class="money">${esc(t.pin)}</td><td class="n">${money(t.cash)}</td>
         ${isAdmin ? `<td><div class="actions">
-                       <button class="sm ghost" type="button" onclick="overrideCash(${t.id})">覆寫餘額</button>
+                       <button class="sm ghost" type="button" onclick="editAssets(${t.id})">編輯資產</button>
                        <button class="sm ghost" type="button" onclick="resetPin(${t.id})">重設 PIN</button>
                        <button class="sm danger" type="button" onclick="removeTeam(${t.id})">刪除</button>
                      </div></td>` : ''}</tr>`).join('')

@@ -382,6 +382,83 @@ router.patch('/teams/:id/cash', requireAdmin, asyncHandler(async (req, res) => {
   res.json({ ...rows[0], cash: Number(rows[0].cash) });
 }));
 
+// 直接修正一支隊伍的整份資產：現金與各檔持股都以「設定後的值」為準。
+// 現場帳務補正不能只改現金，否則總資產與持股庫存仍會對不起來；這支與下單相同
+// 先鎖住隊伍，再鎖住持股，避免兩台工作人員或玩家下單同時操作造成覆寫。
+router.patch('/teams/:id/assets', requireAdmin, asyncHandler(async (req, res) => {
+  const cash = Number((req.body || {}).cash);
+  const holdings = (req.body || {}).holdings;
+  const note = typeof (req.body || {}).note === 'string' ? (req.body || {}).note.trim() : '';
+  if (!Number.isFinite(cash) || cash < 0) {
+    return res.status(400).json({ error: '現金必須是 0 或正數' });
+  }
+  if (!Array.isArray(holdings) || holdings.length === 0) {
+    return res.status(400).json({ error: 'holdings 必須是至少一檔股票的陣列' });
+  }
+
+  const parsed = holdings.map(h => ({ stockId: Number(h.stockId), shares: Number(h.shares) }));
+  if (parsed.some(h => !Number.isInteger(h.stockId) || !Number.isInteger(h.shares) || h.shares < 0)) {
+    return res.status(400).json({ error: '股票編號與持有張數必須是非負整數' });
+  }
+  if (new Set(parsed.map(h => h.stockId)).size !== parsed.length) {
+    return res.status(400).json({ error: '同一檔股票只能設定一次' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: teamRows } = await client.query(
+      'SELECT id, display_name, cash FROM teams WHERE id = $1 FOR UPDATE', [req.params.id]
+    );
+    if (teamRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: '找不到這支隊伍' });
+    }
+
+    const { rows: stocks } = await client.query('SELECT id, name FROM stocks ORDER BY display_order, id');
+    const stockName = Object.fromEntries(stocks.map(s => [s.id, s.name]));
+    if (parsed.some(h => !stockName[h.stockId])) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: '包含不存在的股票' });
+    }
+
+    const { rows: beforeRows } = await client.query(
+      'SELECT stock_id, shares FROM holdings WHERE team_id = $1 FOR UPDATE', [req.params.id]
+    );
+    const beforeShares = Object.fromEntries(beforeRows.map(h => [h.stock_id, h.shares]));
+    const before = {
+      cash: Number(teamRows[0].cash),
+      holdings: stocks.map(s => ({ stockId: s.id, name: s.name, shares: beforeShares[s.id] || 0 }))
+    };
+
+    await client.query('UPDATE teams SET cash = $1 WHERE id = $2', [cash, req.params.id]);
+    for (const h of parsed) {
+      await client.query(
+        `INSERT INTO holdings (team_id, stock_id, shares) VALUES ($1,$2,$3)
+         ON CONFLICT (team_id, stock_id) DO UPDATE SET shares = EXCLUDED.shares`,
+        [req.params.id, h.stockId, h.shares]
+      );
+    }
+
+    const after = {
+      cash,
+      holdings: stocks.map(s => {
+        const entry = parsed.find(h => h.stockId === s.id);
+        return { stockId: s.id, name: s.name, shares: entry ? entry.shares : (beforeShares[s.id] || 0) };
+      }),
+      note: note || null
+    };
+    await client.query('COMMIT');
+    await audit(req.admin.sub, 'override_assets', 'team', req.params.id, before, after);
+    res.json({ id: teamRows[0].id, displayName: teamRows[0].display_name, ...after });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
 // 重設隊伍 PIN。現場一定會有隊伍把 PIN 忘掉或打錯記錯，沒有這支就只能請人
 // 去翻資料庫。PIN 本來就是明碼存的（主辦看得到是刻意的設計），這裡只是把
 // 「要用 psql 改」搬到後台頁面上。
