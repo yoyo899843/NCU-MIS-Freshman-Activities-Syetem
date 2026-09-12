@@ -9,10 +9,27 @@
   body { max-width: 960px; }
   .score-row { display: flex; flex-wrap: wrap; gap: 8px 24px; }
   .tt-layout { display: flex; gap: 16px; align-items: flex-start; }
-  .vault-panel { width: 200px; flex-shrink: 0; max-height: 75vh; overflow-y: auto; }
+  /* 線索庫：黏在視窗裡（捲到下面的分支時不用捲回最上面拿線索），清單在框內自己捲動。
+     標題固定在框頂，只有 #vaultList 捲；overscroll-behavior 讓捲到底時不會連帶把整頁捲走。 */
+  .vault-panel {
+    width: 200px; flex-shrink: 0; position: sticky; top: 8px;
+    display: flex; flex-direction: column; max-height: calc(100dvh - 32px);
+    /* .card 自帶的下邊距要拿掉：捲到頁底時 sticky 會被父層底邊往上推，
+       多出來的 14px 會把框頂的標題推出視窗外 */
+    margin-bottom: 0;
+  }
+  .vault-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .vault-head .hint { font-size: 0.75rem; }
+  .vault-list {
+    margin-top: 8px; overflow-y: auto; overscroll-behavior: contain;
+    min-height: 0; flex: 1; padding-right: 2px;
+  }
+  /* touch-action: pan-y——手指上下滑交給瀏覽器捲動清單，往左右拖才是拖曳線索
+     （見 attachVaultDrag）。原本是 none：線索卡塞滿整個框，手指怎麼滑都被當成拖曳，
+     線索一多下面的就看不到。 */
   .vault-card {
     background: var(--card); border: 1px solid var(--line); border-radius: 6px;
-    padding: 8px; margin-bottom: 8px; cursor: grab; touch-action: none; user-select: none;
+    padding: 8px; margin-bottom: 8px; cursor: grab; touch-action: pan-y; user-select: none;
   }
   .vault-card strong { display: block; font-size: 0.85rem; }
   .vault-card p { font-size: 0.75rem; color: var(--dim); margin: 4px 0 0; }
@@ -88,8 +105,9 @@
 
   <div class="tt-layout">
     <div class="vault-panel card">
-      <strong>線索庫清單</strong>
-      <div id="vaultList" style="margin-top:8px"></div>
+      <div class="vault-head"><strong>線索庫清單</strong><span class="hint" id="vaultCount"></span></div>
+      <p class="hint" style="font-size:0.75rem;margin:4px 0 0">上下滑動捲動清單，按住線索往右拖進格子。</p>
+      <div id="vaultList" class="vault-list" tabindex="0" aria-label="線索庫清單，可捲動"></div>
     </div>
     <div class="tree-panel">
       <div id="branchList"></div>
@@ -194,6 +212,7 @@ function renderVault() {
   const used = placedClueIds();
   const available = vault.filter(c => !used.has(c.id));
   const listEl = document.getElementById('vaultList');
+  document.getElementById('vaultCount').textContent = available.length ? `${available.length} 張` : '';
   listEl.innerHTML = available.map(c => `
     <div class="vault-card" data-clue-id="${c.id}">
       <strong>${escapeHtml(c.name)}</strong>
@@ -268,34 +287,64 @@ function renderSlot(s, branchColor) {
 // 用 Pointer Events（不是 HTML5 的 draggable/dragstart）實作拖曳，滑鼠、觸控螢幕
 // 都是同一套事件，手機瀏覽器也能正常拖——這個系統主要是給玩家用手機操作的，
 // 舊版 HTML5 Drag and Drop API 在觸控裝置上基本上不能用。
+//
+// 按下去不會馬上開始拖，要移動超過 DRAG_START_PX 才算：
+// - 觸控：只有「往左右」移動才開始拖曳；上下滑是在捲線索庫，交給瀏覽器
+//   （.vault-card 的 touch-action: pan-y）。瀏覽器接手捲動時會送 pointercancel，
+//   這時候還沒開始拖，直接收掉就好。
+// - 滑鼠：往哪個方向移動都算開始拖（滑鼠用滾輪捲清單，不會跟拖曳衝突）。
+// 單純點一下不移動，就不會冒出拖曳中的影子。
+const DRAG_START_PX = 8;
+
 function attachVaultDrag(cardEl, clueId) {
   cardEl.addEventListener('pointerdown', e => {
-    e.preventDefault();
+    if (e.button !== undefined && e.button > 0) return; // 只接左鍵／手指
     const clue = clueById(clueId);
     if (!clue) return;
+    const isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
+    // 觸控不能 preventDefault，不然瀏覽器就不會幫忙捲動；滑鼠要擋，避免拖的時候選到文字
+    if (!isTouch) e.preventDefault();
 
-    const ghost = document.createElement('div');
-    ghost.className = 'drag-ghost';
-    ghost.textContent = clue.name;
-    document.body.appendChild(ghost);
-    positionGhost(ghost, e.clientX, e.clientY);
+    const startX = e.clientX, startY = e.clientY;
+    let ghost = null;
 
-    dragState = { clueId, ghostEl: ghost };
-    try { cardEl.setPointerCapture(e.pointerId); } catch (err) { /* 部分瀏覽器對合成事件的 pointerId 可能會擋，不影響後面用 addEventListener 接的邏輯 */ }
+    const startDrag = ev => {
+      ghost = document.createElement('div');
+      ghost.className = 'drag-ghost';
+      ghost.textContent = clue.name;
+      document.body.appendChild(ghost);
+      positionGhost(ghost, ev.clientX, ev.clientY);
+      dragState = { clueId, ghostEl: ghost };
+      try { cardEl.setPointerCapture(ev.pointerId); } catch (err) { /* 部分瀏覽器對合成事件的 pointerId 可能會擋，不影響後面用 addEventListener 接的邏輯 */ }
+    };
 
     const onMove = ev => {
+      if (!ghost) {
+        const dx = ev.clientX - startX, dy = ev.clientY - startY;
+        if (Math.hypot(dx, dy) < DRAG_START_PX) return;
+        if (isTouch && Math.abs(dx) <= Math.abs(dy)) return cleanup(); // 上下滑＝捲動，不是拖曳
+        startDrag(ev);
+      }
       positionGhost(ghost, ev.clientX, ev.clientY);
       updateDropHighlight(ev.clientX, ev.clientY);
     };
-    const onUp = ev => {
+    const cleanup = () => {
       cardEl.removeEventListener('pointermove', onMove);
       cardEl.removeEventListener('pointerup', onUp);
-      cardEl.removeEventListener('pointercancel', onUp);
-      finishDrag(ev.clientX, ev.clientY);
+      cardEl.removeEventListener('pointercancel', onCancel);
+    };
+    const onUp = ev => {
+      cleanup();
+      if (ghost) finishDrag(ev.clientX, ev.clientY);
+    };
+    // 被瀏覽器拿去捲動（或其他原因中斷）：拖到一半的話就當作沒放下
+    const onCancel = () => {
+      cleanup();
+      if (ghost) finishDrag(-1, -1);
     };
     cardEl.addEventListener('pointermove', onMove);
     cardEl.addEventListener('pointerup', onUp);
-    cardEl.addEventListener('pointercancel', onUp);
+    cardEl.addEventListener('pointercancel', onCancel);
   });
 }
 
