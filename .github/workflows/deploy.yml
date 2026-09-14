@@ -28,7 +28,7 @@ jobs:
       - name: Compose up
         run: |
           cd "$DEPLOY_DIR"
-          for d in "Time-Space Warfare" "RPG System" "Stock System" Portal Mods PgAdmin; do
+          for d in "Time-Space Warfare" "RPG System" "Stock System" "Final Scoreboard"; do
             (cd "$d" && docker compose up -d --build --remove-orphans)
           done
 
