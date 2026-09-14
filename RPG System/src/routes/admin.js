@@ -10,7 +10,7 @@ const { gatekeeperGuard, requireFullAdmin } = require('../middleware/gatekeeperG
 const asyncHandler = require('../middleware/asyncHandler');
 const { createLoginThrottle } = require('../loginThrottle');
 const { validateName } = require('../displayName');
-const { techTreeScore } = require('../scoring');
+const { buildScoreboard } = require('../scoreboard');
 const { logAction } = require('../activityLog');
 const { removeLocation, clearLocations } = require('../schoolLocations');
 
@@ -1210,42 +1210,7 @@ router.get('/game/state', asyncHandler(async (req, res) => {
 // （schema 設計就是這樣，見 migrations/001_init.sql 的說明）。總分可能是負的
 // （亂猜的代價），主辦頒獎時要不要特別處理負分自行決定。
 router.get('/scoreboard', asyncHandler(async (req, res) => {
-  const { rows } = await db.query(`
-    SELECT
-      s.id AS school_id, s.display_name,
-      COALESCE(placements.correct_count, 0) AS correct_slots,
-      COALESCE(attempts.wrong_count, 0) AS wrong_attempts,
-      COALESCE(clues.clue_count, 0) AS clues_collected,
-      COALESCE(branches.branch_count, 0) AS branches_unlocked
-    FROM schools s
-    LEFT JOIN (
-      SELECT school_id, COUNT(*)::int AS correct_count
-      FROM school_slot_placements WHERE is_locked = true GROUP BY school_id
-    ) placements ON placements.school_id = s.id
-    LEFT JOIN (
-      SELECT school_id, COUNT(*)::int AS wrong_count
-      FROM school_check_attempts WHERE is_correct = false GROUP BY school_id
-    ) attempts ON attempts.school_id = s.id
-    LEFT JOIN (
-      SELECT school_id, COUNT(*)::int AS clue_count FROM school_clues GROUP BY school_id
-    ) clues ON clues.school_id = s.id
-    LEFT JOIN (
-      SELECT school_id, COUNT(*)::int AS branch_count FROM school_branch_unlocks GROUP BY school_id
-    ) branches ON branches.school_id = s.id
-    ORDER BY s.id
-  `);
-
-  const scoreboard = rows.map(r => ({
-    schoolId: r.school_id,
-    displayName: r.display_name,
-    correctSlots: r.correct_slots,
-    wrongAttempts: r.wrong_attempts,
-    cluesCollected: r.clues_collected,
-    branchesUnlocked: r.branches_unlocked,
-    ...techTreeScore(r.correct_slots, r.wrong_attempts)
-  })).sort((a, b) => b.totalScore - a.totalScore);
-
-  res.json(scoreboard);
+  res.json(await buildScoreboard());
 }));
 
 module.exports = router;

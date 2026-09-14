@@ -138,13 +138,24 @@ function initMap() {
     }
   }
 
+  // 定位變得不可用（精準度不足／超出範圍／取不到）就把自己的標記拿掉，
+  // 不要留一個舊點在地圖上讓人以為那是現在的位置。
+  function clearSelfMarker() {
+    if (!selfMarker) return;
+    map.removeLayer(selfMarker);
+    selfMarker = null;
+  }
+
   // GPS 圍籬：離開活動範圍會顯示紅色提示條（見 geofence.js），比照 Time-Space
   // Warfare 只掛在地圖頁的做法——這裡是唯一需要判斷「人在不在範圍內」的頁面。
   // 校園範圍內的每次讀值同時拿來畫自己的標記、留著給下面的 2 秒上傳計時器用。
   let latestCoords = null;
-  startGeofence((lat, lng) => {
-    latestCoords = { lat, lng };
+  startGeofence((lat, lng, accuracy) => {
+    latestCoords = { lat, lng, accuracy };
     updateSelfMarker(lat, lng);
+  }, () => {
+    latestCoords = null;
+    clearSelfMarker();
   });
 
   // 地圖直接顯示所有學派的位置，不分敵我——關掉瀏覽器/斷線也不會讓標記消失：

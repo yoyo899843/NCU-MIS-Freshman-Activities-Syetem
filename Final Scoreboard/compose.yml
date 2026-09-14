@@ -1,0 +1,24 @@
+services:
+  app:
+    build: .
+    container_name: final-scoreboard-app
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+      # Container names on the shared ncumis-camp network. Override them in .env if needed.
+      TIMEWARFARE_URL: ${TIMEWARFARE_URL:-http://timewarfare-app:3000}
+      STOCK_URL: ${STOCK_URL:-http://stock-app:3000}
+      RPG_URL: ${RPG_URL:-http://rpg-app:3000}
+    ports:
+      - "9006:8000"
+    networks:
+      - ncumis-camp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  ncumis-camp:
+    external: true

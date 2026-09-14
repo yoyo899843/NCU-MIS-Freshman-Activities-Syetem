@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>總積分榜｜資管新生營</title>
+  <style>
+    :root { --ink:#18233d; --muted:#64748b; --paper:#f5f7fb; --line:#dde4ef; --navy:#142c54; --sky:#2f80ed; --gold:#e9a92c; --good:#007c63; --danger:#c43d4e; --card:#fff; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:radial-gradient(circle at 0 0,#e3edf9 0,transparent 35rem),var(--paper); font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Noto Sans TC",sans-serif; }
+    .shell { max-width:1440px; margin:auto; padding:28px clamp(16px,3vw,44px) 52px; }
+    header { display:flex; justify-content:space-between; gap:24px; align-items:end; margin-bottom:22px; }
+    .eyebrow { margin:0 0 5px; color:var(--sky); font-weight:800; font-size:.78rem; letter-spacing:.14em; }
+    h1 { margin:0; font-size:clamp(1.8rem,4vw,3rem); letter-spacing:-.045em; }
+    .intro { margin:6px 0 0; color:var(--muted); }
+    .updated { margin:0; color:var(--muted); font-size:.85rem; text-align:right; }
+    .formula { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:20px; }
+    .formula article { background:var(--navy); color:#fff; border-radius:14px; padding:14px 16px; box-shadow:0 8px 20px #132d5517; }
+    .formula b { display:block; font-size:1.05rem; }.formula span { color:#d7e6ff; font-size:.84rem; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 8px 24px #18233d0a; overflow:hidden; }
+    .toolbar { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:16px 18px; border-bottom:1px solid var(--line); }
+    .toolbar h2 { margin:0; font-size:1.05rem; }.toolbar p { margin:2px 0 0; color:var(--muted); font-size:.86rem; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; }
+    button { appearance:none; border:1px solid #b9c8dd; border-radius:8px; padding:8px 11px; color:var(--navy); background:#fff; cursor:pointer; font:inherit; font-weight:750; }
+    button:hover { background:#edf5ff; border-color:var(--sky); } button:focus-visible,input:focus-visible,select:focus-visible { outline:3px solid #7ab5ff88; outline-offset:2px; }
+    button.loading { opacity:.58; pointer-events:none; }.source-status { padding:9px 18px; background:#f8fbff; color:var(--muted); border-bottom:1px solid var(--line); font-size:.87rem; min-height:40px; }.source-status.error { background:#fff6f7; color:#a51f31; }
+    .table-wrap { overflow:auto; }.score-table { width:100%; min-width:1050px; border-collapse:collapse; }.score-table th,.score-table td { padding:11px 10px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }.score-table th { background:#f8fafc; color:#526078; font-size:.76rem; letter-spacing:.04em; text-transform:uppercase; }.score-table th:first-child,.score-table td:first-child,.score-table td:nth-child(2) { text-align:left; }.score-table tbody tr:hover { background:#f8fbff; }.rank { display:inline-grid; place-items:center; width:27px; height:27px; background:#edf2fa; border-radius:50%; font-weight:850; }.rank.one { background:#ffe6a5; color:#7b5000; }.rank.two { background:#e8edf3; }.rank.three { background:#f8dbc4; color:#8b4318; }.total { color:var(--navy); font-size:1.05rem; font-weight:900; }.api-mark { display:block; margin-top:2px; color:var(--good); font-size:.72rem; }.manual-mark { display:block; margin-top:2px; color:var(--muted); font-size:.72rem; }
+    input[type=text],input[type=number],select { width:100%; min-width:88px; border:1px solid #cbd7e7; border-radius:7px; padding:7px 8px; background:#fff; color:var(--ink); font:inherit; text-align:right; }.name-input { min-width:138px; text-align:left; font-weight:700; }.result-select { min-width:80px; text-align:left; }.muted { color:var(--muted); }
+    .unmatched { margin:14px 18px 0; padding:10px 12px; border-radius:9px; color:#7d5412; background:#fff8e9; font-size:.85rem; }.hidden { display:none; }
+    .footnote { margin:14px 2px 0; color:var(--muted); font-size:.83rem; }
+    @media (max-width:760px) { .shell{padding-top:20px} header{align-items:start;flex-direction:column}.updated{text-align:left}.formula{grid-template-columns:1fr 1fr}.toolbar{align-items:start;flex-direction:column}.actions{width:100%}.actions button{flex:1 1 120px;} }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header>
+    <div><p class="eyebrow">NCU MIS · FINAL SCOREBOARD</p><h1>總積分榜</h1><p class="intro">集中結算對抗賽、賭大股票、地盤與數位偵探成績。</p></div>
+    <p class="updated" id="updated">尚未載入資料</p>
+  </header>
+  <section class="formula" aria-label="計分公式">
+    <article><b>對抗賽</b><span>勝 10,000／平 5,000／負 2,000</span></article>
+    <article><b>賭大股票</b><span>直接加計投資系統總資產</span></article>
+    <article><b>地盤戰</b><span>系統積分 × 1,000</span></article>
+    <article><b>RPG</b><span>科技樹總積分 × 1,000</span></article>
+  </section>
+  <section class="card">
+    <div class="toolbar"><div><h2>五學派結算表</h2><p>先把學派名稱改成各系統使用的相同名稱，再按 API 帶入；任一欄位皆可直接手動覆寫。</p></div><div class="actions"><button type="button" data-source="stock">載入賭大 API</button><button type="button" data-source="territory">載入地盤 API</button><button type="button" data-source="rpg">載入 RPG API</button><button type="button" id="clearBtn">清除來源分數</button></div></div>
+    <div class="source-status" id="status" role="status">對抗賽結果請從下拉選單輸入；其餘三項可自動載入或手動填寫。</div>
+    <div class="unmatched hidden" id="unmatched"></div>
+    <div class="table-wrap"><table class="score-table"><thead><tr><th>名次</th><th>學派</th><th>A 隊對抗賽</th><th>B 隊對抗賽</th><th>對抗賽小計</th><th>賭大總資產</th><th>地盤原始分</th><th>地盤換算</th><th>RPG 原始分</th><th>RPG 換算</th><th>最終總分</th></tr></thead><tbody id="rows"></tbody></table></div>
+  </section>
+  <p class="footnote">自動載入時，名稱會以「完全相同」優先比對；地盤隊名若以「學派名 A／B」結尾，會自動合併回該學派。頁面資料暫存在此瀏覽器，不會寫回原遊戲系統。</p>
+</main>
+<script>
+const RESULT_POINTS={win:10000,draw:5000,lose:2000};
+const defaults=['學派一','學派二','學派三','學派四','學派五'];
+const saved=JSON.parse(localStorage.getItem('final-scoreboard-v1')||'null');
+let rows=Array.isArray(saved?.rows)&&saved.rows.length===5?saved.rows:defaults.map(name=>({name,a:'',b:'',stock:'',territory:'',rpg:'',sources:{}}));
+const n=v=>Number.isFinite(Number(v))?Number(v):0;
+const fmt=v=>new Intl.NumberFormat('zh-TW',{maximumFractionDigits:2}).format(v);
+const normal=s=>String(s||'').replace(/\s+/g,'').toLocaleUpperCase('zh-TW');
+const baseName=s=>normal(s).replace(/[\-_－]?([AB])隊?$/,'');
+function save(){localStorage.setItem('final-scoreboard-v1',JSON.stringify({rows}));}
+function contest(r){return (RESULT_POINTS[r.a]||0)+(RESULT_POINTS[r.b]||0)}
+function total(r){return contest(r)+n(r.stock)+n(r.territory)*1000+n(r.rpg)*1000}
+function sourceMark(r,key){return r.sources?.[key]==='api'?'<span class="api-mark">API 帶入</span>':'<span class="manual-mark">手動／未設定</span>'}
+function select(value,key,i,label){return `<select class="result-select" data-i="${i}" data-key="${key}" aria-label="${label}"><option value="">未結算</option><option value="win" ${value==='win'?'selected':''}>勝 · 10,000</option><option value="draw" ${value==='draw'?'selected':''}>平 · 5,000</option><option value="lose" ${value==='lose'?'selected':''}>負 · 2,000</option></select>`}
+function input(value,key,i,label,mark=''){return `<input type="number" step="0.01" inputmode="decimal" value="${String(value??'').replace(/"/g,'&quot;')}" data-i="${i}" data-key="${key}" aria-label="${label}">${mark}`}
+function render(){const ordered=rows.map((r,i)=>({...r,i,total:total(r)})).sort((a,b)=>b.total-a.total||a.i-b.i);let rank=0,last;ordered.forEach((r,i)=>{if(r.total!==last){rank=i+1;last=r.total}r.rank=rank});const ranks=Object.fromEntries(ordered.map(r=>[r.i,r.rank]));document.querySelector('#rows').innerHTML=rows.map((r,i)=>{const rank=ranks[i], medal=rank<=3?['','one','two','three'][rank]:'';return `<tr><td><span class="rank ${medal}">${rank}</span></td><td><input class="name-input" type="text" value="${String(r.name).replace(/"/g,'&quot;')}" data-i="${i}" data-key="name" aria-label="第 ${i+1} 列學派名稱"></td><td>${select(r.a,'a',i,`${r.name} A 隊結果`)}</td><td>${select(r.b,'b',i,`${r.name} B 隊結果`)}</td><td><b>${fmt(contest(r))}</b></td><td>${input(r.stock,'stock',i,`${r.name} 賭大總資產`,sourceMark(r,'stock'))}</td><td>${input(r.territory,'territory',i,`${r.name} 地盤原始分`,sourceMark(r,'territory'))}</td><td>${fmt(n(r.territory)*1000)}</td><td>${input(r.rpg,'rpg',i,`${r.name} RPG 原始分`,sourceMark(r,'rpg'))}</td><td>${fmt(n(r.rpg)*1000)}</td><td class="total">${fmt(total(r))}</td></tr>`}).join('');document.querySelector('#updated').textContent=`最後更新：${new Date().toLocaleString('zh-TW')}`;save();}
+document.querySelector('#rows').addEventListener('input',event=>{const el=event.target;if(!el.dataset.key)return;const r=rows[Number(el.dataset.i)],key=el.dataset.key;r[key]=el.value;if(['stock','territory','rpg'].includes(key)){r.sources??={};r.sources[key]='manual'}render()});
+document.querySelector('#rows').addEventListener('change',event=>{const el=event.target;if(!el.dataset.key)return;rows[Number(el.dataset.i)][el.dataset.key]=el.value;render()});
+function status(message,error=false){const e=document.querySelector('#status');e.textContent=message;e.classList.toggle('error',error)}
+async function loadSource(source,button){button.classList.add('loading');button.textContent='載入中…';status(`正在載入 ${button.dataset.source==='stock'?'賭大股票':source==='territory'?'地盤':'RPG'} API…`);try{const res=await fetch(`/api/source/${source}`,{cache:'no-store'});const data=await res.json();if(!res.ok)throw new Error(data.error||'API 載入失敗');const values=Array(rows.length).fill(0),matched=new Set(),unmatched=[];for(const entry of data.entries||[]){const entryName=normal(entry.name);let index=rows.findIndex(r=>normal(r.name)===entryName);if(index<0)index=rows.findIndex(r=>normal(r.name)===baseName(entryName));if(index<0){unmatched.push(entry.name);continue}values[index]+=n(entry.score);matched.add(index)}rows.forEach((r,i)=>{r[source]=matched.has(i)?values[i]:'';r.sources??={};r.sources[source]=matched.has(i)?'api':'manual'});document.querySelector('#unmatched').textContent=unmatched.length?`未能對應的 ${source} 名稱：${unmatched.join('、')}。請調整學派名稱或手動輸入。`:'';document.querySelector('#unmatched').classList.toggle('hidden',!unmatched.length);status(`${source==='stock'?'賭大股票':source==='territory'?'地盤':'RPG'} API 已帶入 ${matched.size} 個學派。`);render()}catch(err){status(err.message,true)}finally{button.classList.remove('loading');button.textContent=source==='stock'?'載入賭大 API':source==='territory'?'載入地盤 API':'載入 RPG API'}}
+document.querySelectorAll('[data-source]').forEach(button=>button.addEventListener('click',()=>loadSource(button.dataset.source,button)));
+document.querySelector('#clearBtn').addEventListener('click',()=>{if(!confirm('確定清除賭大、地盤與 RPG 的來源分數嗎？對抗賽結果會保留。'))return;rows.forEach(r=>{r.stock='';r.territory='';r.rpg='';r.sources={}});document.querySelector('#unmatched').classList.add('hidden');status('已清除三項來源分數。');render()});
+render();
+</script>
+</body>
+</html>

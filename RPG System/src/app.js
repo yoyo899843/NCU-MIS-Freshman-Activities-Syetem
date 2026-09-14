@@ -4,6 +4,7 @@ const http = require('http');
 const express = require('express');
 
 const db = require('./db');
+const { buildScoreboard } = require('./scoreboard');
 
 const authRoutes = require('./routes/auth');
 const checkpointRoutes = require('./routes/checkpoints');
@@ -39,6 +40,12 @@ app.get('/health', async (req, res) => {
   } catch (err) {
     res.status(503).json({ status: 'db unreachable' });
   }
+});
+
+// Final Scoreboard 與大螢幕需要的是公開結算成績；只回傳學派名稱與計分結果，
+// 不包含科技樹正解、玩家位置或後台資料。
+app.get('/api/scoreboard', async (req, res) => {
+  res.json(await buildScoreboard());
 });
 
 app.use('/api/auth', authRoutes);
