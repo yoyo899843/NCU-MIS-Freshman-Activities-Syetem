@@ -44,8 +44,8 @@
     <article><b>RPG</b><span>科技樹總積分 × 1,000</span></article>
   </section>
   <section class="card">
-    <div class="toolbar"><div><h2>五學派結算表</h2><p>先把學派名稱改成各系統使用的相同名稱，再按 API 帶入；任一欄位皆可直接手動覆寫。</p></div><div class="actions"><button type="button" data-source="stock">載入賭大 API</button><button type="button" data-source="territory">載入地盤 API</button><button type="button" data-source="rpg">載入 RPG API</button><button type="button" id="clearBtn">清除來源分數</button></div></div>
-    <div class="source-status" id="status" role="status">對抗賽結果請從下拉選單輸入；其餘三項可自動載入或手動填寫。</div>
+    <div class="toolbar"><div><h2>五學派結算表</h2><p>學派名稱已預設為正式名稱；確認各系統採用相同名稱後，可按 API 帶入。任一欄位皆可直接手動覆寫。</p></div><div class="actions"><button type="button" data-source="stock">載入賭大 API</button><button type="button" data-source="territory">載入地盤 API</button><button type="button" data-source="rpg">載入 RPG API</button><button type="button" id="clearBtn">清除來源分數</button></div></div>
+    <div class="source-status" id="status" role="status">有分 A／B 隊的學派請填對抗賽結果；未分隊的學派可保留空白。其餘三項可自動載入或手動填寫。</div>
     <div class="unmatched hidden" id="unmatched"></div>
     <div class="table-wrap"><table class="score-table"><thead><tr><th>名次</th><th>學派</th><th>A 隊對抗賽</th><th>B 隊對抗賽</th><th>對抗賽小計</th><th>賭大總資產</th><th>地盤原始分</th><th>地盤換算</th><th>RPG 原始分</th><th>RPG 換算</th><th>最終總分</th></tr></thead><tbody id="rows"></tbody></table></div>
   </section>
@@ -53,9 +53,11 @@
 </main>
 <script>
 const RESULT_POINTS={win:10000,draw:5000,lose:2000};
-const defaults=['學派一','學派二','學派三','學派四','學派五'];
+const defaults=['數據鷹學派','金流獾學派','系統蛇學派','邏輯獅學派','管理狼學派'];
 const saved=JSON.parse(localStorage.getItem('final-scoreboard-v1')||'null');
 let rows=Array.isArray(saved?.rows)&&saved.rows.length===5?saved.rows:defaults.map(name=>({name,a:'',b:'',stock:'',territory:'',rpg:'',sources:{}}));
+// 升級早期預覽版的「學派一～五」預設名稱，不動使用者已手動改過的名稱或分數。
+if (rows.every((row,index)=>row.name===`學派${['一','二','三','四','五'][index]}`)) rows.forEach((row,index)=>{row.name=defaults[index]});
 const n=v=>Number.isFinite(Number(v))?Number(v):0;
 const fmt=v=>new Intl.NumberFormat('zh-TW',{maximumFractionDigits:2}).format(v);
 const normal=s=>String(s||'').replace(/\s+/g,'').toLocaleUpperCase('zh-TW');
