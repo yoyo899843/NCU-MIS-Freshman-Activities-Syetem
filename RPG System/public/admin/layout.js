@@ -12,6 +12,7 @@
     { title: '遊戲進行', items: [
       { href: 'index.html', label: '遊戲控制', adminOnly: true },
       { href: 'scoreboard.html', label: '戰況板' },
+      { href: 'map.html', label: '即時地圖', adminOnly: true },
       { href: 'gatekeeper.html', label: '關主現場操作' }
     ] },
     { title: '遊戲內容', adminOnly: true, items: [

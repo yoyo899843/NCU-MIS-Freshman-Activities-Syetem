@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>即時地圖 - 資管皇家學院數位探查儀</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="admin.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="layout.js" defer></script>
+<style>
+  /* 地圖要盡量大：扣掉標題與狀態列之後把剩下的高度都給它，但留一個下限，
+     免得手機橫放時只剩一條縫。 */
+  #map { height: clamp(360px, calc(100dvh - 260px), 760px); border: 1px solid var(--line); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; font-size: 14px; margin: 0 0 10px; }
+  .legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .legend .sq { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; background: var(--accent); }
+  .legend .faint { opacity: .35; }
+  .status { font-size: 14px; color: var(--dim); margin: 0; }
+  .table-wrap { overflow-x: auto; }
+  #cpTable td.no-coord { color: var(--amber); }
+  .status.error { color: var(--danger); }
+  /* 關卡標記：用 divIcon 畫方塊，不依賴 Leaflet 預設的圖檔（那要另外從 CDN 抓圖） */
+  .cp-icon { width: 14px; height: 14px; background: var(--accent); border: 2px solid #06210f; box-sizing: border-box; }
+</style>
+</head>
+<body class="admin-shell">
+<h1>即時地圖</h1>
+
+<div class="card" id="denied" hidden>
+  <p class="error">只有管理員看得到全場地圖。關主請用「關主現場操作」。</p>
+</div>
+
+<div id="mapApp" hidden>
+  <div class="card">
+    <p class="legend">
+      <span><span class="sq"></span>關卡</span>
+      <span><span class="dot" style="background:#06c"></span>學派（連線中）</span>
+      <span><span class="dot faint" style="background:#06c"></span>學派（離線，顯示最後位置）</span>
+    </p>
+    <p class="status" id="status">載入中…</p>
+  </div>
+  <div id="map"></div>
+
+  <div class="card">
+    <h3>關卡進度</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>關卡</th><th>已解鎖</th><th>挑戰完成</th><th>地圖座標</th></tr></thead>
+        <tbody id="cpTable"><tr><td colspan="4">載入中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="../authFetch.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const token = localStorage.getItem('adminToken');
+if (!token) location.href = 'login.html';
+
+// 更新頻率跟玩家端上傳一致（2 秒）：再快也不會有新資料。
+const REFRESH_MS = 2000;
+
+// 範圍與縮放跟玩家地圖 public/map.html 一模一樣——兩邊看到的是同一塊場地，
+// 主辦在後台指的位置要跟玩家看到的對得起來。
+const BOUNDS = L.latLngBounds([25.016828, 121.931406], [25.023019, 121.942117]);
+
+// 跟玩家地圖同一組色盤與雜湊，所以同一個學派在兩邊是同一個顏色。
+const SCHOOL_COLORS = ['#c00', '#06c', '#2a8', '#f90', '#909'];
+function schoolColor(schoolId) {
+  let hash = 0;
+  for (const ch of String(schoolId)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return SCHOOL_COLORS[hash % SCHOOL_COLORS.length];
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function agoText(school) {
+  if (school.live) return '現在';
+  const minutes = Math.floor((Date.now() - school.updatedAt) / 60000);
+  return minutes < 1 ? '剛離線' : `${minutes} 分鐘前`;
+}
+
+// minZoom 放到 17（玩家地圖是 18）：後台通常開在電腦上，視窗比手機寬很多，
+// 縮到 18 只看得到場地中間一段，兩側的隊伍會落在畫面外。z17 的圖磚一樣有下載，
+// 1080px 寬的內容區在 z17 剛好看得完整塊場地。
+const map = L.map('map', { minZoom: 17, maxZoom: 19, maxBounds: BOUNDS, maxBoundsViscosity: 1.0 });
+map.fitBounds(BOUNDS);
+L.tileLayer('/tiles/{z}/{x}/{y}.png', { minZoom: 15, maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO' }).addTo(map);
+// 側欄收合、視窗轉向都會改變地圖容器大小，Leaflet 不會自己發現
+new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+
+const schoolMarkers = new Map();     // schoolId -> circleMarker
+const checkpointMarkers = new Map(); // checkpointId -> marker
+
+function renderSchools(schools) {
+  const seen = new Set();
+  schools.forEach(s => {
+    seen.add(s.schoolId);
+    const color = schoolColor(s.schoolId);
+    const label = `${escapeHtml(s.displayName || '?')}<br>${agoText(s)}`;
+    let marker = schoolMarkers.get(s.schoolId);
+    if (!marker) {
+      marker = L.circleMarker([s.lat, s.lng], { radius: 9, color, fillColor: color, weight: 2 })
+        .addTo(map).bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8] });
+      schoolMarkers.set(s.schoolId, marker);
+    } else {
+      marker.setLatLng([s.lat, s.lng]);
+      marker.setTooltipContent(label);
+    }
+    // 離線的隊伍畫淡一點：位置留著（那是最後已知位置），但一眼看得出不是現在的
+    marker.setStyle({ fillOpacity: s.live ? 0.9 : 0.35 });
+  });
+  // 帳號被刪掉的學派會從清單消失，標記要跟著拿掉
+  schoolMarkers.forEach((marker, id) => {
+    if (seen.has(id)) return;
+    map.removeLayer(marker);
+    schoolMarkers.delete(id);
+  });
+}
+
+function renderCheckpoints(checkpoints, totalSchools) {
+  const seen = new Set();
+  checkpoints.forEach(c => {
+    if (c.mapLat === null || c.mapLng === null) return; // 還沒設座標的關卡不畫
+    seen.add(c.id);
+    const label = `${escapeHtml(c.name)}<br>完成 ${c.completedCount}/${totalSchools}　解鎖 ${c.unlockedCount}/${totalSchools}`;
+    let marker = checkpointMarkers.get(c.id);
+    if (!marker) {
+      marker = L.marker([c.mapLat, c.mapLng], {
+        icon: L.divIcon({ className: '', html: '<div class="cp-icon"></div>', iconSize: [14, 14], iconAnchor: [7, 7] })
+      // 關卡標籤不常駐：關卡彼此靠得近時，常駐標籤會互相遮住（實測「管理學院大樓」
+      // 和「大本營」疊在一起）。名稱與數字改放地圖下面的表格，滑過／點一下標記也看得到。
+      }).addTo(map).bindTooltip(label, { direction: 'top', offset: [0, -8] });
+      checkpointMarkers.set(c.id, marker);
+    } else {
+      marker.setLatLng([c.mapLat, c.mapLng]);
+      marker.setTooltipContent(label);
+    }
+  });
+  checkpointMarkers.forEach((marker, id) => {
+    if (seen.has(id)) return;
+    map.removeLayer(marker);
+    checkpointMarkers.delete(id);
+  });
+
+  document.getElementById('cpTable').innerHTML = checkpoints.map(c => `
+    <tr>
+      <td>${escapeHtml(c.name)}</td>
+      <td>${c.unlockedCount}/${totalSchools}</td>
+      <td>${c.completedCount}/${totalSchools}</td>
+      ${c.mapLat === null
+        ? '<td class="no-coord">尚未設定，沒畫在地圖上</td>'
+        : `<td>${c.mapLat.toFixed(6)}, ${c.mapLng.toFixed(6)}</td>`}
+    </tr>`).join('') || '<tr><td colspan="4">目前沒有任何關卡</td></tr>';
+}
+
+async function load() {
+  const res = await fetch('/admin/api/map', { headers: { Authorization: 'Bearer ' + token } });
+  if (res.status === 403) {   // 關主：後端擋下來，畫面也換成說明
+    document.getElementById('mapApp').hidden = true;
+    document.getElementById('denied').hidden = false;
+    return false;
+  }
+  const statusEl = document.getElementById('status');
+  if (!res.ok) {
+    statusEl.textContent = `讀取失敗 (${res.status})，仍顯示上一次的位置`;
+    statusEl.className = 'status error';
+    return true;
+  }
+  const data = await res.json();
+  renderSchools(data.schools);
+  renderCheckpoints(data.checkpoints, data.totalSchools);
+
+  const online = data.schools.filter(s => s.live).length;
+  const noCoord = data.checkpoints.filter(c => c.mapLat === null).length;
+  statusEl.textContent =
+    `${data.totalSchools} 支學派，${data.schools.length} 支有位置（連線中 ${online}）` +
+    `　·　關卡 ${data.checkpoints.length} 個` + (noCoord ? `（${noCoord} 個還沒設座標，沒畫出來）` : '') +
+    `　·　更新於 ${new Date().toLocaleTimeString('zh-TW')}`;
+  statusEl.className = 'status';
+  return true;
+}
+
+(async () => {
+  document.getElementById('mapApp').hidden = false;
+  map.invalidateSize();
+  if (!await load()) return;   // 關主就不用再輪詢了
+  setInterval(load, REFRESH_MS);
+})();
+</script>
+</body>
+</html>

@@ -12,7 +12,7 @@ const { createLoginThrottle } = require('../loginThrottle');
 const { validateName } = require('../displayName');
 const { buildScoreboard } = require('../scoreboard');
 const { logAction } = require('../activityLog');
-const { removeLocation, clearLocations } = require('../schoolLocations');
+const { removeLocation, clearLocations, getAllLocations } = require('../schoolLocations');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -149,6 +149,42 @@ router.delete('/admins/:id', requireFullAdmin, asyncHandler(async (req, res) => 
   logAction(req.admin, '刪除關主帳號', existingRows[0].display_name || existingRows[0].email);
 
   res.status(204).end();
+}));
+
+// 管理員地圖用的一次性快照：所有學派目前的位置 ＋ 各關卡的完成進度。
+//
+// 比照 Time-Space Warfare 的 /admin/api/map/locations，但兩邊要看的東西不同：
+// 那邊是匿名圓點（玩家要自己推理內鬼），後台才看得到隊名；RPG 的地圖本來就是
+// 記名的，所以這裡直接回學派名稱。位置同樣只存在記憶體（src/schoolLocations.js），
+// 伺服器重啟後等各隊下一次上傳就會補回來。
+//
+// 位置和關卡統計合成同一支 API：地圖頁每幾秒就要更新一次，分兩支等於連線數加倍，
+// 而且兩邊資料的時間點還會對不齊。
+//
+// requireFullAdmin：關主看得到自己那一關就夠了，全場每支隊伍在哪裡是主辦的視角。
+router.get('/map', requireFullAdmin, asyncHandler(async (req, res) => {
+  const { rows: checkpoints } = await db.query(
+    `SELECT c.id, c.name, c.map_lat, c.map_lng,
+            COUNT(*) FILTER (WHERE p.unlocked_at IS NOT NULL)::int AS unlocked_count,
+            COUNT(*) FILTER (WHERE p.challenge_status = 'completed')::int AS completed_count
+     FROM checkpoints c
+     LEFT JOIN school_checkpoint_progress p ON p.checkpoint_id = c.id
+     GROUP BY c.id ORDER BY c.id`
+  );
+  const { rows: schoolCount } = await db.query('SELECT COUNT(*)::int AS n FROM schools');
+
+  res.json({
+    schools: getAllLocations(),
+    checkpoints: checkpoints.map(c => ({
+      id: c.id,
+      name: c.name,
+      mapLat: c.map_lat === null ? null : Number(c.map_lat),
+      mapLng: c.map_lng === null ? null : Number(c.map_lng),
+      unlockedCount: c.unlocked_count,
+      completedCount: c.completed_count
+    })),
+    totalSchools: schoolCount[0].n
+  });
 }));
 
 // 目前登入者自己的身分（前端用來決定要不要顯示管理員限定的功能入口）。
