@@ -82,6 +82,12 @@
     padding: 6px 10px; font-size: 0.8rem; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     max-width: 140px;
   }
+  .operation-toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    z-index: 3000; max-width: calc(100vw - 32px); padding: 10px 16px;
+    border-radius: 999px; background: #7a2f00; color: #fff; font-weight: bold;
+    box-shadow: 0 3px 12px rgba(0,0,0,0.35); pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -135,6 +141,8 @@
   </div>
 </div>
 
+<div id="operationToast" class="operation-toast" style="display:none" role="status" aria-live="polite"></div>
+
 <script src="authFetch.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
@@ -148,8 +156,15 @@ if (!token) {
 let branches = [];
 let scores = { earned: 0, mistake: 0 };
 let vault = [];
-let dragState = null; // { clueId, ghostEl } — 目前正在拖曳中的線索
+let dragState = null; // { pointerId, clueId, ghostEl } — 同一時間只允許一個拖曳手勢
 let clueModalOpener = null;
+let operationBusy = false;
+let operationCooldownUntil = 0;
+let operationToastTimer = null;
+
+// 放置與送出檢查都會改變同一份科技樹狀態。至少間隔一秒，避免前一個請求還沒
+// 完成時又送出下一個請求，造成回應順序顛倒、畫面與資料庫狀態不一致。
+const OPERATION_COOLDOWN_MS = 1000;
 
 // 固定色盤，依分支順序取色，純粹用來視覺區分不同分支（跟資料無關）。
 const BRANCH_COLORS = ['#7fd9b0', '#f7a8c4', '#a8c8f0', '#f7d488', '#c9a8f0'];
@@ -296,9 +311,45 @@ function renderSlot(s, branchColor) {
 // 單純點一下不移動，就不會冒出拖曳中的影子。
 const DRAG_START_PX = 8;
 
+function showOperationToast(message) {
+  const toast = document.getElementById('operationToast');
+  toast.textContent = message;
+  toast.style.display = '';
+  clearTimeout(operationToastTimer);
+  operationToastTimer = setTimeout(() => { toast.style.display = 'none'; }, 1800);
+}
+
+function operationIsThrottled() {
+  return operationBusy || Date.now() < operationCooldownUntil;
+}
+
+function showTooFast() {
+  showOperationToast('操作過快，請稍後一秒');
+}
+
+function beginOperation() {
+  if (operationIsThrottled()) {
+    showTooFast();
+    return false;
+  }
+  operationBusy = true;
+  operationCooldownUntil = Date.now() + OPERATION_COOLDOWN_MS;
+  return true;
+}
+
+function endOperation() {
+  operationBusy = false;
+}
+
 function attachVaultDrag(cardEl, clueId) {
   cardEl.addEventListener('pointerdown', e => {
     if (e.button !== undefined && e.button > 0) return; // 只接左鍵／手指
+    // 多指同時按、上一個拖曳尚未結束，或前一筆寫入還在進行時，都不要再建立
+    // 第二份拖曳狀態，否則兩個 pointerup 會互相清掉對方的 ghost。
+    if (dragState || operationIsThrottled()) {
+      showTooFast();
+      return;
+    }
     const clue = clueById(clueId);
     if (!clue) return;
     const isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
@@ -306,41 +357,45 @@ function attachVaultDrag(cardEl, clueId) {
     if (!isTouch) e.preventDefault();
 
     const startX = e.clientX, startY = e.clientY;
-    let ghost = null;
+    const state = { pointerId: e.pointerId, clueId, ghostEl: null };
+    dragState = state;
 
     const startDrag = ev => {
-      ghost = document.createElement('div');
-      ghost.className = 'drag-ghost';
-      ghost.textContent = clue.name;
-      document.body.appendChild(ghost);
-      positionGhost(ghost, ev.clientX, ev.clientY);
-      dragState = { clueId, ghostEl: ghost };
+      state.ghostEl = document.createElement('div');
+      state.ghostEl.className = 'drag-ghost';
+      state.ghostEl.textContent = clue.name;
+      document.body.appendChild(state.ghostEl);
+      positionGhost(state.ghostEl, ev.clientX, ev.clientY);
       try { cardEl.setPointerCapture(ev.pointerId); } catch (err) { /* 部分瀏覽器對合成事件的 pointerId 可能會擋，不影響後面用 addEventListener 接的邏輯 */ }
     };
 
     const onMove = ev => {
-      if (!ghost) {
+      if (ev.pointerId !== state.pointerId) return;
+      if (!state.ghostEl) {
         const dx = ev.clientX - startX, dy = ev.clientY - startY;
         if (Math.hypot(dx, dy) < DRAG_START_PX) return;
         if (isTouch && Math.abs(dx) <= Math.abs(dy)) return cleanup(); // 上下滑＝捲動，不是拖曳
         startDrag(ev);
       }
-      positionGhost(ghost, ev.clientX, ev.clientY);
+      positionGhost(state.ghostEl, ev.clientX, ev.clientY);
       updateDropHighlight(ev.clientX, ev.clientY);
     };
     const cleanup = () => {
       cardEl.removeEventListener('pointermove', onMove);
       cardEl.removeEventListener('pointerup', onUp);
       cardEl.removeEventListener('pointercancel', onCancel);
+      if (dragState === state && !state.ghostEl) dragState = null;
     };
     const onUp = ev => {
+      if (ev.pointerId !== state.pointerId) return;
       cleanup();
-      if (ghost) finishDrag(ev.clientX, ev.clientY);
+      if (state.ghostEl) finishDrag(state, ev.clientX, ev.clientY);
     };
     // 被瀏覽器拿去捲動（或其他原因中斷）：拖到一半的話就當作沒放下
-    const onCancel = () => {
+    const onCancel = ev => {
+      if (ev.pointerId !== state.pointerId) return;
       cleanup();
-      if (ghost) finishDrag(-1, -1);
+      if (state.ghostEl) finishDrag(state, -1, -1);
     };
     cardEl.addEventListener('pointermove', onMove);
     cardEl.addEventListener('pointerup', onUp);
@@ -364,11 +419,10 @@ function updateDropHighlight(x, y) {
   findDropzoneAt(x, y)?.classList.add('dragover');
 }
 
-async function finishDrag(x, y) {
-  const state = dragState;
+async function finishDrag(state, x, y) {
+  if (dragState !== state) return;
   dragState = null;
-  if (!state) return;
-  state.ghostEl.remove();
+  state.ghostEl?.remove();
   document.querySelectorAll('.slot-box.dragover').forEach(el => el.classList.remove('dragover'));
 
   const box = findDropzoneAt(x, y);
@@ -383,25 +437,38 @@ window.clearSlot = async function (slotId) {
 };
 
 async function placeClue(slotId, clueId) {
-  const res = await api(`/api/tech-tree/slots/${slotId}/place`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clueId })
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    alert(data.error || `失敗 (${res.status})`);
-    return;
-  }
-  for (const b of branches) {
-    const slot = b.slots.find(s => s.id === slotId);
-    if (slot) {
-      slot.placedClueId = clueId;
-      slot.placedClueName = clueId ? clueById(clueId)?.name ?? null : null;
-      break;
+  if (!beginOperation()) return false;
+  try {
+    const res = await api(`/api/tech-tree/slots/${slotId}/place`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clueId })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 429) {
+        showTooFast();
+        return false;
+      }
+      alert(data.error || `失敗 (${res.status})`);
+      return false;
     }
+    for (const b of branches) {
+      const slot = b.slots.find(s => s.id === slotId);
+      if (slot) {
+        slot.placedClueId = clueId;
+        slot.placedClueName = clueId ? clueById(clueId)?.name ?? null : null;
+        break;
+      }
+    }
+    render();
+    return true;
+  } catch (err) {
+    showOperationToast('連線失敗，請稍後再試');
+    return false;
+  } finally {
+    endOperation();
   }
-  render();
 }
 
 window.readStory = async function (branchId) {
@@ -448,32 +515,45 @@ document.addEventListener('keydown', event => {
 });
 
 document.getElementById('checkBtn').addEventListener('click', async () => {
+  if (!beginOperation()) return;
   const resultEl = document.getElementById('checkResult');
   resultEl.className = '';
   resultEl.textContent = '檢查中...';
 
-  const res = await api('/api/tech-tree/check', { method: 'POST' });
-  const data = await res.json();
-  if (!res.ok) {
+  try {
+    const res = await api('/api/tech-tree/check', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 429) {
+        showTooFast();
+        resultEl.textContent = '';
+        return;
+      }
+      resultEl.className = 'error';
+      resultEl.textContent = data.error || `失敗 (${res.status})`;
+      return;
+    }
+
+    // 這次拿了幾分、記了幾點失誤分：用提交前後的分數相減，計分規則只在後端（src/scoring.js）一份
+    const before = scores;
+    await Promise.all([loadVault(), loadTechTree()]);
+    render();
+
+    if (data.results.length === 0) {
+      resultEl.textContent = '目前沒有任何已放置、待檢查的格子。';
+    } else {
+      const correctCount = data.results.filter(r => r.correct).length;
+      const gained = scores.earned - before.earned;
+      const mistakes = scores.mistake - before.mistake;
+      resultEl.textContent = `檢查完成：${correctCount}/${data.results.length} 格放對分支` +
+        `（得分 +${gained}${mistakes ? `，推理失誤分 +${mistakes}` : ''}）。` +
+        (data.newlyUnlockedBranches.length ? ` 有 ${data.newlyUnlockedBranches.length} 個分支剛剛解鎖！` : '');
+    }
+  } catch (err) {
     resultEl.className = 'error';
-    resultEl.textContent = data.error || `失敗 (${res.status})`;
-    return;
-  }
-
-  // 這次拿了幾分、記了幾點失誤分：用提交前後的分數相減，計分規則只在後端（src/scoring.js）一份
-  const before = scores;
-  await Promise.all([loadVault(), loadTechTree()]);
-  render();
-
-  if (data.results.length === 0) {
-    resultEl.textContent = '目前沒有任何已放置、待檢查的格子。';
-  } else {
-    const correctCount = data.results.filter(r => r.correct).length;
-    const gained = scores.earned - before.earned;
-    const mistakes = scores.mistake - before.mistake;
-    resultEl.textContent = `檢查完成：${correctCount}/${data.results.length} 格放對分支` +
-      `（得分 +${gained}${mistakes ? `，推理失誤分 +${mistakes}` : ''}）。` +
-      (data.newlyUnlockedBranches.length ? ` 有 ${data.newlyUnlockedBranches.length} 個分支剛剛解鎖！` : '');
+    resultEl.textContent = '連線失敗，請稍後再試';
+  } finally {
+    endOperation();
   }
 });
 </script>

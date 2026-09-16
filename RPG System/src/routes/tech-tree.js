@@ -78,44 +78,87 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
   const slotId = parseInt(req.params.slotId, 10);
   if (!Number.isInteger(slotId)) return res.status(400).json({ error: 'invalid slot id' });
 
-  const { rows: slotRows } = await db.query('SELECT id, branch_id FROM tech_tree_slots WHERE id = $1', [slotId]);
-  if (slotRows.length === 0) return res.status(404).json({ error: 'slot not found' });
-  const slot = slotRows[0];
-
-  const { rows: placementRows } = await db.query(
-    'SELECT is_locked FROM school_slot_placements WHERE school_id = $1 AND slot_id = $2',
-    [schoolId, slotId]
-  );
-  if (placementRows[0]?.is_locked) {
-    return res.status(409).json({ error: 'this slot is already locked in and cannot be changed' });
-  }
-
   // clueId 是 null／沒帶 = 把這個槽位清空。
   const { clueId } = req.body || {};
   let placedClueId = null;
   if (clueId !== null && clueId !== undefined) {
     placedClueId = Number.isInteger(clueId) ? clueId : parseInt(clueId, 10);
     if (!Number.isInteger(placedClueId)) return res.status(400).json({ error: 'invalid clueId' });
-
-    const { rows: ownedRows } = await db.query(
-      'SELECT 1 FROM school_clues WHERE school_id = $1 AND clue_id = $2',
-      [schoolId, placedClueId]
-    );
-    if (ownedRows.length === 0) {
-      return res.status(400).json({ error: 'your school does not own this clue yet' });
-    }
   }
 
-  const { rows } = await db.query(
-    `INSERT INTO school_slot_placements (school_id, slot_id, placed_clue_id, is_locked, updated_at)
-     VALUES ($1, $2, $3, false, now())
-     ON CONFLICT (school_id, slot_id) DO UPDATE
-       SET placed_clue_id = EXCLUDED.placed_clue_id, updated_at = now()
-     RETURNING placed_clue_id, is_locked`,
-    [schoolId, slotId, placedClueId]
-  );
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    // 放置與「提交結果」都會改同一隊的科技樹。已有操作進行中就立刻拒絕，不能
+    // 讓快速重複請求排隊後又依序覆蓋狀態。
+    const { rows: lockRows } = await client.query(
+      'SELECT pg_try_advisory_xact_lock(20260916, $1) AS acquired',
+      [schoolId]
+    );
+    if (!lockRows[0].acquired) {
+      await client.query('ROLLBACK');
+      return res.status(429).json({ error: '操作過快，請稍後一秒', retryAfterMs: 1000 });
+    }
 
-  res.json({ slotId, placedClueId: rows[0].placed_clue_id, isLocked: rows[0].is_locked });
+    const { rows: slotRows } = await client.query(
+      'SELECT id, branch_id FROM tech_tree_slots WHERE id = $1',
+      [slotId]
+    );
+    if (slotRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'slot not found' });
+    }
+
+    const { rows: placementRows } = await client.query(
+      'SELECT is_locked FROM school_slot_placements WHERE school_id = $1 AND slot_id = $2',
+      [schoolId, slotId]
+    );
+    if (placementRows[0]?.is_locked) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'this slot is already locked in and cannot be changed' });
+    }
+
+    if (placedClueId !== null) {
+      const { rows: ownedRows } = await client.query(
+        'SELECT 1 FROM school_clues WHERE school_id = $1 AND clue_id = $2',
+        [schoolId, placedClueId]
+      );
+      if (ownedRows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'your school does not own this clue yet' });
+      }
+
+      // 前端會把已放置線索從清單移除，但重疊請求可能在畫面更新前把同一張線索
+      // 放進兩格；後端也要拒絕，才能真正守住「一張線索只能使用一次」。
+      const { rows: duplicateRows } = await client.query(
+        `SELECT slot_id FROM school_slot_placements
+         WHERE school_id = $1 AND placed_clue_id = $2 AND slot_id <> $3
+         LIMIT 1`,
+        [schoolId, placedClueId, slotId]
+      );
+      if (duplicateRows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'this clue is already placed in another slot' });
+      }
+    }
+
+    const { rows } = await client.query(
+      `INSERT INTO school_slot_placements (school_id, slot_id, placed_clue_id, is_locked, updated_at)
+       VALUES ($1, $2, $3, false, now())
+       ON CONFLICT (school_id, slot_id) DO UPDATE
+         SET placed_clue_id = EXCLUDED.placed_clue_id, updated_at = now()
+       RETURNING placed_clue_id, is_locked`,
+      [schoolId, slotId, placedClueId]
+    );
+
+    await client.query('COMMIT');
+    res.json({ slotId, placedClueId: rows[0].placed_clue_id, isLocked: rows[0].is_locked });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }));
 
 // 檢查邏輯：一次檢查這支隊伍目前所有「已放置、還沒鎖定」的槽位（不是只檢查一格）。
@@ -129,6 +172,15 @@ router.post('/check', asyncHandler(async (req, res) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    // 與放置 API 使用同一把隊伍鎖，避免「正在放置」與「正在檢查」交錯執行。
+    const { rows: lockRows } = await client.query(
+      'SELECT pg_try_advisory_xact_lock(20260916, $1) AS acquired',
+      [schoolId]
+    );
+    if (!lockRows[0].acquired) {
+      await client.query('ROLLBACK');
+      return res.status(429).json({ error: '操作過快，請稍後一秒', retryAfterMs: 1000 });
+    }
 
     const { rows: pending } = await client.query(
       `SELECT ssp.slot_id, ssp.placed_clue_id, s.branch_id
