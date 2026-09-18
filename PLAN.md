@@ -161,15 +161,15 @@
 
 ## Port 配置
 
-對外（host）port 統一從 9000 開始編號，方便使用者手動設定 cloudflared 時對照：
+對外（host）port 統一從 9001 開始連號，方便使用者手動設定 cloudflared 時對照（2026-09 重排：Portal、PgAdmin、Mods 已移除，其餘改成連號；下面各段落記錄的是當時的號碼）：
 
 | 服務 | Host Port |
 |---|---|
-| `Portal` | 9000 |
-| `Time-Space Warfare` app | 9001 |
-| `PgAdmin` | 9002 |
-| `RPG System` app（未來） | 9003 |
-| `Stock Game` app（未來） | 9004 |
+| Time-Space Warfare app | 9001 |
+| RPG System app | 9002 |
+| Stock System app | 9003 |
+| Match Competition（對抗賽） | 9004 |
+| Final Scoreboard（總積分榜） | 9005 |
 
 各系統的 `db` 不對外開 host port（只在系統私有 internal network 內用 container 預設 port 溝通），不佔用這個編號序列。
 

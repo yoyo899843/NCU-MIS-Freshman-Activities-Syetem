@@ -1,0 +1,25 @@
+# 對抗賽成績服務。總積分榜（Final Scoreboard）透過共用的 ncumis-camp 網路，
+# 用 http://match-competition-app:8000/api/results 直接讀成績。
+services:
+  app:
+    build: .
+    container_name: match-competition-app
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+    ports:
+      - "9001:8000"
+    # 成績存在主機的 data/results.json，重建容器也不會不見
+    volumes:
+      - ./data:/app/data
+    networks:
+      - ncumis-camp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  ncumis-camp:
+    external: true

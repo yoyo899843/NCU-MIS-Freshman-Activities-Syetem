@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>對抗賽成績</title>
+<style>
+  /* 配色沿用總積分榜（Final Scoreboard），兩個頁面放在一起看是同一套 */
+  :root { --ink:#18233d; --muted:#5b6b82; --paper:#f5f7fb; --line:#dde4ef; --navy:#142c54; --sky:#2f80ed;
+          --good:#007c63; --danger:#c43d4e; --card:#fff; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; color:var(--ink); background:radial-gradient(circle at 0 0,#e3edf9 0,transparent 35rem),var(--paper);
+         font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Noto Sans TC",sans-serif; }
+  .shell { max-width:960px; margin:auto; padding:28px clamp(16px,3vw,40px) 52px; }
+  .eyebrow { margin:0 0 5px; color:var(--sky); font-weight:800; font-size:.78rem; letter-spacing:.14em; }
+  h1 { margin:0; font-size:clamp(1.7rem,4vw,2.6rem); letter-spacing:-.04em; }
+  .intro { margin:6px 0 22px; color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 8px 24px #18233d0a;
+          margin-bottom:16px; overflow:hidden; }
+  .card-body { padding:16px 18px; }
+  .card h2 { margin:0 0 8px; font-size:1.05rem; }
+  .hint { color:var(--muted); font-size:.88rem; margin:0; }
+  code { background:#eef3fa; border-radius:6px; padding:1px 6px; font-size:.88em; }
+  label { display:block; font-size:.88rem; color:var(--muted); margin-bottom:4px; }
+  input, select { font:inherit; color:var(--ink); border:1px solid #b9c8dd; border-radius:8px; padding:8px 10px;
+                  min-height:40px; background:#fff; width:100%; }
+  input:focus-visible, select:focus-visible, button:focus-visible { outline:3px solid #2f80ed55; outline-offset:1px; }
+  button { appearance:none; border:1px solid #b9c8dd; border-radius:8px; padding:8px 14px; min-height:40px;
+           color:var(--navy); background:#fff; font:inherit; font-weight:700; cursor:pointer; }
+  button:hover { background:#eef3fa; }
+  button.primary { background:var(--navy); border-color:var(--navy); color:#fff; }
+  button.primary:hover { background:#1d3b6e; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .row { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+  .row > .grow { flex:1 1 220px; }
+  .msg { margin:10px 0 0; font-size:.9rem; }
+  .msg:empty { display:none; }
+  .msg.ok { color:var(--good); } .msg.error { color:var(--danger); }
+  .table-wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+  th { font-size:.82rem; color:var(--muted); font-weight:700; background:#f8fafd; }
+  td.idx { width:3em; color:var(--muted); }
+  td.del { width:1%; white-space:nowrap; }
+  td select { min-width:9em; }
+  td input { min-width:10em; }
+  .toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;
+             padding:14px 18px; border-bottom:1px solid var(--line); }
+  .toolbar .updated { color:var(--muted); font-size:.85rem; }
+  .footer-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 18px; }
+  .dirty { color:#9a5b00; font-size:.88rem; font-weight:700; }
+  .badge { display:inline-block; padding:2px 9px; border-radius:999px; font-size:.8rem; font-weight:700; }
+  .badge.on { background:#e2f5ef; color:var(--good); } .badge.off { background:#eef1f5; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <p class="eyebrow">NCU MIS · MATCH COMPETITION</p>
+  <h1>對抗賽成績</h1>
+  <p class="intro">記錄每個學派 A、B 兩隊的對抗賽勝負。這裡只記結果，換算成積分由總積分榜負責。</p>
+
+  <section class="card">
+    <div class="toolbar">
+      <h2 style="margin:0">各學派結果</h2>
+      <span class="updated" id="updated">載入中…</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>學派名稱</th><th>A 隊</th><th>B 隊</th><th></th></tr></thead>
+        <tbody id="rows"><tr><td colspan="5">載入中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="footer-actions">
+      <div class="row">
+        <button type="button" id="addBtn">新增學派</button>
+        <button type="button" id="reloadBtn">重新載入</button>
+      </div>
+      <div class="row" style="align-items:center">
+        <span class="dirty" id="dirty" hidden>有尚未儲存的變更</span>
+        <button type="button" class="primary" id="saveBtn">儲存成績</button>
+      </div>
+    </div>
+    <p class="msg" id="saveMsg" role="status" style="margin:0 18px 14px"></p>
+  </section>
+
+  <section class="card">
+    <div class="card-body">
+      <h2>API</h2>
+      <p class="hint">總積分榜或其他系統可以直接讀取：<code>GET /api/results</code>（允許跨網域）。
+        修改用 <code>PUT /api/results</code>。回傳每個學派的 <code>a</code>、<code>b</code>，值為 <code>win</code>／<code>draw</code>／<code>lose</code>，空字串代表未結算或沒有這一隊。</p>
+    </div>
+  </section>
+</div>
+
+<script>
+const RESULT_OPTIONS = [['', '未結算／無此隊'], ['win', '勝'], ['draw', '平'], ['lose', '負']];
+let schools = [];
+let dirty = false;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function msg(id, text, ok) { const el = $(id); el.textContent = text; el.className = 'msg ' + (ok ? 'ok' : 'error'); }
+function setDirty(v) { dirty = v; $('dirty').hidden = !v; }
+
+function render() {
+  const dis = '';
+  $('rows').innerHTML = schools.map((s, i) => `
+    <tr>
+      <td class="idx">${i + 1}</td>
+      <td><input data-i="${i}" data-k="name" value="${esc(s.name)}" aria-label="第 ${i + 1} 列學派名稱"${dis}></td>
+      ${['a', 'b'].map(k => `<td><select data-i="${i}" data-k="${k}" aria-label="${esc(s.name)} ${k.toUpperCase()} 隊結果"${dis}>
+        ${RESULT_OPTIONS.map(([v, label]) => `<option value="${v}"${s[k] === v ? ' selected' : ''}>${label}</option>`).join('')}
+      </select></td>`).join('')}
+      <td class="del"><button type="button" data-del="${i}" aria-label="刪除 ${esc(s.name)}"${dis}>刪除</button></td>
+    </tr>`).join('') || '<tr><td colspan="5">目前沒有學派，按「新增學派」加入。</td></tr>';
+}
+
+async function load() {
+  // 有未儲存的變更時，重新載入會蓋掉它，先問一聲
+  if (dirty && !confirm('有尚未儲存的變更，重新載入會捨棄，確定嗎？')) return;
+  const res = await fetch('/api/results', { cache: 'no-store' });
+  const data = await res.json();
+  schools = data.schools || [];
+  $('updated').textContent = data.updatedAt ? `最後儲存：${new Date(data.updatedAt).toLocaleString('zh-TW')}` : '尚未儲存過';
+  setDirty(false);
+  render();
+}
+
+$('rows').addEventListener('input', e => {
+  const el = e.target; if (!el.dataset.k) return;
+  schools[Number(el.dataset.i)][el.dataset.k] = el.value;
+  setDirty(true);
+});
+$('rows').addEventListener('change', e => {
+  const el = e.target; if (!el.dataset.k) return;
+  schools[Number(el.dataset.i)][el.dataset.k] = el.value;
+  setDirty(true);
+});
+$('rows').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-del]'); if (!btn) return;
+  const s = schools[Number(btn.dataset.del)];
+  if (!confirm(`確定刪除「${s.name}」這一列嗎？（按「儲存成績」後才會生效）`)) return;
+  schools.splice(Number(btn.dataset.del), 1);
+  setDirty(true); render();
+});
+$('addBtn').addEventListener('click', () => {
+  schools.push({ name: '', a: '', b: '' });
+  setDirty(true); render();
+  $('rows').querySelector('tr:last-child input')?.focus();
+});
+$('reloadBtn').addEventListener('click', load);
+
+$('saveBtn').addEventListener('click', async () => {
+  const btn = $('saveBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/results', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schools: schools.map(s => ({ ...s, name: s.name.trim() })) })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return msg('saveMsg', data.error || `儲存失敗 (${res.status})`, false);
+    schools = data.schools;
+    $('updated').textContent = `最後儲存：${new Date(data.updatedAt).toLocaleString('zh-TW')}`;
+    setDirty(false); render();
+    msg('saveMsg', '已儲存。總積分榜按「載入對抗賽 API」就會帶入新的結果。', true);
+  } finally { btn.disabled = false; }
+});
+
+// 關分頁前提醒還沒存的變更
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+load();
+</script>
+</body>
+</html>

@@ -28,7 +28,11 @@ jobs:
       - name: Compose up
         run: |
           cd "$DEPLOY_DIR"
-          for d in "Time-Space Warfare" "RPG System" "Stock System" "Final Scoreboard"; do
+          # 順序也決定 host port 的交接（2026-09 重排過）：賭大股票要接 RPG 讓出的 9003、
+          # 總積分榜要接賭大股票讓出的 9005，前一個系統先換好號碼，後一個才綁得上去。
+          #
+          # Match Competition 放在 Final Scoreboard 前面：總積分榜會透過 API 讀對抗賽成績。
+          for d in "Time-Space Warfare" "RPG System" "Stock System" "Match Competition" "Final Scoreboard"; do
             (cd "$d" && docker compose up -d --build --remove-orphans)
           done
 
@@ -47,6 +51,28 @@ jobs:
               for i in $(seq 1 30); do
                 if docker compose exec -T app node -e \
                      "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))" 2>/dev/null; then
+                  echo "$d: healthy"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "$d: 啟動失敗，最後 50 行 log："
+              docker compose logs --tail=50 app
+              exit 1
+            )
+          done
+
+      # Final Scoreboard、Match Competition 是 Python 服務（port 8000、image 裡沒有 node），
+      # 用 python 打 /health。原本這兩個完全沒檢查，起不來也不會讓 deploy 紅。
+      - name: Verify Python services are healthy
+        run: |
+          cd "$DEPLOY_DIR"
+          for d in "Match Competition" "Final Scoreboard"; do
+            (
+              cd "$d"
+              for i in $(seq 1 30); do
+                if docker compose exec -T app python -c \
+                     "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)" 2>/dev/null; then
                   echo "$d: healthy"
                   exit 0
                 fi

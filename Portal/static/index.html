@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>資管新生營｜活動入口</title>
+  <style>
+    :root { --ink:#15233e; --muted:#61708a; --line:#dce4f0; --paper:#f5f7fb; --card:#fff; --navy:#102c57; --blue:#3979ea; --green:#087a65; --pending:#7d8ba2; }
+    * { box-sizing:border-box; }
+    body { min-height:100vh; margin:0; color:var(--ink); background:radial-gradient(circle at 3% 0,#d9e8ff 0,transparent 35rem),radial-gradient(circle at 100% 100%,#d9f3ea 0,transparent 32rem),var(--paper); font:16px/1.5 ui-sans-serif,system-ui,-apple-system,"Noto Sans TC",sans-serif; }
+    .shell { width:min(1120px,calc(100% - 32px)); margin:auto; padding:clamp(32px,7vw,82px) 0 48px; }
+    .eyebrow { margin:0 0 10px; color:var(--blue); font-size:.79rem; font-weight:850; letter-spacing:.16em; }
+    h1 { max-width:760px; margin:0; font-size:clamp(2.1rem,6vw,4.25rem); line-height:1.08; letter-spacing:-.06em; }
+    .lead { max-width:600px; margin:17px 0 40px; color:var(--muted); font-size:clamp(1rem,2vw,1.13rem); }
+    .section-head { display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin:0 0 12px; }.section-head h2 { margin:0; font-size:1.08rem; }.section-head p { margin:0; color:var(--muted); font-size:.88rem; }
+    .cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }.cards + .section-head { margin-top:38px; }
+    .card { position:relative; display:flex; flex-direction:column; min-height:208px; padding:19px; overflow:hidden; border:1px solid var(--line); border-radius:18px; background:rgba(255,255,255,.91); box-shadow:0 12px 28px #1832550c; transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease; }.card::after { content:''; position:absolute; right:-35px; bottom:-45px; width:135px; height:135px; border-radius:50%; background:var(--tint,#eaf2ff); }.card:hover { transform:translateY(-3px); border-color:#aabfe0; box-shadow:0 16px 32px #18325516; }
+    .icon { position:relative; z-index:1; display:grid; place-items:center; width:42px; height:42px; margin-bottom:20px; border-radius:12px; color:var(--accent,#3979ea); background:var(--tint,#eaf2ff); font-size:1.32rem; font-weight:850; }.card h3 { position:relative; z-index:1; margin:0; font-size:1.28rem; letter-spacing:-.025em; }.card .subtitle { position:relative; z-index:1; min-height:46px; margin:4px 0 14px; color:var(--muted); font-size:.88rem; }
+    .links { position:relative; z-index:1; display:flex; gap:8px; margin-top:auto; flex-wrap:wrap; }.link { display:inline-flex; align-items:center; min-height:38px; padding:7px 11px; border:1px solid #b9c9e1; border-radius:9px; color:var(--navy); background:#fff; font-size:.87rem; font-weight:760; text-decoration:none; }.link.primary { border-color:var(--accent,#3979ea); color:#fff; background:var(--accent,#3979ea); }.link:hover { filter:brightness(.96); }.link:focus-visible { outline:3px solid #77a8fa88; outline-offset:2px; }.link.pending { border-style:dashed; color:var(--pending); background:#f7f9fc; cursor:default; }
+    .note { margin:29px 0 0; color:var(--muted); font-size:.84rem; }.note strong { color:var(--ink); }
+    [data-id="time"] { --accent:#795ad6; --tint:#f0ebff; } [data-id="rpg"] { --accent:#007c63; --tint:#e3f6ef; } [data-id="stock"] { --accent:#df6c24; --tint:#fff0e5; } [data-id="match"] { --accent:#bd4051; --tint:#ffebef; } [data-id="final"] { --accent:#9a7003; --tint:#fff4cf; }
+    @media (max-width:820px) { .cards { grid-template-columns:repeat(2,minmax(0,1fr)); } }.card { min-height:194px; }
+    @media (max-width:540px) { .shell { width:min(100% - 24px,1120px); }.cards { grid-template-columns:1fr; }.section-head { align-items:start; flex-direction:column; gap:2px; }.card { min-height:180px; }.lead { margin-bottom:28px; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <p class="eyebrow">NCU MIS · FRESHMAN CAMP</p>
+    <h1>活動入口</h1>
+    <p class="lead">選擇要參加的活動，或由工作人員進入各活動的管理介面。</p>
+
+    <section aria-labelledby="playerHeading">
+      <div class="section-head"><h2 id="playerHeading">玩家入口</h2><p>請依活動流程與關主指示進入</p></div>
+      <div class="cards" id="playerCards"></div>
+    </section>
+
+    <section aria-labelledby="adminHeading">
+      <div class="section-head"><h2 id="adminHeading">工作人員入口</h2><p>僅提供需要操作的活動後台</p></div>
+      <div class="cards" id="adminCards"></div>
+    </section>
+
+    <p class="note"><strong>連結尚未設定？</strong> 卡片會顯示「等待設定」；主辦填入 <code>static/config.js</code> 的網址後，重新整理即可生效。時空戰爭後台不會在本頁顯示。</p>
+  </main>
+  <script src="config.js"></script>
+  <script>
+    const links = window.PORTAL_LINKS?.activities || [];
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
+    function action(url, label, primary = false) {
+      if (!url) return `<span class="link pending" aria-disabled="true">等待設定</span>`;
+      return `<a class="link${primary ? ' primary' : ''}" href="${escapeHtml(url)}" rel="noopener">${label}</a>`;
+    }
+    function card(item, admin = false) {
+      const label = admin ? `${item.title}後台` : item.title;
+      const url = admin ? item.adminUrl : item.playerUrl;
+      return `<article class="card" data-id="${escapeHtml(item.id)}"><div class="icon" aria-hidden="true">${escapeHtml(item.icon)}</div><h3>${escapeHtml(label)}</h3><p class="subtitle">${escapeHtml(item.subtitle)}</p><div class="links">${action(url, admin ? '進入後台' : '進入活動', !admin)}</div></article>`;
+    }
+    document.querySelector('#playerCards').innerHTML = links.map(item => card(item)).join('');
+    // 特意排除時空戰爭：其後台入口不在 Portal 公開展示。
+    const adminItems = links.filter(item => item.id !== 'time');
+    document.querySelector('#adminCards').innerHTML = adminItems.map(item => card(item, true)).join('');
+  </script>
+</body>
+</html>

@@ -18,7 +18,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:?請先在這個資料夾 cp .env.example .env 並填好內容}:${POSTGRES_PASSWORD:?請先在這個資料夾 cp .env.example .env 並填好內容}@db:5432/${POSTGRES_DB:?請先在這個資料夾 cp .env.example .env 並填好內容}
       JWT_SECRET: ${JWT_SECRET:?請先在這個資料夾 cp .env.example .env 並填好內容}
     ports:
-      - "9001:3000"
+      - "10000:3000"
     depends_on:
       db:
         condition: service_healthy

@@ -28,19 +28,21 @@ cp .env.example .env   # 填入實際密碼後再啟動
 docker compose up -d
 ```
 
-`Portal/`、`PgAdmin/` 也是一樣的流程。
+其他系統資料夾（`RPG System/`、`Stock System/`、`Match Competition/`、`Final Scoreboard/`）也是一樣的流程。
 
 ## Port 配置
 
-對外 host port 從 9000 開始編號:
+對外 host port 從 9001 開始連號，遊戲系統在前、彙整工具在後:
 
 | 服務 | Host Port |
 |---|---|
-| Portal | 9000 |
 | Time-Space Warfare app | 9001 |
-| PgAdmin | 9002 |
-| RPG System app | 9003 |
-| Stock Game app(未來) | 9004 |
+| RPG System app | 9002 |
+| Stock System app | 9003 |
+| Match Competition（對抗賽） | 9004 |
+| Final Scoreboard（總積分榜） | 9005 |
+
+服務之間互相呼叫走共用網路 `ncumis-camp` 上的容器名稱與容器內 port（3000／8000），不經過 host port，所以改 host port 只需要同步 Cloudflare Tunnel 的對應。
 
 ## Cloudflare Tunnel
 
