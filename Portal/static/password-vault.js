@@ -2,10 +2,6 @@
 (() => {
   const LEGACY_STORAGE_KEY = 'ncumis-portal-password-vault-v1';
   const LEGACY_ITERATIONS = 250000;
-  const TEST_RECORDS = [
-    { id:'sample-rpg', platform:'[測試] RPG 後台', url:'https://rpg.佑佑.台灣/admin', username:'demo-rpg-admin', password:'demo-rpg-password', notes:'測試資料，請改成實際帳密。' },
-    { id:'sample-stock', platform:'[測試] 賭大股票後台', url:'https://賭大.佑佑.台灣/admin', username:'demo-stock-admin', password:'demo-stock-password', notes:'測試資料，請改成實際帳密。' }
-  ];
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   const safeUrl = value => { try { const url = new URL(String(value || '')); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; } catch { return ''; } };
@@ -41,7 +37,7 @@
   }
   function showInitial() { $('vaultContents').classList.add('hidden'); $('vaultUnlockPanel').classList.remove('hidden'); }
   function showContents() { $('vaultUnlockPanel').classList.add('hidden'); $('vaultContents').classList.remove('hidden'); renderRecords(); }
-  function resetForm() { editingId = null; $('vaultRecordForm').reset(); $('vaultRecordTitle').textContent = '新增平台密碼'; $('vaultSaveRecordBtn').textContent = '儲存紀錄'; $('vaultCancelEditBtn').classList.add('hidden'); status('vaultRecordStatus'); }
+  function resetForm() { editingId = null; $('vaultRecordForm').reset(); $('vaultRecordTitle').textContent = '新增平台密碼'; $('vaultSaveRecordBtn').textContent = '儲存紀錄'; $('vaultCancelEditBtn').classList.add('hidden'); $('vaultRecordDetails').open = false; status('vaultRecordStatus'); }
   function lock(close = false) { token = ''; records = []; editingId = null; $('vaultUnlockPassword').value = ''; status('vaultUnlockStatus'); if (close) $('passwordVault').classList.add('hidden'); else showInitial(); }
   function renderRecords() {
     const host = $('vaultRecords'), query = $('vaultFilter').value.trim(), term = searchable(query);
@@ -67,12 +63,6 @@
     try { const body = await request('/api/vault/unlock', { method:'POST', body:JSON.stringify({ password }) }); token = body.token; await load(); const legacy = !records.length ? await legacyRecords(password).catch(() => []) : []; if (legacy.length && confirm('偵測到這台裝置的舊保管庫。要加密搬移到 Portal 伺服器嗎？')) { records = legacy; await persist(); localStorage.removeItem(LEGACY_STORAGE_KEY); status('vaultUnlockStatus', '已將舊保管庫加密搬移到 Portal 伺服器。', 'ok'); } $('vaultUnlockPassword').value = ''; showContents(); }
     catch (error) { token = ''; sessionError(error, 'vaultUnlockStatus'); }
   });
-  $('vaultLoadTestBtn').addEventListener('click', async () => {
-    if (records.some(record => TEST_RECORDS.some(sample => sample.id === record.id))) return status('vaultRecordStatus', '測試資料已經存在。', 'error');
-    if (records.length && !confirm('目前已有紀錄，仍要加入三筆測試資料嗎？')) return;
-    records = [...TEST_RECORDS.map(record => ({ ...record })), ...records];
-    try { await persist(); renderRecords(); status('vaultRecordStatus', '已加密儲存在 Portal 伺服器。', 'ok'); } catch (error) { sessionError(error, 'vaultRecordStatus'); }
-  });
   $('vaultRecordForm').addEventListener('submit', async event => {
     event.preventDefault(); const form = { platform:$('vaultPlatform').value.trim(), url:$('vaultRecordUrl').value.trim(), username:$('vaultUsername').value.trim(), password:$('vaultRecordPassword').value, notes:$('vaultNotes').value.trim() };
     if (!form.platform || !form.password) return status('vaultRecordStatus', '請填寫平台名稱與密碼。', 'error');
@@ -81,7 +71,7 @@
   });
   $('vaultRecords').addEventListener('click', async event => {
     const button = event.target.closest('button'); if (!button) return; const id = button.dataset.edit || button.dataset.delete; const record = records.find(item => item.id === id); if (!record) return;
-    if (button.dataset.edit) { editingId = id; $('vaultPlatform').value = record.platform; $('vaultRecordUrl').value = record.url || ''; $('vaultUsername').value = record.username || ''; $('vaultRecordPassword').value = record.password; $('vaultNotes').value = record.notes || ''; $('vaultRecordTitle').textContent = `編輯：${record.platform}`; $('vaultSaveRecordBtn').textContent = '更新紀錄'; $('vaultCancelEditBtn').classList.remove('hidden'); $('vaultPlatform').focus(); return; }
+    if (button.dataset.edit) { editingId = id; $('vaultPlatform').value = record.platform; $('vaultRecordUrl').value = record.url || ''; $('vaultUsername').value = record.username || ''; $('vaultRecordPassword').value = record.password; $('vaultNotes').value = record.notes || ''; $('vaultRecordTitle').textContent = `編輯：${record.platform}`; $('vaultSaveRecordBtn').textContent = '更新紀錄'; $('vaultCancelEditBtn').classList.remove('hidden'); $('vaultRecordDetails').open = true; $('vaultPlatform').focus(); return; }
     if (button.dataset.delete) { if (!confirm(`確定刪除「${record.platform}」嗎？`)) return; records = records.filter(item => item.id !== id); try { await persist(); if (editingId === id) resetForm(); renderRecords(); } catch (error) { sessionError(error, 'vaultRecordStatus'); } }
   });
   $('vaultClearBtn').addEventListener('click', async () => { if (prompt('這會永久刪除伺服器上的所有密碼紀錄。請輸入「清除」確認：') !== '清除') return; try { await request('/api/vault/records', { method:'DELETE' }); records = []; resetForm(); renderRecords(); status('vaultRecordStatus', '已清除伺服器保管庫。', 'ok'); } catch (error) { sessionError(error, 'vaultRecordStatus'); } });
