@@ -6,6 +6,10 @@ const { techTreeScore } = require('../scoring');
 
 const router = express.Router();
 router.use(schoolAuth);
+const teamCode = req => {
+  const team = String(req.query.team || 'A').toUpperCase();
+  return team === 'A' || team === 'B' ? team : null;
+};
 
 // 數位偵探：科技樹槽位放置線索、檢查邏輯、分支劇情閱讀。
 // 正確答案（tech_tree_slots.correct_clue_id）只有管理端（/admin/api/tech-tree/*）看得到，
@@ -20,29 +24,31 @@ router.use(schoolAuth);
 // 紀錄兜不起來的累計值（跟這個系統一貫的計分設計原則一致）。
 router.get('/', asyncHandler(async (req, res) => {
   const schoolId = req.school.sub;
+  const team = teamCode(req);
+  if (!team) return res.status(400).json({ error: 'team must be A or B' });
 
   const { rows: branchRows } = await db.query(
     `SELECT b.id, b.name, b.display_order,
             (sbu.branch_id IS NOT NULL) AS unlocked
      FROM tech_tree_branches b
-     LEFT JOIN school_branch_unlocks sbu ON sbu.branch_id = b.id AND sbu.school_id = $1
+     LEFT JOIN school_branch_unlocks sbu ON sbu.branch_id = b.id AND sbu.school_id = $1 AND sbu.team_code = $2
      ORDER BY b.display_order, b.id`,
-    [schoolId]
+    [schoolId, team]
   );
 
   const { rows: slotRows } = await db.query(
     `SELECT s.id, s.branch_id, s.slot_order,
             ssp.placed_clue_id, c.name AS placed_clue_name, COALESCE(ssp.is_locked, false) AS is_locked
      FROM tech_tree_slots s
-     LEFT JOIN school_slot_placements ssp ON ssp.slot_id = s.id AND ssp.school_id = $1
+     LEFT JOIN school_slot_placements ssp ON ssp.slot_id = s.id AND ssp.school_id = $1 AND ssp.team_code = $2
      LEFT JOIN clues c ON c.id = ssp.placed_clue_id
      ORDER BY s.branch_id, s.slot_order, s.id`,
-    [schoolId]
+    [schoolId, team]
   );
 
   const { rows: errorRows } = await db.query(
-    'SELECT COUNT(*)::int AS error_count FROM school_check_attempts WHERE school_id = $1 AND is_correct = false',
-    [schoolId]
+    'SELECT COUNT(*)::int AS error_count FROM school_check_attempts WHERE school_id = $1 AND team_code = $2 AND is_correct = false',
+    [schoolId, team]
   );
 
   const branches = branchRows.map(b => {
@@ -75,6 +81,8 @@ router.get('/', asyncHandler(async (req, res) => {
 // 會在驗證正確後鎖定，避免已確認的答案被改掉。
 router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
   const schoolId = req.school.sub;
+  const team = teamCode(req);
+  if (!team) return res.status(400).json({ error: 'team must be A or B' });
   const slotId = parseInt(req.params.slotId, 10);
   if (!Number.isInteger(slotId)) return res.status(400).json({ error: 'invalid slot id' });
 
@@ -93,7 +101,7 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
     // 讓快速重複請求排隊後又依序覆蓋狀態。
     const { rows: lockRows } = await client.query(
       'SELECT pg_try_advisory_xact_lock(20260916, $1) AS acquired',
-      [schoolId]
+      [schoolId * 2 + (team === 'B' ? 1 : 0)]
     );
     if (!lockRows[0].acquired) {
       await client.query('ROLLBACK');
@@ -110,8 +118,8 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
     }
 
     const { rows: placementRows } = await client.query(
-      'SELECT is_locked FROM school_slot_placements WHERE school_id = $1 AND slot_id = $2',
-      [schoolId, slotId]
+      'SELECT is_locked FROM school_slot_placements WHERE school_id = $1 AND team_code = $2 AND slot_id = $3',
+      [schoolId, team, slotId]
     );
     if (placementRows[0]?.is_locked) {
       await client.query('ROLLBACK');
@@ -132,9 +140,9 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
       // 放進兩格；後端也要拒絕，才能真正守住「一張線索只能使用一次」。
       const { rows: duplicateRows } = await client.query(
         `SELECT slot_id FROM school_slot_placements
-         WHERE school_id = $1 AND placed_clue_id = $2 AND slot_id <> $3
+         WHERE school_id = $1 AND team_code = $2 AND placed_clue_id = $3 AND slot_id <> $4
          LIMIT 1`,
-        [schoolId, placedClueId, slotId]
+        [schoolId, team, placedClueId, slotId]
       );
       if (duplicateRows.length > 0) {
         await client.query('ROLLBACK');
@@ -143,12 +151,12 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
     }
 
     const { rows } = await client.query(
-      `INSERT INTO school_slot_placements (school_id, slot_id, placed_clue_id, is_locked, updated_at)
-       VALUES ($1, $2, $3, false, now())
-       ON CONFLICT (school_id, slot_id) DO UPDATE
+      `INSERT INTO school_slot_placements (school_id, team_code, slot_id, placed_clue_id, is_locked, updated_at)
+       VALUES ($1, $2, $3, $4, false, now())
+       ON CONFLICT (school_id, team_code, slot_id) DO UPDATE
          SET placed_clue_id = EXCLUDED.placed_clue_id, updated_at = now()
        RETURNING placed_clue_id, is_locked`,
-      [schoolId, slotId, placedClueId]
+      [schoolId, team, slotId, placedClueId]
     );
 
     await client.query('COMMIT');
@@ -168,6 +176,8 @@ router.post('/slots/:slotId/place', asyncHandler(async (req, res) => {
 // 不會再收回，即使之後管理員又替該分支加了新槽位）。
 router.post('/check', asyncHandler(async (req, res) => {
   const schoolId = req.school.sub;
+  const team = teamCode(req);
+  if (!team) return res.status(400).json({ error: 'team must be A or B' });
 
   const client = await db.connect();
   try {
@@ -175,7 +185,7 @@ router.post('/check', asyncHandler(async (req, res) => {
     // 與放置 API 使用同一把隊伍鎖，避免「正在放置」與「正在檢查」交錯執行。
     const { rows: lockRows } = await client.query(
       'SELECT pg_try_advisory_xact_lock(20260916, $1) AS acquired',
-      [schoolId]
+      [schoolId * 2 + (team === 'B' ? 1 : 0)]
     );
     if (!lockRows[0].acquired) {
       await client.query('ROLLBACK');
@@ -186,9 +196,9 @@ router.post('/check', asyncHandler(async (req, res) => {
       `SELECT ssp.slot_id, ssp.placed_clue_id, s.branch_id
        FROM school_slot_placements ssp
        JOIN tech_tree_slots s ON s.id = ssp.slot_id
-       WHERE ssp.school_id = $1 AND ssp.is_locked = false AND ssp.placed_clue_id IS NOT NULL
+       WHERE ssp.school_id = $1 AND ssp.team_code = $2 AND ssp.is_locked = false AND ssp.placed_clue_id IS NOT NULL
        FOR UPDATE`,
-      [schoolId]
+      [schoolId, team]
     );
 
     const results = [];
@@ -208,25 +218,26 @@ router.post('/check', asyncHandler(async (req, res) => {
              FROM school_slot_placements sp
              JOIN tech_tree_slots placed_slot ON placed_slot.id = sp.slot_id
              WHERE sp.school_id = $3
+               AND sp.team_code = $4
                AND placed_slot.branch_id = $1
                AND sp.placed_clue_id = $2
            ) AS placements_in_branch`,
-        [slot.branch_id, slot.placed_clue_id, schoolId]
+        [slot.branch_id, slot.placed_clue_id, schoolId, team]
       );
       const isCorrect = matchingRows[0].belongs_to_branch && matchingRows[0].placements_in_branch === 1;
       touchedBranchIds.add(slot.branch_id);
 
       await client.query(
-        `INSERT INTO school_check_attempts (school_id, slot_id, attempted_clue_id, is_correct)
-         VALUES ($1, $2, $3, $4)`,
-        [schoolId, slot.slot_id, slot.placed_clue_id, isCorrect]
+        `INSERT INTO school_check_attempts (school_id, team_code, slot_id, attempted_clue_id, is_correct)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [schoolId, team, slot.slot_id, slot.placed_clue_id, isCorrect]
       );
 
       if (isCorrect) {
         await client.query(
           `UPDATE school_slot_placements SET is_locked = true, updated_at = now()
-           WHERE school_id = $1 AND slot_id = $2`,
-          [schoolId, slot.slot_id]
+           WHERE school_id = $1 AND team_code = $2 AND slot_id = $3`,
+          [schoolId, team, slot.slot_id]
         );
       }
 
@@ -236,8 +247,8 @@ router.post('/check', asyncHandler(async (req, res) => {
     const newlyUnlockedBranches = [];
     for (const branchId of touchedBranchIds) {
       const { rows: unlockedRows } = await client.query(
-        'SELECT 1 FROM school_branch_unlocks WHERE school_id = $1 AND branch_id = $2',
-        [schoolId, branchId]
+        'SELECT 1 FROM school_branch_unlocks WHERE school_id = $1 AND team_code = $2 AND branch_id = $3',
+        [schoolId, team, branchId]
       );
       if (unlockedRows.length > 0) continue; // 已經解鎖過了，不用重複判斷
 
@@ -245,15 +256,15 @@ router.post('/check', asyncHandler(async (req, res) => {
         `SELECT COUNT(*)::int AS total,
                 COUNT(*) FILTER (WHERE ssp.is_locked = true)::int AS locked
          FROM tech_tree_slots s
-         LEFT JOIN school_slot_placements ssp ON ssp.slot_id = s.id AND ssp.school_id = $1
-         WHERE s.branch_id = $2`,
-        [schoolId, branchId]
+         LEFT JOIN school_slot_placements ssp ON ssp.slot_id = s.id AND ssp.school_id = $1 AND ssp.team_code = $2
+         WHERE s.branch_id = $3`,
+        [schoolId, team, branchId]
       );
       const { total, locked } = slotStatusRows[0];
       if (total > 0 && total === locked) {
         await client.query(
-          'INSERT INTO school_branch_unlocks (school_id, branch_id) VALUES ($1, $2)',
-          [schoolId, branchId]
+          'INSERT INTO school_branch_unlocks (school_id, team_code, branch_id) VALUES ($1, $2, $3)',
+          [schoolId, team, branchId]
         );
         newlyUnlockedBranches.push(branchId);
       }
@@ -273,12 +284,14 @@ router.post('/check', asyncHandler(async (req, res) => {
 // 不會把劇情內容洩漏給還沒解完的隊伍。
 router.get('/branches/:branchId/story', asyncHandler(async (req, res) => {
   const schoolId = req.school.sub;
+  const team = teamCode(req);
+  if (!team) return res.status(400).json({ error: 'team must be A or B' });
   const branchId = parseInt(req.params.branchId, 10);
   if (!Number.isInteger(branchId)) return res.status(400).json({ error: 'invalid branch id' });
 
   const { rows: unlockedRows } = await db.query(
-    'SELECT unlocked_at FROM school_branch_unlocks WHERE school_id = $1 AND branch_id = $2',
-    [schoolId, branchId]
+    'SELECT unlocked_at FROM school_branch_unlocks WHERE school_id = $1 AND team_code = $2 AND branch_id = $3',
+    [schoolId, team, branchId]
   );
   if (unlockedRows.length === 0) {
     return res.status(403).json({ error: 'this branch has not been unlocked yet' });

@@ -91,7 +91,7 @@
 </style>
 </head>
 <body>
-<h1>數位偵探</h1>
+<h1 id="pageTitle">數位偵探</h1>
 <p class="nav"><a href="index.html">&laquo; 回儀表板</a></p>
 
 <div id="notLoggedIn" class="card" style="display:none">
@@ -146,6 +146,10 @@
 <script src="authFetch.js"></script>
 <script>
 const token = localStorage.getItem('schoolToken');
+const requestedTeam = new URLSearchParams(location.search).get('team');
+const team = requestedTeam === 'B' ? 'B' : 'A';
+document.title = `數位偵探 ${team} 隊 - 資管皇家學院數位探查儀`;
+document.getElementById('pageTitle').textContent = `數位偵探 ${team} 隊`;
 if (!token) {
   document.getElementById('notLoggedIn').style.display = '';
 } else {
@@ -170,7 +174,7 @@ const OPERATION_COOLDOWN_MS = 1000;
 const BRANCH_COLORS = ['#7fd9b0', '#f7a8c4', '#a8c8f0', '#f7d488', '#c9a8f0'];
 
 async function api(path, options = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(`${path}${path.includes('?') ? '&' : '?'}team=${team}`, {
     ...options,
     headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }
   });

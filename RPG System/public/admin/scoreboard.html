@@ -27,7 +27,7 @@
   <table>
     <thead>
       <tr>
-        <th>排名</th><th>學派</th><th>總分</th><th>得分</th><th>推理失誤分</th><th>放對格數</th><th>放錯次數</th><th>線索數</th><th>已解鎖分支</th>
+        <th>排名</th><th>學派</th><th>總分</th><th>A／B 分數</th><th>得分</th><th>推理失誤分</th><th>放對格數</th><th>放錯次數</th><th>線索數</th><th>已解鎖分支</th>
       </tr>
     </thead>
     <tbody id="scoreboardBody"></tbody>
@@ -65,6 +65,7 @@ async function loadScoreboard() {
       <td>${i + 1}</td>
       <td>${escapeHtml(r.displayName)}</td>
       <td class="score">${r.totalScore}</td>
+      <td>${(r.teamScores || []).map(t => `${t.team}：${t.totalScore}`).join('　')}</td>
       <td>${r.earnedScore}</td>
       <td>${r.mistakeScore}</td>
       <td>${r.correctSlots}</td>
@@ -72,7 +73,7 @@ async function loadScoreboard() {
       <td>${r.cluesCollected}</td>
       <td>${r.branchesUnlocked}</td>
     </tr>
-  `).join('') || '<tr><td colspan="9">目前沒有任何學派帳號</td></tr>';
+  `).join('') || '<tr><td colspan="10">目前沒有任何學派帳號</td></tr>';
 }
 
 document.getElementById('refreshBtn').addEventListener('click', loadScoreboard);
