@@ -25,7 +25,6 @@ def json_response(start_response, status, body):
                             ('Content-Length', str(len(payload))), ('Cache-Control', 'no-store')])
     return [payload]
 
-
 def load_source(source):
     if source not in SOURCES:
         raise ValueError('unknown source')
