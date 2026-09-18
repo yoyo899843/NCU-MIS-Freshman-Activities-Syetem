@@ -33,6 +33,14 @@
   }
   .vault-card strong { display: block; font-size: 0.85rem; }
   .vault-card p { font-size: 0.75rem; color: var(--dim); margin: 4px 0 0; }
+  /* 可拖曳、可放置的區塊一律不能選取文字。iPad Safari 只認 -webkit- 前綴，光寫 user-select
+     擋不住；-webkit-touch-callout 關掉長按跳出的選取／放大鏡選單。子元素也要寫，
+     不然手指剛好按在卡片裡的文字上時，iPad 還是會選到那段字。 */
+  .vault-card, .vault-card *, .slot-box, .slot-box *, .drag-ghost {
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  /* 拖曳進行中整頁都不能選字：手指拖過說明文字時不會順便把它反白 */
+  body.dragging, body.dragging * { -webkit-user-select: none; user-select: none; }
   .tree-panel { flex: 1; min-width: 0; }
   .branch-title { display: flex; justify-content: space-between; align-items: center; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
@@ -346,6 +354,8 @@ function endOperation() {
 }
 
 function attachVaultDrag(cardEl, clueId) {
+  // iOS 長按有時會無視 CSS 直接開始選字，從事件層再擋一次
+  cardEl.addEventListener('selectstart', e => e.preventDefault());
   cardEl.addEventListener('pointerdown', e => {
     if (e.button !== undefined && e.button > 0) return; // 只接左鍵／手指
     // 多指同時按、上一個拖曳尚未結束，或前一筆寫入還在進行時，都不要再建立
@@ -365,6 +375,9 @@ function attachVaultDrag(cardEl, clueId) {
     dragState = state;
 
     const startDrag = ev => {
+      // 拖曳開始前 iPad 可能已經選到一段字，先清掉，拖曳期間整頁禁止選字
+      window.getSelection()?.removeAllRanges();
+      document.body.classList.add('dragging');
       state.ghostEl = document.createElement('div');
       state.ghostEl.className = 'drag-ghost';
       state.ghostEl.textContent = clue.name;
@@ -385,6 +398,7 @@ function attachVaultDrag(cardEl, clueId) {
       updateDropHighlight(ev.clientX, ev.clientY);
     };
     const cleanup = () => {
+      document.body.classList.remove('dragging');
       cardEl.removeEventListener('pointermove', onMove);
       cardEl.removeEventListener('pointerup', onUp);
       cardEl.removeEventListener('pointercancel', onCancel);
