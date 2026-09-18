@@ -20,19 +20,38 @@ jobs:
           cd "$DEPLOY_DIR"
           git pull --ff-only
 
+      # 時空戰爭的資料夾改名成「Time-Space Warfare(使用完成)」。git pull 只會搬有追蹤的
+      # 檔案，不進 git 的 .env（資料庫密碼、JWT_SECRET）會被留在舊資料夾，新資料夾缺
+      # .env 的話 compose 會直接停下。新資料夾還沒有 .env 時才從舊資料夾搬過來，
+      # 搬過一次之後這一步每次都會直接跳過。
+      #
+      # 兩個資料夾名稱算出來的 compose 專案名稱相同（都是 time-spacewarfare），所以
+      # 會原地重建同一組容器、沿用同一個資料庫 volume，資料不會掉。
+      - name: Carry over Time-Space Warfare .env after folder rename
+        run: |
+          cd "$DEPLOY_DIR"
+          OLD="Time-Space Warfare"
+          NEW="Time-Space Warfare(使用完成)"
+          if [ -f "$OLD/.env" ] && [ ! -f "$NEW/.env" ]; then
+            mv "$OLD/.env" "$NEW/.env"
+            echo "已把 $OLD/.env 搬到 $NEW/.env"
+          else
+            echo "不需要搬移"
+          fi
+
       # 根目錄沒有 compose.yml，每個系統各自一個 compose 專案，要分開起。
       #
-      # 順序有意義：PgAdmin 一定要放最後。它的 compose 以 external:true 引用
-      # timewarfare-internal / rpg-internal / stock-internal，這三個網路是前面
-      # 那三個系統的 compose 建立的，不先起就會找不到網路而失敗。
+      # 順序有意義，因為 host port 重排過，舊容器還綁著舊號碼：
+      #   - 時空戰爭一定要第一個：它從 9001 搬到 10000，對抗賽要接 9001
+      #   - 其餘照新 port 由小到大（Portal 9000 → 對抗賽 9001 → RPG 9002 →
+      #     賭大股票 9003 → 總積分榜 9004）。不管伺服器上目前是哪一版配置，
+      #     每個系統要綁的號碼在輪到它時都已經被前一個讓出來。
+      #   - 對抗賽也剛好排在總積分榜前面：總積分榜會透過 API 讀對抗賽成績。
       - name: Compose up
         run: |
           cd "$DEPLOY_DIR"
-          # 順序也決定 host port 的交接（2026-09 重排過）：賭大股票要接 RPG 讓出的 9003、
-          # 總積分榜要接賭大股票讓出的 9005，前一個系統先換好號碼，後一個才綁得上去。
-          #
-          # Match Competition 放在 Final Scoreboard 前面：總積分榜會透過 API 讀對抗賽成績。
-          for d in "Time-Space Warfare" "RPG System" "Stock System" "Match Competition" "Final Scoreboard"; do
+          for d in "Time-Space Warfare(使用完成)" "Portal" "Match Competition" "RPG System" "Stock System" "Final Scoreboard"; do
+            echo "== $d =="
             (cd "$d" && docker compose up -d --build --remove-orphans)
           done
 
@@ -42,10 +61,10 @@ jobs:
       #
       # 改成確認每個 app 真的活著。migration 失敗的話容器會起不來，這一步就會
       # 讓整個 deploy 紅掉；沒有這一步的話失敗會完全無聲。
-      - name: Verify apps are healthy
+      - name: Verify Node apps are healthy
         run: |
           cd "$DEPLOY_DIR"
-          for d in "Time-Space Warfare" "RPG System" "Stock System"; do
+          for d in "Time-Space Warfare(使用完成)" "RPG System" "Stock System"; do
             (
               cd "$d"
               for i in $(seq 1 30); do
@@ -62,12 +81,12 @@ jobs:
             )
           done
 
-      # Final Scoreboard、Match Competition 是 Python 服務（port 8000、image 裡沒有 node），
-      # 用 python 打 /health。原本這兩個完全沒檢查，起不來也不會讓 deploy 紅。
+      # Portal、對抗賽、總積分榜是 Python 服務（port 8000、image 裡沒有 node），
+      # 用 python 打 /health。
       - name: Verify Python services are healthy
         run: |
           cd "$DEPLOY_DIR"
-          for d in "Match Competition" "Final Scoreboard"; do
+          for d in "Portal" "Match Competition" "Final Scoreboard"; do
             (
               cd "$d"
               for i in $(seq 1 30); do
