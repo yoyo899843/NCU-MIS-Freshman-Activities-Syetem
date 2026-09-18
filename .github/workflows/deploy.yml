@@ -50,7 +50,7 @@ jobs:
       - name: Compose up
         run: |
           cd "$DEPLOY_DIR"
-          for d in "Time-Space Warfare(使用完成)" "Portal" "Match Competition" "RPG System" "Stock System" "Final Scoreboard"; do
+          for d in "Time-Space Warfare(使用完成)" "Portal" "RPG System" "Stock System" "Final Scoreboard"; do
             echo "== $d =="
             (cd "$d" && docker compose up -d --build --remove-orphans)
           done
@@ -86,7 +86,7 @@ jobs:
       - name: Verify Python services are healthy
         run: |
           cd "$DEPLOY_DIR"
-          for d in "Portal" "Match Competition" "Final Scoreboard"; do
+          for d in "Portal" "Final Scoreboard"; do
             (
               cd "$d"
               for i in $(seq 1 30); do
