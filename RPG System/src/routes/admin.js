@@ -1241,7 +1241,7 @@ router.get('/game/state', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
-// 計分規則見 src/scoring.js：得分（放對分支的格數 × 5）與推理失誤分（放錯次數 × 2）
+// 計分規則見 src/scoring.js：得分（放對分支的格數 × 5）與推理失誤分（放錯次數 × 1）
 // 分開列，總分＝得分 − 推理失誤分，依總分排名。不額外存累計分數欄位，每次都是即時從
 // school_slot_placements/school_check_attempts 算出來，避免跟實際資料兜不起來
 // （schema 設計就是這樣，見 migrations/001_init.sql 的說明）。總分可能是負的
