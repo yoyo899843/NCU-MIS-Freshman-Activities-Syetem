@@ -6,7 +6,6 @@ services:
     environment:
       PORT: 8000
       # Container names on the shared ncumis-camp network. Override them in .env if needed.
-      TIMEWARFARE_URL: ${TIMEWARFARE_URL:-http://timewarfare-app:3000}
       STOCK_URL: ${STOCK_URL:-http://stock-app:3000}
       RPG_URL: ${RPG_URL:-http://rpg-app:3000}
     ports:

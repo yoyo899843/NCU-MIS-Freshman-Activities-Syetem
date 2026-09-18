@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / 'static'
 SOURCES = {
     'stock': ('STOCK_URL', 'http://stock-app:3000', '/api/market/leaderboard'),
-    'territory': ('TIMEWARFARE_URL', 'http://timewarfare-app:3000', '/api/scores'),
     'rpg': ('RPG_URL', 'http://rpg-app:3000', '/api/scoreboard'),
 }
 
@@ -35,9 +34,6 @@ def load_source(source):
         data = json.loads(response.read().decode('utf-8'))
 
     if source == 'stock':
-        entries = [{'name': row.get('name', ''), 'score': row.get('total', 0), 'rank': row.get('rank')}
-                   for row in data.get('teams', [])]
-    elif source == 'territory':
         entries = [{'name': row.get('name', ''), 'score': row.get('total', 0), 'rank': row.get('rank')}
                    for row in data.get('teams', [])]
     else:

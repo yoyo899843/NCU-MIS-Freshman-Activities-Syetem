@@ -8,10 +8,13 @@ services:
       - .env
     environment:
       PORT: 8000
+      VAULT_DATA_PATH: /data/vault.enc
     ports:
       - "9000:8000"
     networks:
       - ncumis-camp
+    volumes:
+      - portal-vault-data:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 30s
@@ -21,3 +24,6 @@ services:
 networks:
   ncumis-camp:
     external: true
+
+volumes:
+  portal-vault-data:
