@@ -11,8 +11,6 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / 'static'
 SOURCES = {
-    # 對抗賽成績在獨立的 Match Competition 服務；這裡只讀結果，換算成分數仍由總積分榜負責
-    'match': ('MATCH_URL', 'http://match-competition-app:8000', '/api/results'),
     'stock': ('STOCK_URL', 'http://stock-app:3000', '/api/market/leaderboard'),
     'territory': ('TIMEWARFARE_URL', 'http://timewarfare-app:3000', '/api/scores'),
     'rpg': ('RPG_URL', 'http://rpg-app:3000', '/api/scoreboard'),
@@ -36,11 +34,7 @@ def load_source(source):
             raise RuntimeError(f'upstream returned HTTP {response.status}')
         data = json.loads(response.read().decode('utf-8'))
 
-    if source == 'match':
-        # 對抗賽回的是勝平負而不是分數，原樣交給前端，讓它照自己的計分規則換算
-        entries = [{'name': row.get('name', ''), 'a': row.get('a', ''), 'b': row.get('b', '')}
-                   for row in data.get('schools', [])]
-    elif source == 'stock':
+    if source == 'stock':
         entries = [{'name': row.get('name', ''), 'score': row.get('total', 0), 'rank': row.get('rank')}
                    for row in data.get('teams', [])]
     elif source == 'territory':

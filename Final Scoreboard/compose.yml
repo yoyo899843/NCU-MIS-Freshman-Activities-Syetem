@@ -9,7 +9,6 @@ services:
       TIMEWARFARE_URL: ${TIMEWARFARE_URL:-http://timewarfare-app:3000}
       STOCK_URL: ${STOCK_URL:-http://stock-app:3000}
       RPG_URL: ${RPG_URL:-http://rpg-app:3000}
-      MATCH_URL: ${MATCH_URL:-http://match-competition-app:8000}
     ports:
       - "9004:8000"
     networks:
