@@ -3,9 +3,11 @@ services:
     build: .
     container_name: portal-app
     restart: unless-stopped
+    # 相對於本 compose 檔讀取；每次 compose up 都會將 .env 的主密碼帶入容器。
+    env_file:
+      - .env
     environment:
       PORT: 8000
-      VAULT_MASTER_PASSWORD: ${VAULT_MASTER_PASSWORD:?請先在這個資料夾 cp .env.example .env 並設定主密碼}
     ports:
       - "9000:8000"
     networks:
