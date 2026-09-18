@@ -10,13 +10,14 @@
   ];
   const $ = id => document.getElementById(id);
   const encoder = new TextEncoder(), decoder = new TextDecoder();
-  let records = [], key = null, salt = null, editingId = null, revealed = new Set();
+  let records = [], key = null, salt = null, editingId = null;
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   const b64 = value => btoa(String.fromCharCode(...new Uint8Array(value)));
   const bytes = value => Uint8Array.from(atob(value), c => c.charCodeAt(0));
   const available = Boolean(window.crypto?.subtle && window.crypto?.getRandomValues);
   const status = (id, text = '', kind = '') => { const el = $(id); el.textContent = text; el.className = `vault-status ${kind}`; };
   const safeUrl = value => { try { const url = new URL(String(value || '')); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; } catch { return ''; } };
+  const searchable = value => String(value ?? '').toLocaleLowerCase('zh-TW');
 
   async function derive(password, nextSalt) {
     const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey']);
@@ -38,7 +39,7 @@
     const plaintext = await crypto.subtle.decrypt({ name:'AES-GCM', iv:bytes(stored.iv) }, nextKey, bytes(stored.ciphertext));
     const data = JSON.parse(decoder.decode(plaintext));
     if (!Array.isArray(data.records)) throw new Error('保管庫資料格式不正確');
-    records = data.records; key = nextKey; salt = nextSalt; editingId = null; revealed.clear(); showContents();
+    records = data.records; key = nextKey; salt = nextSalt; editingId = null; showContents();
   }
   function showInitial() {
     $('vaultContents').classList.add('hidden');
@@ -51,17 +52,21 @@
   function showContents() { $('vaultSetupPanel').classList.add('hidden'); $('vaultUnlockPanel').classList.add('hidden'); $('vaultContents').classList.remove('hidden'); renderRecords(); }
   function resetForm() { editingId = null; $('vaultRecordForm').reset(); $('vaultRecordTitle').textContent = '新增平台密碼'; $('vaultSaveRecordBtn').textContent = '儲存紀錄'; $('vaultCancelEditBtn').classList.add('hidden'); status('vaultRecordStatus'); }
   function lock(close = false) {
-    key = null; salt = null; records = []; editingId = null; revealed.clear();
+    key = null; salt = null; records = []; editingId = null;
     $('vaultUnlockPassword').value = ''; status('vaultUnlockStatus');
     if (close) $('passwordVault').classList.add('hidden'); else showInitial();
   }
   function renderRecords() {
     const host = $('vaultRecords');
-    if (!records.length) { host.className = 'vault-body vault-empty'; host.textContent = '尚未新增任何平台密碼。'; return; }
-    host.className = 'vault-body vault-records';
-    host.innerHTML = records.map(record => {
-      const url = safeUrl(record.url), show = revealed.has(record.id);
-      return `<article class="vault-record"><button class="edit" data-edit="${esc(record.id)}" type="button">編輯</button><h4>${esc(record.platform)}</h4>${url ? `<p><a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></p>` : ''}${record.username ? `<p>帳號：${esc(record.username)}</p>` : ''}<div class="vault-secret"><span>${show ? esc(record.password) : '••••••••••••'}</span><button type="button" data-reveal="${esc(record.id)}">${show ? '隱藏' : '顯示'}</button></div>${record.notes ? `<p class="vault-meta">${esc(record.notes)}</p>` : ''}<div class="vault-actions"><button type="button" class="danger" data-delete="${esc(record.id)}">刪除</button></div></article>`;
+    const query = $('vaultFilter').value.trim();
+    const term = searchable(query);
+    const visible = records.filter(record => !term || [record.platform, record.url, record.username, record.notes].some(value => searchable(value).includes(term)));
+    $('vaultFilterResult').textContent = records.length ? `顯示 ${visible.length}／${records.length} 筆` : '';
+    if (!records.length) { host.innerHTML = '<tr><td class="vault-empty" colspan="6">尚未新增任何平台密碼。</td></tr>'; return; }
+    if (!visible.length) { host.innerHTML = `<tr><td class="vault-empty" colspan="6">找不到「${esc(query)}」相關的紀錄。</td></tr>`; return; }
+    host.innerHTML = visible.map(record => {
+      const url = safeUrl(record.url);
+      return `<tr><td>${esc(record.platform)}</td><td>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>` : '—'}</td><td>${record.username ? esc(record.username) : '—'}</td><td><div class="vault-secret"><span>${esc(record.password)}</span></div></td><td>${record.notes ? esc(record.notes) : '—'}</td><td><div class="vault-row-actions"><button type="button" data-edit="${esc(record.id)}">編輯</button><button type="button" class="danger" data-delete="${esc(record.id)}">刪除</button></div></td></tr>`;
     }).join('');
   }
 
@@ -69,6 +74,7 @@
   $('passwordCloseBtn').addEventListener('click', () => lock(true));
   $('vaultLockBtn').addEventListener('click', () => lock());
   $('vaultCancelEditBtn').addEventListener('click', resetForm);
+  $('vaultFilter').addEventListener('input', renderRecords);
   $('vaultLoadTestBtn').addEventListener('click', async () => {
     if (records.some(record => TEST_RECORDS.some(sample => sample.id === record.id))) return status('vaultRecordStatus', '測試資料已經存在。', 'error');
     if (records.length && !confirm('目前已有紀錄，仍要加入三筆測試資料嗎？')) return;
@@ -98,9 +104,8 @@
   });
   $('vaultRecords').addEventListener('click', async event => {
     const button = event.target.closest('button'); if (!button) return;
-    const id = button.dataset.reveal || button.dataset.edit || button.dataset.delete;
+    const id = button.dataset.edit || button.dataset.delete;
     const record = records.find(item => item.id === id); if (!record) return;
-    if (button.dataset.reveal) { revealed.has(id) ? revealed.delete(id) : revealed.add(id); renderRecords(); return; }
     if (button.dataset.edit) { editingId = id; $('vaultPlatform').value = record.platform; $('vaultRecordUrl').value = record.url || ''; $('vaultUsername').value = record.username || ''; $('vaultRecordPassword').value = record.password; $('vaultNotes').value = record.notes || ''; $('vaultRecordTitle').textContent = `編輯：${record.platform}`; $('vaultSaveRecordBtn').textContent = '更新紀錄'; $('vaultCancelEditBtn').classList.remove('hidden'); $('vaultPlatform').focus(); return; }
     if (button.dataset.delete) { if (!confirm(`確定刪除「${record.platform}」嗎？`)) return; records = records.filter(item => item.id !== id); try { await persist(); if (editingId === id) resetForm(); renderRecords(); } catch (error) { status('vaultRecordStatus', `刪除失敗：${error.message}`, 'error'); } }
   });
