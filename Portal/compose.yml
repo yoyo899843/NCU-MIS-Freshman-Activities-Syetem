@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       PORT: 8000
+      VAULT_MASTER_PASSWORD: ${VAULT_MASTER_PASSWORD:?請先在這個資料夾 cp .env.example .env 並設定主密碼}
     ports:
       - "9000:8000"
     networks:

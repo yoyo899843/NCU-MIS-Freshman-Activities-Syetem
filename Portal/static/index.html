@@ -18,7 +18,7 @@
     .icon { position:relative; z-index:1; display:grid; place-items:center; width:42px; height:42px; margin-bottom:20px; border-radius:12px; color:var(--accent,#3979ea); background:var(--tint,#eaf2ff); font-size:1.32rem; font-weight:850; }.card h3 { position:relative; z-index:1; margin:0; font-size:1.28rem; letter-spacing:-.025em; }.card .subtitle { position:relative; z-index:1; min-height:46px; margin:4px 0 14px; color:var(--muted); font-size:.88rem; }
     .links { position:relative; z-index:1; display:flex; gap:8px; margin-top:auto; flex-wrap:wrap; }.link { display:inline-flex; align-items:center; min-height:38px; padding:7px 11px; border:1px solid #b9c9e1; border-radius:9px; color:var(--navy); background:#fff; font-size:.87rem; font-weight:760; text-decoration:none; }.link.primary { border-color:var(--accent,#3979ea); color:#fff; background:var(--accent,#3979ea); }.link:hover { filter:brightness(.96); }.link:focus-visible { outline:3px solid #77a8fa88; outline-offset:2px; }.link.pending { border-style:dashed; color:var(--pending); background:#f7f9fc; cursor:default; }
     .note { margin:29px 0 0; color:var(--muted); font-size:.84rem; }.note strong { color:var(--ink); }
-    [data-id="time"] { --accent:#795ad6; --tint:#f0ebff; } [data-id="rpg"] { --accent:#007c63; --tint:#e3f6ef; } [data-id="stock"] { --accent:#df6c24; --tint:#fff0e5; } [data-id="match"] { --accent:#bd4051; --tint:#ffebef; } [data-id="final"] { --accent:#9a7003; --tint:#fff4cf; }
+    [data-id="time"] { --accent:#795ad6; --tint:#f0ebff; } [data-id="rpg"] { --accent:#007c63; --tint:#e3f6ef; } [data-id="stock"] { --accent:#df6c24; --tint:#fff0e5; } [data-id="match"] { --accent:#bd4051; --tint:#ffebef; } [data-id="final"] { --accent:#9a7003; --tint:#fff4cf; } [data-id="passwords"] { --accent:#4a5b78; --tint:#ebeff6; }
     @media (max-width:820px) { .cards { grid-template-columns:repeat(2,minmax(0,1fr)); } }.card { min-height:194px; }
     @media (max-width:540px) { .shell { width:min(100% - 24px,1120px); }.cards { grid-template-columns:1fr; }.section-head { align-items:start; flex-direction:column; gap:2px; }.card { min-height:180px; }.lead { margin-bottom:28px; } }
   </style>
@@ -37,6 +37,18 @@
     <section aria-labelledby="adminHeading">
       <div class="section-head"><h2 id="adminHeading">工作人員入口</h2><p>僅提供需要操作的活動後台</p></div>
       <div class="cards" id="adminCards"></div>
+    </section>
+
+    <section aria-labelledby="toolHeading">
+      <div class="section-head"><h2 id="toolHeading">工作人員工具</h2><p>此裝置專用，不會同步到伺服器</p></div>
+      <div class="cards">
+        <article class="card" data-id="passwords">
+          <div class="icon" aria-hidden="true">⌘</div>
+          <h3>密碼紀錄</h3>
+          <p class="subtitle">以主密碼加密，僅儲存在目前瀏覽器。</p>
+          <div class="links"><a class="link primary" href="passwords.html">開啟保管庫</a></div>
+        </article>
+      </div>
     </section>
 
     <p class="note"><strong>連結尚未設定？</strong> 卡片會顯示「等待設定」；主辦填入 <code>static/config.js</code> 的網址後，重新整理即可生效。時空戰爭後台不會在本頁顯示。</p>
