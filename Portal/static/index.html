@@ -68,7 +68,7 @@
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
     function action(url, label, primary = false) {
       if (!url) return `<span class="link pending" aria-disabled="true">等待設定</span>`;
-      return `<a class="link${primary ? ' primary' : ''}" href="${escapeHtml(url)}" rel="noopener">${label}</a>`;
+      return `<a class="link${primary ? ' primary' : ''}" href="${escapeHtml(url)}" target="_blank" rel="noopener">${label}</a>`;
     }
     function card(item, admin = false) {
       const label = admin ? `${item.title}後台` : item.title;
