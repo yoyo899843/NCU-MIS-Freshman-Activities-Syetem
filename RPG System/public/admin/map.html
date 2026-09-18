@@ -35,8 +35,8 @@
   <div class="card">
     <p class="legend">
       <span><span class="sq"></span>關卡</span>
-      <span><span class="dot" style="background:#06c"></span>學派（連線中）</span>
-      <span><span class="dot faint" style="background:#06c"></span>學派（離線，顯示最後位置）</span>
+      <span><span class="dot" style="background:#06c"></span>裝置（連線中，顏色代表學派）</span>
+      <span><span class="dot faint" style="background:#06c"></span>裝置（離線，顯示最後位置；離線 20 分鐘後自動移除）</span>
     </p>
     <p class="status" id="status">載入中…</p>
   </div>
@@ -94,20 +94,26 @@ L.tileLayer('/tiles/{z}/{x}/{y}.png', { minZoom: 15, maxZoom: 19,
 // 側欄收合、視窗轉向都會改變地圖容器大小，Leaflet 不會自己發現
 new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
 
-const schoolMarkers = new Map();     // schoolId -> circleMarker
+const schoolMarkers = new Map();     // `${schoolId}:${deviceId}` -> circleMarker（一台裝置一個點）
 const checkpointMarkers = new Map(); // checkpointId -> marker
 
-function renderSchools(schools) {
+// 標籤上的裝置短代號，跟玩家地圖同一套算法，兩邊看到的代號一致
+// 「legacy」是更新前就開著的舊版頁面（沒帶裝置編號），直接寫明，不要顯示成看不懂的代號
+const deviceTag = id => id === 'legacy' ? '舊版頁面' : String(id).replace(/-/g, '').slice(-4).toUpperCase();
+
+// 一台裝置一個點（同一個學派幾支手機就是幾個點，顏色跟著學派）
+function renderDevices(devices) {
   const seen = new Set();
-  schools.forEach(s => {
-    seen.add(s.schoolId);
+  devices.forEach(s => {
+    const key = `${s.schoolId}:${s.deviceId}`;
+    seen.add(key);
     const color = schoolColor(s.schoolId);
-    const label = `${escapeHtml(s.displayName || '?')}<br>${agoText(s)}`;
-    let marker = schoolMarkers.get(s.schoolId);
+    const label = `${escapeHtml(s.displayName || '?')}・${deviceTag(s.deviceId)}<br>${agoText(s)}`;
+    let marker = schoolMarkers.get(key);
     if (!marker) {
       marker = L.circleMarker([s.lat, s.lng], { radius: 9, color, fillColor: color, weight: 2 })
         .addTo(map).bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8] });
-      schoolMarkers.set(s.schoolId, marker);
+      schoolMarkers.set(key, marker);
     } else {
       marker.setLatLng([s.lat, s.lng]);
       marker.setTooltipContent(label);
@@ -115,7 +121,7 @@ function renderSchools(schools) {
     // 離線的隊伍畫淡一點：位置留著（那是最後已知位置），但一眼看得出不是現在的
     marker.setStyle({ fillOpacity: s.live ? 0.9 : 0.35 });
   });
-  // 帳號被刪掉的學派會從清單消失，標記要跟著拿掉
+  // 離線超過 20 分鐘、或學派帳號被刪掉的裝置會從清單消失，標記要跟著拿掉
   schoolMarkers.forEach((marker, id) => {
     if (seen.has(id)) return;
     map.removeLayer(marker);
@@ -173,13 +179,14 @@ async function load() {
     return true;
   }
   const data = await res.json();
-  renderSchools(data.schools);
+  renderDevices(data.devices);
   renderCheckpoints(data.checkpoints, data.totalSchools);
 
-  const online = data.schools.filter(s => s.live).length;
+  const online = data.devices.filter(s => s.live).length;
+  const schoolsWithDevice = new Set(data.devices.map(s => s.schoolId)).size;
   const noCoord = data.checkpoints.filter(c => c.mapLat === null).length;
   statusEl.textContent =
-    `${data.totalSchools} 支學派，${data.schools.length} 支有位置（連線中 ${online}）` +
+    `${data.totalSchools} 支學派中 ${schoolsWithDevice} 支有裝置在定位，共 ${data.devices.length} 台裝置（連線中 ${online}）` +
     `　·　關卡 ${data.checkpoints.length} 個` + (noCoord ? `（${noCoord} 個還沒設座標，沒畫出來）` : '') +
     `　·　更新於 ${new Date().toLocaleTimeString('zh-TW')}`;
   statusEl.className = 'status';

@@ -57,15 +57,6 @@
 // （用無頭瀏覽器實際跑過，主控台真的噴出這個錯誤，不是靠猜的）。
 const LOCATION_INTERVAL_MS = 2000;
 
-// 固定色盤，依 schoolId 算雜湊後取色，讓每個學派的定位標記顏色在不同人的
-// 瀏覽器上都是同一個顏色（不用伺服器另外指定顏色）。
-const SCHOOL_COLORS = ['#c00', '#06c', '#2a8', '#f90', '#909'];
-function schoolColor(schoolId) {
-  let hash = 0;
-  for (const ch of String(schoolId)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return SCHOOL_COLORS[hash % SCHOOL_COLORS.length];
-}
-
 const token = localStorage.getItem('schoolToken');
 const schoolInfo = JSON.parse(localStorage.getItem('schoolInfo') || 'null');
 if (!token || !schoolInfo) {
@@ -121,8 +112,8 @@ function initMap() {
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
   }).addTo(map);
 
-  // 自己的位置：不用等伺服器回應，收到 GPS 更新的當下直接畫在地圖上，
-  // 用跟其他學派不同的樣式（藍色方塊感的圓點＋固定 tooltip）分辨。
+  // 自己的位置：不用等伺服器回應，收到 GPS 更新的當下直接畫在地圖上。
+  // 玩家地圖只畫自己，看不到其他裝置；全場位置只有後台的即時地圖看得到。
   let selfMarker = null;
   function updateSelfMarker(lat, lng) {
     if (!selfMarker) {
@@ -149,28 +140,31 @@ function initMap() {
   // GPS 圍籬：離開活動範圍會顯示紅色提示條（見 geofence.js），比照 Time-Space
   // Warfare 只掛在地圖頁的做法——這裡是唯一需要判斷「人在不在範圍內」的頁面。
   // 校園範圍內的每次讀值同時拿來畫自己的標記、留著給下面的 2 秒上傳計時器用。
+  // 這支手機的裝置編號：地圖上以裝置為單位顯示，同一個學派幾支手機在跑就是幾個點。
+  // 第一次開地圖時產生、存在這台裝置上；清掉瀏覽器資料才會換一組新的。
+  const deviceId = (() => {
+    const KEY = 'rpgDeviceId';
+    try {
+      const saved = localStorage.getItem(KEY);
+      if (saved && /^[A-Za-z0-9-]{6,64}$/.test(saved)) return saved;
+    } catch (e) { /* 無痕模式讀不到就每次重新產生 */ }
+    const fresh = (crypto.randomUUID ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''));
+    try { localStorage.setItem(KEY, fresh); } catch (e) { /* 忽略 */ }
+    return fresh;
+  })();
   let latestCoords = null;
   startGeofence((lat, lng, accuracy) => {
-    latestCoords = { lat, lng, accuracy };
+    latestCoords = { lat, lng, accuracy, deviceId };
     updateSelfMarker(lat, lng);
   }, () => {
     latestCoords = null;
     clearSelfMarker();
   });
 
-  // 地圖直接顯示所有學派的位置，不分敵我——關掉瀏覽器/斷線也不會讓標記消失：
-  // 伺服器一直保留每個學派最後一次回報的座標。標記本身固定常亮（不管有沒有
-  // 連線都是同一個亮度），只有 tooltip 文字會顯示「現在」或「X 分鐘前」區分
-  // 是不是還在線上，見下面 live 欄位。
-  document.getElementById('locationStatus').textContent = '（定位分享中）';
-  const otherMarkers = new Map(); // schoolId -> L.CircleMarker
-  const selfSchoolId = schoolInfo.id;
-
-  function statusText(school) {
-    if (school.live) return '現在';
-    const minutes = Math.floor((Date.now() - school.updatedAt) / 60000);
-    return minutes < 1 ? '剛離線' : `${minutes} 分鐘前`;
-  }
+  // 位置仍然每 2 秒回報一次，給後台的即時地圖用（主辦看全場各裝置在哪裡），
+  // 但這一頁不抓、也不畫其他人的位置。
+  document.getElementById('locationStatus').textContent = '（只顯示你自己；位置會回報給主辦）';
 
   setInterval(() => {
     if (!latestCoords) return;
@@ -181,37 +175,6 @@ function initMap() {
     }).catch(() => {}); // 單次上傳失敗不用特別處理，反正 2 秒後會再傳一次
   }, LOCATION_INTERVAL_MS);
 
-  setInterval(() => {
-    fetch('/api/locations', { headers: { Authorization: 'Bearer ' + token } })
-      .then(res => res.json())
-      .then(schools => {
-        // 這裡回來的名單不會因為斷線而少人，所以不用做「消失名單裡沒有的標記」
-        // 那種清理——每個學派只會一直被更新（位置 + 連線狀態），不會被移除。
-        schools.forEach(s => {
-          if (s.schoolId === selfSchoolId) return; // 自己已經用 selfMarker 畫過了
-
-          const color = schoolColor(s.schoolId);
-          const tooltipText = `${s.displayName || '?'}<br>${statusText(s)}`;
-
-          // 常亮：不管 live 是不是 true，標記的亮度/顏色都一樣，只有 tooltip
-          // 文字（上面的 statusText）會顯示是不是還在線上。
-          let marker = otherMarkers.get(s.schoolId);
-          if (!marker) {
-            marker = L.circleMarker([s.lat, s.lng], {
-              radius: 8,
-              color,
-              fillColor: color,
-              fillOpacity: 0.85
-            }).addTo(map).bindTooltip(tooltipText, { permanent: true });
-            otherMarkers.set(s.schoolId, marker);
-          } else {
-            marker.setLatLng([s.lat, s.lng]);
-            marker.setTooltipContent(tooltipText);
-          }
-        });
-      })
-      .catch(() => {});
-  }, LOCATION_INTERVAL_MS);
 
   // 關卡 name/description 之後會開放 admin 編輯（見 admin.js 的 checkpoints CRUD，
   // 目前還是 501 stub），屆時內容就不再是我們自己塞的測試資料、不能再假設它安全，

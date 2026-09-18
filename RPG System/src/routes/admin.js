@@ -151,7 +151,8 @@ router.delete('/admins/:id', requireFullAdmin, asyncHandler(async (req, res) => 
   res.status(204).end();
 }));
 
-// 管理員地圖用的一次性快照：所有學派目前的位置 ＋ 各關卡的完成進度。
+// 管理員地圖用的一次性快照：所有裝置目前的位置（一台裝置一筆，離線 20 分鐘自動刪除，
+// 見 src/schoolLocations.js）＋ 各關卡的完成進度。
 //
 // 比照 Time-Space Warfare 的 /admin/api/map/locations，但兩邊要看的東西不同：
 // 那邊是匿名圓點（玩家要自己推理內鬼），後台才看得到隊名；RPG 的地圖本來就是
@@ -174,7 +175,7 @@ router.get('/map', requireFullAdmin, asyncHandler(async (req, res) => {
   const { rows: schoolCount } = await db.query('SELECT COUNT(*)::int AS n FROM schools');
 
   res.json({
-    schools: getAllLocations(),
+    devices: getAllLocations(),
     checkpoints: checkpoints.map(c => ({
       id: c.id,
       name: c.name,
