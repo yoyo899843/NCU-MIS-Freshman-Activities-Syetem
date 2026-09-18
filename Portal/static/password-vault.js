@@ -2,6 +2,12 @@
 (() => {
   const STORAGE_KEY = 'ncumis-portal-password-vault-v1';
   const ITERATIONS = 250000;
+  // 只會在建立全新的保管庫時寫入，全部都是無效示範帳密，可直接編輯或刪除。
+  const TEST_RECORDS = [
+    { id:'sample-rpg', platform:'[測試] RPG 後台', url:'https://rpg.佑佑.台灣/admin', username:'demo-rpg-admin', password:'demo-rpg-password', notes:'測試資料，請改成實際帳密。' },
+    { id:'sample-stock', platform:'[測試] 賭大股票後台', url:'https://賭大.佑佑.台灣/admin', username:'demo-stock-admin', password:'demo-stock-password', notes:'測試資料，請改成實際帳密。' },
+    { id:'sample-match', platform:'[測試] 對抗賽操作台', url:'https://對抗賽.佑佑.台灣', username:'demo-match-admin', password:'demo-match-password', notes:'測試資料，請改成實際帳密。' }
+  ];
   const $ = id => document.getElementById(id);
   const encoder = new TextEncoder(), decoder = new TextDecoder();
   let records = [], key = null, salt = null, editingId = null, revealed = new Set();
@@ -63,11 +69,17 @@
   $('passwordCloseBtn').addEventListener('click', () => lock(true));
   $('vaultLockBtn').addEventListener('click', () => lock());
   $('vaultCancelEditBtn').addEventListener('click', resetForm);
+  $('vaultLoadTestBtn').addEventListener('click', async () => {
+    if (records.some(record => TEST_RECORDS.some(sample => sample.id === record.id))) return status('vaultRecordStatus', '測試資料已經存在。', 'error');
+    if (records.length && !confirm('目前已有紀錄，仍要加入三筆測試資料嗎？')) return;
+    records = [...TEST_RECORDS.map(record => ({ ...record })), ...records];
+    try { await persist(); renderRecords(); status('vaultRecordStatus', '已加入三筆測試資料，請改成實際帳密。', 'ok'); }
+    catch (error) { status('vaultRecordStatus', `載入失敗：${error.message}`, 'error'); }
+  });
   $('vaultSetupForm').addEventListener('submit', async event => {
     event.preventDefault(); const password = $('vaultSetupPassword').value, confirmation = $('vaultSetupConfirm').value;
-    if (password.length < 12) return status('vaultSetupStatus', '主密碼至少需要 12 個字元。', 'error');
     if (password !== confirmation) return status('vaultSetupStatus', '兩次輸入的主密碼不相同。', 'error');
-    try { await verifyMaster(password); salt = crypto.getRandomValues(new Uint8Array(16)); key = await derive(password, salt); records = []; await persist(); $('vaultSetupPassword').value = ''; $('vaultSetupConfirm').value = ''; showContents(); }
+    try { await verifyMaster(password); salt = crypto.getRandomValues(new Uint8Array(16)); key = await derive(password, salt); records = TEST_RECORDS.map(record => ({ ...record })); await persist(); $('vaultSetupPassword').value = ''; $('vaultSetupConfirm').value = ''; showContents(); status('vaultRecordStatus', '已建立三筆測試資料，請改成實際帳密。', 'ok'); }
     catch (error) { status('vaultSetupStatus', `建立失敗：${error.message}`, 'error'); }
   });
   $('vaultUnlockForm').addEventListener('submit', async event => {
