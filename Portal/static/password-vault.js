@@ -18,6 +18,7 @@
   const status = (id, text = '', kind = '') => { const el = $(id); el.textContent = text; el.className = `vault-status ${kind}`; };
   const safeUrl = value => { try { const url = new URL(String(value || '')); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; } catch { return ''; } };
   const searchable = value => String(value ?? '').toLocaleLowerCase('zh-TW');
+  const recovery = visible => $('vaultRecovery').classList.toggle('hidden', !visible);
 
   async function derive(password, nextSalt) {
     const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey']);
@@ -43,13 +44,14 @@
   }
   function showInitial() {
     $('vaultContents').classList.add('hidden');
+    recovery(false);
     if (!available) { $('vaultUnsupported').classList.remove('hidden'); return; }
     $('vaultUnsupported').classList.add('hidden');
     const exists = Boolean(localStorage.getItem(STORAGE_KEY));
     $('vaultSetupPanel').classList.toggle('hidden', exists);
     $('vaultUnlockPanel').classList.toggle('hidden', !exists);
   }
-  function showContents() { $('vaultSetupPanel').classList.add('hidden'); $('vaultUnlockPanel').classList.add('hidden'); $('vaultContents').classList.remove('hidden'); renderRecords(); }
+  function showContents() { $('vaultSetupPanel').classList.add('hidden'); $('vaultUnlockPanel').classList.add('hidden'); $('vaultContents').classList.remove('hidden'); recovery(false); renderRecords(); }
   function resetForm() { editingId = null; $('vaultRecordForm').reset(); $('vaultRecordTitle').textContent = '新增平台密碼'; $('vaultSaveRecordBtn').textContent = '儲存紀錄'; $('vaultCancelEditBtn').classList.add('hidden'); status('vaultRecordStatus'); }
   function lock(close = false) {
     key = null; salt = null; records = []; editingId = null;
@@ -90,8 +92,15 @@
   });
   $('vaultUnlockForm').addEventListener('submit', async event => {
     event.preventDefault(); const password = $('vaultUnlockPassword').value;
-    try { await verifyMaster(password); await decrypt(password); }
-    catch (error) { status('vaultUnlockStatus', error.message || '主密碼不正確，或保管庫資料已損壞。', 'error'); }
+    let verified = false;
+    recovery(false); status('vaultUnlockStatus');
+    try { await verifyMaster(password); verified = true; await decrypt(password); }
+    catch (error) {
+      if (verified) {
+        status('vaultUnlockStatus', '主密碼已通過伺服器驗證，但無法解密這台裝置的保管庫。這通常是建立保管庫後更換過主密碼。', 'error');
+        recovery(true);
+      } else status('vaultUnlockStatus', error.message || '無法向伺服器驗證主密碼。', 'error');
+    }
   });
   $('vaultRecordForm').addEventListener('submit', async event => {
     event.preventDefault();
@@ -110,5 +119,9 @@
     if (button.dataset.delete) { if (!confirm(`確定刪除「${record.platform}」嗎？`)) return; records = records.filter(item => item.id !== id); try { await persist(); if (editingId === id) resetForm(); renderRecords(); } catch (error) { status('vaultRecordStatus', `刪除失敗：${error.message}`, 'error'); } }
   });
   $('vaultClearBtn').addEventListener('click', () => { if (prompt('這會永久刪除這台裝置上的所有密碼紀錄。請輸入「清除」確認：') !== '清除') return; localStorage.removeItem(STORAGE_KEY); lock(); });
+  $('vaultResetBrokenBtn').addEventListener('click', () => {
+    if (prompt('這會永久刪除這台裝置上無法解鎖的保管庫。請輸入「重設」確認：') !== '重設') return;
+    localStorage.removeItem(STORAGE_KEY); lock(); status('vaultSetupStatus', '已重設本機保管庫，請以目前的 Portal 主密碼重新建立。', 'ok');
+  });
   document.querySelectorAll('[data-vault-toggle]').forEach(button => button.addEventListener('click', () => { const input = $(button.dataset.vaultToggle); input.type = input.type === 'password' ? 'text' : 'password'; button.textContent = input.type === 'password' ? '顯示' : '隱藏'; }));
 })();
