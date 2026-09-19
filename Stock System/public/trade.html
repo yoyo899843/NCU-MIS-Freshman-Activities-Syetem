@@ -84,7 +84,7 @@ if (requireLogin()) {
   $('depositForm').addEventListener('submit', async () => {
     $('depositErr').textContent = '';
     const btn = $('depositBtn');
-    btn.disabled = true;   // 送出中鎖住：一波只能申報一次，連點兩下會吃到「已經申報過」
+    btn.disabled = true;   // 送出中鎖住：避免連點產生重複申請
     try {
       const { ok, body } = await api('/api/team/deposit', {
         method: 'POST',
@@ -187,8 +187,8 @@ if (requireLogin()) {
     if (d.ok) {
       const dep = d.body.deposit;
       $('depositState').innerHTML = depositSteps(d.body.phase, dep);
-      // 一波只能申報一次，送出後表單就收起來
-      $('depositForm').hidden = !(!dep && d.body.phase === 'deposit');
+      // 初次申請，或遭駁回後在申報階段重新送出，都可以填寫金額。
+      $('depositForm').hidden = !(d.body.phase === 'deposit' && (!dep || dep.status === 'rejected'));
 
       const canTrade = d.body.phase === 'trading' && dep && dep.status === 'approved';
       $('tradeForm').hidden = !canTrade;

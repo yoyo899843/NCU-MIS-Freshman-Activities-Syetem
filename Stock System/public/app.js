@@ -83,7 +83,9 @@ function depositSteps(phase, dep) {
     s1 = step('done', '申報金額', ok);
     s2 = step('fail', '審核遭駁回', no);
     s3 = step('', '可以交易', '3');
-    note = '申報金額與實際籌碼不符，這一波不能交易。';
+    note = phase === 'deposit'
+      ? '申報金額與實際籌碼不符，請在「交易」頁更正金額後重新申請。'
+      : '申報金額與實際籌碼不符，這一波不能交易。';
   }
   return `<ol class="steps" aria-label="本波存款進度">${s1}${s2}${s3}</ol><p class="steps-note">${note}</p>`;
 }

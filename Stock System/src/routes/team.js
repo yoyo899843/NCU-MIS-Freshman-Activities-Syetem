@@ -78,6 +78,8 @@ router.get('/deposit', asyncHandler(async (req, res) => {
 }));
 
 // 申報本波要存入的金額，送出後由實體銀行攤位數鈔核對。
+// 若銀行駁回，隊伍可以在申報階段更正金額並重新送出；同一筆資料會回到 pending，
+// 因此仍維持「每隊每波只有一筆目前申報」的限制。
 router.post('/deposit', asyncHandler(async (req, res) => {
   const s = await state();
   if (s.phase !== 'deposit') {
@@ -89,21 +91,22 @@ router.post('/deposit', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: '金額必須是 0 或正數' });
   }
 
-  try {
-    const { rows } = await db.query(
-      `INSERT INTO deposits (team_id, wave, amount) VALUES ($1,$2,$3)
-       RETURNING id, wave, amount, status, created_at`,
-      [req.team.sub, s.wave, amount]
-    );
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    // UNIQUE(team_id, wave)：一波只能申報一次。可以重送的話，被駁回的隊伍
-    // 就能一直改金額重試，實體數鈔那一關等於白做。
-    if (err.code === '23505') {
-      return res.status(409).json({ error: '本波已經申報過了，請找銀行關主處理' });
-    }
-    throw err;
+  const { rows } = await db.query(
+    `INSERT INTO deposits (team_id, wave, amount) VALUES ($1,$2,$3)
+     ON CONFLICT (team_id, wave) DO UPDATE
+       SET amount = EXCLUDED.amount,
+           status = 'pending',
+           reviewed_by = NULL,
+           reviewed_at = NULL,
+           created_at = now()
+       WHERE deposits.status = 'rejected'
+     RETURNING id, wave, amount, status, created_at`,
+    [req.team.sub, s.wave, amount]
+  );
+  if (rows.length === 0) {
+    return res.status(409).json({ error: '本波已有申請正在審核或已通過，不能再次送出' });
   }
+  res.status(201).json(rows[0]);
 }));
 
 // 下單。
